@@ -9,7 +9,7 @@ from django.db import IntegrityError, transaction
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 
-from apps.accounts.services.email import send_activation_email
+from apps.accounts.services.email import send_activation_email, send_password_reset_email
 from apps.accounts.tokens import account_activation_token
 
 User = get_user_model()
@@ -60,14 +60,23 @@ def register_user(*, email: str) -> None:
             except IntegrityError:
                 # Race: another request created the same email.
                 user = User.objects.filter(email=normalized).first()
-                if user is None or user.is_active:
+                if user is None:
                     return
+                if user.is_active:
+                    if user.has_usable_password():
+                        send_password_reset_email(user)
+                    return
+                send_activation_email(user)
+                return
             else:
                 send_activation_email(user)
                 return
 
         if user.is_active:
-            # Already registered — do not reveal; do not resend activation.
+            # Already registered — send reset mail instead of silence so the
+            # "check your email" UX still works for returning users.
+            if user.has_usable_password():
+                send_password_reset_email(user)
             return
 
         send_activation_email(user)

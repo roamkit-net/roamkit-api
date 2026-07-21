@@ -64,7 +64,10 @@ def test_register_duplicate_pending_resends_email(client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_register_existing_active_user_is_generic(client: Client, user: User) -> None:
+def test_register_existing_active_user_sends_reset_email(
+    client: Client,
+    user: User,
+) -> None:
     response = client.post(
         "/api/v1/auth/register/",
         data=json.dumps({"email": user.email}),
@@ -73,7 +76,8 @@ def test_register_existing_active_user_is_generic(client: Client, user: User) ->
 
     assert response.status_code == 200
     assert "detail" in response.json()
-    assert len(mail.outbox) == 0
+    assert len(mail.outbox) == 1
+    assert "reset-password" in mail.outbox[0].body
 
 
 @pytest.mark.django_db
