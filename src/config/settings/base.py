@@ -154,6 +154,26 @@ AIRALO_CLIENT_SECRET = os.environ.get("AIRALO_CLIENT_SECRET", "")
 AIRALO_SANDBOX = os.environ.get("AIRALO_SANDBOX", "true").lower() == "true"
 AIRALO_BASE_URL = os.environ.get("AIRALO_BASE_URL", "https://partners-api.airalo.com")
 
+FRONTEND_BASE_URL = os.environ.get(
+    "FRONTEND_BASE_URL", "http://localhost:3000"
+).rstrip("/")
+
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "true").lower() == "true"
+EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "false").lower() == "true"
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@roamkit.net")
+
+if EMAIL_HOST:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# Default Django password-reset timeout (activate uses a dedicated generator).
+PASSWORD_RESET_TIMEOUT = int(os.environ.get("PASSWORD_RESET_TIMEOUT", str(60 * 60)))
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

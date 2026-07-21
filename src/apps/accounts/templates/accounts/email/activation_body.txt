@@ -1,0 +1,10 @@
+{% autoescape off %}Hi,
+
+Thanks for signing up for RoamKit. Set your password to activate your account:
+
+{{ link }}
+
+This link expires in 24 hours. If you did not request an account, you can ignore this email.
+
+— RoamKit
+{% endautoescape %}

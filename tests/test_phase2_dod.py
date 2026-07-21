@@ -12,6 +12,8 @@ from django.core.management import call_command
 from django.test import Client
 from django.utils import timezone
 
+from apps.accounts.services.email import uid_for_user
+from apps.accounts.tokens import account_activation_token
 from apps.catalog.models import Package
 from apps.esims.models import Esim
 from shared.providers.esim import OrderedSimDTO, OrderResult, UsageDTO
@@ -108,11 +110,27 @@ def test_phase2_dod_register_sandbox_me_esims(
 
     register = client.post(
         "/api/v1/auth/register/",
-        data=json.dumps({"email": email, "password": PASSWORD}),
+        data=json.dumps({"email": email}),
         content_type="application/json",
     )
-    assert register.status_code == 201
-    assert register.json()["email"] == email
+    assert register.status_code == 200
+    assert "detail" in register.json()
+
+    pending = User.objects.get(email=email)
+    activate = client.post(
+        "/api/v1/auth/activate/",
+        data=json.dumps(
+            {
+                "uid": uid_for_user(pending),
+                "token": account_activation_token.make_token(pending),
+                "password": PASSWORD,
+                "password_confirm": PASSWORD,
+            }
+        ),
+        content_type="application/json",
+    )
+    assert activate.status_code == 200
+    assert activate.json()["email"] == email
 
     token = client.post(
         "/api/v1/auth/token/",

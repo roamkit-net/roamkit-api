@@ -6,4 +6,6 @@ DEBUG = True
 
 ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+# Prefer console locally unless EMAIL_HOST points at Mailpit/SMTP.
+if not EMAIL_HOST:  # noqa: F405
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
