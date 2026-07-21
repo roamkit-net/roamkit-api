@@ -1,0 +1,59 @@
+# Reusable CI for Python (roamkit-api)
+
+name: CI Python
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        required: false
+        type: string
+        default: "3.12"
+      coverage-threshold:
+        required: false
+        type: string
+        default: "70"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Install lint tools
+        run: pip install ruff black bandit
+      - name: Ruff
+        run: ruff check src/ tests/
+      - name: Black
+        run: black --check src/ tests/
+      - name: Bandit
+        run: bandit -r src/ -ll
+
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start test infrastructure
+        run: |
+          docker compose -f docker/docker-compose.test.yml up -d --wait
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Install dependencies
+        run: pip install -r requirements/dev.txt
+      - name: Pytest with coverage
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5433
+          POSTGRES_DB: roamkit_test
+          POSTGRES_USER: roamkit
+          POSTGRES_PASSWORD: roamkit_test
+          REDIS_URL: redis://localhost:6380/0
+        run: |
+          pytest --cov=src --cov-report=term-missing --cov-fail-under=${{ inputs.coverage-threshold }}
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker/docker-compose.test.yml down -v

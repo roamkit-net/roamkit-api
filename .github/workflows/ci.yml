@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci-python.yml
+    with:
+      coverage-threshold: "70"
+
+  docker:
+    needs: ci
+    uses: ./.github/workflows/docker-build-push.yml
+    with:
+      image-name: roamkit-api
+    secrets: inherit
+
+  deploy:
+    needs: docker
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    uses: ./.github/workflows/deploy-staging.yml
+    secrets: inherit

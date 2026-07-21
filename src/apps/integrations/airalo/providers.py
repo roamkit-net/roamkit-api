@@ -1,0 +1,278 @@
+"""Airalo provider implementations."""
+
+from __future__ import annotations
+
+from decimal import Decimal
+from typing import Any
+
+from apps.integrations.airalo.client import AiraloClient
+from shared.providers.esim import (
+    OrderedSimDTO,
+    OrderResult,
+    PackageDTO,
+    PackageFilters,
+    TopupPackage,
+    TopupResult,
+    UsageDTO,
+)
+
+
+class AiraloPackageProvider:
+    """Maps Airalo Partner API packages to domain DTOs."""
+
+    def __init__(self, client: AiraloClient | None = None) -> None:
+        self.client = client or AiraloClient()
+
+    def list_packages(self, filters: PackageFilters) -> list[PackageDTO]:
+        items = self.client.list_packages(country_code=filters.country_code)
+        packages: list[PackageDTO] = []
+
+        for item in items:
+            # GET /v2/packages returns countries with nested operators.
+            if "operators" in item:
+                country_code = str(item.get("country_code", "")).upper()
+                for operator in item.get("operators") or []:
+                    packages.extend(
+                        self._map_operator(operator, country_code_override=country_code)
+                    )
+            else:
+                packages.extend(self._map_operator(item))
+
+        return packages
+
+    def _map_operator(
+        self,
+        operator: dict[str, Any],
+        *,
+        country_code_override: str | None = None,
+    ) -> list[PackageDTO]:
+        operator_id = str(operator.get("id", ""))
+        operator_title = str(operator.get("title", ""))
+        plan_type = str(operator.get("plan_type", "data"))
+        country_code = country_code_override or self._primary_country_code(
+            operator.get("countries", [])
+        )
+
+        mapped: list[PackageDTO] = []
+        for package in operator.get("packages", []):
+            dto = self._map_package(
+                package,
+                operator_id=operator_id,
+                operator_title=operator_title,
+                plan_type=plan_type,
+                country_code=country_code,
+            )
+            if dto is not None:
+                mapped.append(dto)
+        return mapped
+
+    def _map_package(
+        self,
+        package: dict[str, Any],
+        *,
+        operator_id: str,
+        operator_title: str,
+        plan_type: str,
+        country_code: str,
+    ) -> PackageDTO | None:
+        external_id = str(package.get("id", "")).strip()
+        if not external_id:
+            return None
+
+        price_usd = self._extract_usd_price(package)
+        net_price_usd = self._extract_usd_net_price(package)
+
+        return PackageDTO(
+            external_id=external_id,
+            title=str(package.get("title", "")),
+            operator_title=operator_title,
+            operator_id=operator_id,
+            country_code=country_code,
+            data_allowance=self._format_data_allowance(package),
+            validity_days=int(package.get("day") or 0),
+            price_usd=price_usd,
+            net_price_usd=net_price_usd,
+            is_unlimited=bool(package.get("is_unlimited", False)),
+            plan_type=plan_type,
+        )
+
+    @staticmethod
+    def _primary_country_code(countries: list[dict[str, Any]]) -> str:
+        if not countries:
+            return ""
+        return str(countries[0].get("country_code", "")).upper()
+
+    @staticmethod
+    def _format_data_allowance(package: dict[str, Any]) -> str:
+        if package.get("data"):
+            return str(package["data"])
+        if package.get("is_unlimited"):
+            return "Unlimited"
+        amount = package.get("amount")
+        if amount is None:
+            return ""
+        try:
+            mb = float(amount)
+        except (TypeError, ValueError):
+            return str(amount)
+        if mb >= 1024 and mb % 1024 == 0:
+            return f"{int(mb // 1024)} GB"
+        if mb >= 1024:
+            return f"{mb / 1024:g} GB"
+        return f"{int(mb) if mb.is_integer() else mb} MB"
+
+    @staticmethod
+    def _extract_usd_price(package: dict[str, Any]) -> Decimal:
+        prices = package.get("prices") or {}
+        recommended = prices.get("recommended_retail_price") or {}
+        if "USD" in recommended:
+            return Decimal(str(recommended["USD"]))
+
+        if package.get("price") is not None:
+            return Decimal(str(package["price"]))
+
+        return Decimal("0.00")
+
+    @staticmethod
+    def _extract_usd_net_price(package: dict[str, Any]) -> Decimal | None:
+        prices = package.get("prices") or {}
+        net_prices = prices.get("net_price") or {}
+        if "USD" in net_prices:
+            return Decimal(str(net_prices["USD"]))
+
+        if package.get("net_price") is not None:
+            return Decimal(str(package["net_price"]))
+
+        return None
+
+
+class AiraloOrderProvider:
+    """Places eSIM orders via the Airalo Partner API."""
+
+    def __init__(self, client: AiraloClient | None = None) -> None:
+        self.client = client or AiraloClient()
+
+    def create_order(self, package_id: str, customer_ref: str) -> OrderResult:
+        payload = self.client.create_order(
+            package_id=package_id,
+            quantity=1,
+            description=customer_ref,
+        )
+        return self._map_order(payload, customer_ref=customer_ref)
+
+    def _map_order(self, payload: dict[str, Any], *, customer_ref: str) -> OrderResult:
+        guides = payload.get("installation_guides") or {}
+        guide_url = ""
+        if isinstance(guides, dict):
+            guide_url = str(guides.get("en") or "")
+
+        sims: list[OrderedSimDTO] = []
+        for sim in payload.get("sims") or []:
+            if not isinstance(sim, dict):
+                continue
+            iccid = str(sim.get("iccid", "")).strip()
+            if not iccid:
+                continue
+            sims.append(
+                OrderedSimDTO(
+                    iccid=iccid,
+                    lpa=str(sim.get("lpa") or ""),
+                    matching_id=str(sim.get("matching_id") or ""),
+                    qrcode=str(sim.get("qrcode") or ""),
+                    qrcode_url=str(sim.get("qrcode_url") or ""),
+                    direct_apple_installation_url=str(
+                        sim.get("direct_apple_installation_url") or ""
+                    ),
+                )
+            )
+
+        price = payload.get("price")
+        return OrderResult(
+            external_order_id=str(payload.get("id", "")),
+            code=str(payload.get("code") or ""),
+            package_id=str(payload.get("package_id") or ""),
+            customer_ref=str(payload.get("description") or customer_ref),
+            currency=str(payload.get("currency") or "USD"),
+            price_usd=Decimal(str(price)) if price is not None else Decimal("0.00"),
+            manual_installation=str(payload.get("manual_installation") or ""),
+            qrcode_installation=str(payload.get("qrcode_installation") or ""),
+            installation_guide_url=guide_url,
+            sims=sims,
+        )
+
+
+class AiraloTopupProvider:
+    """Lists top-ups, submits top-up orders, and fetches usage via Airalo."""
+
+    def __init__(self, client: AiraloClient | None = None) -> None:
+        self.client = client or AiraloClient()
+
+    def list_topups(self, iccid: str) -> list[TopupPackage]:
+        items = self.client.list_topups(iccid)
+        packages: list[TopupPackage] = []
+        for item in items:
+            mapped = self._map_topup_package(item)
+            if mapped is not None:
+                packages.append(mapped)
+        return packages
+
+    def submit_topup(self, iccid: str, package_id: str) -> TopupResult:
+        payload = self.client.submit_topup(iccid=iccid, package_id=package_id)
+        return self._map_topup_result(payload, iccid=iccid)
+
+    def get_usage(self, iccid: str) -> UsageDTO:
+        payload = self.client.get_usage(iccid)
+        return self._map_usage(payload)
+
+    def _map_topup_package(self, package: dict[str, Any]) -> TopupPackage | None:
+        external_id = str(package.get("id", "")).strip()
+        if not external_id:
+            return None
+
+        price = package.get("price")
+        net_price = package.get("net_price")
+        data_allowance = str(package.get("data") or "")
+        if not data_allowance and package.get("is_unlimited"):
+            data_allowance = "Unlimited"
+
+        return TopupPackage(
+            external_id=external_id,
+            title=str(package.get("title") or ""),
+            data_allowance=data_allowance,
+            validity_days=int(package.get("day") or 0),
+            price_usd=Decimal(str(price)) if price is not None else Decimal("0.00"),
+            net_price_usd=Decimal(str(net_price)) if net_price is not None else None,
+            is_unlimited=bool(package.get("is_unlimited", False)),
+            plan_type=str(package.get("type") or "topup"),
+        )
+
+    def _map_topup_result(self, payload: dict[str, Any], *, iccid: str) -> TopupResult:
+        price = payload.get("price")
+        return TopupResult(
+            external_order_id=str(payload.get("id", "")),
+            code=str(payload.get("code") or ""),
+            package_id=str(payload.get("package_id") or ""),
+            iccid=iccid,
+            currency=str(payload.get("currency") or "USD"),
+            price_usd=Decimal(str(price)) if price is not None else Decimal("0.00"),
+            customer_ref=str(payload.get("description") or ""),
+        )
+
+    @staticmethod
+    def _map_usage(payload: dict[str, Any]) -> UsageDTO:
+        is_unlimited = payload.get("is_unlimited")
+        return UsageDTO(
+            remaining_mb=int(payload.get("remaining") or 0),
+            total_mb=int(payload.get("total") or 0),
+            expired_at=(
+                str(payload["expired_at"])
+                if payload.get("expired_at") is not None
+                else None
+            ),
+            is_unlimited=bool(is_unlimited) if is_unlimited is not None else None,
+            status=str(payload.get("status") or "UNKNOWN"),
+            remaining_voice=int(payload.get("remaining_voice") or 0),
+            remaining_text=int(payload.get("remaining_text") or 0),
+            total_voice=int(payload.get("total_voice") or 0),
+            total_text=int(payload.get("total_text") or 0),
+        )
