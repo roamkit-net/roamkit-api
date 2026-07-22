@@ -41,6 +41,7 @@ class LocationListSerializer(serializers.ModelSerializer):
             "country_code",
             "coverage_type",
             "image_url",
+            "covered_country_codes",
             "is_popular",
             "min_price_usd",
         ]

@@ -58,6 +58,7 @@ def test_locations_list_returns_min_price(client: Client) -> None:
     assert result["title"] == "Croatia"
     assert result["min_price_usd"] == "4.00"
     assert result["coverage_type"] == "local"
+    assert result["covered_country_codes"] == []
 
 
 @pytest.mark.django_db
@@ -95,9 +96,11 @@ def test_locations_list_filters_by_type(client: Client) -> None:
 
     regionals = client.get("/api/v1/locations/?type=regional").json()
     assert [item["slug"] for item in regionals["results"]] == ["europe"]
+    assert regionals["results"][0]["covered_country_codes"] == ["HR", "DE"]
 
     globals_only = client.get("/api/v1/locations/?type=global").json()
     assert [item["slug"] for item in globals_only["results"]] == ["world"]
+    assert globals_only["results"][0]["covered_country_codes"] == ["HR", "US"]
 
 
 @pytest.mark.django_db
