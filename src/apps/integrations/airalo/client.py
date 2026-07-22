@@ -181,7 +181,10 @@ class AiraloClient:
         request = urllib.request.Request(url, data=body, headers=headers, method=method)
 
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            # base_url + path only; no user-controlled URL scheme.
+            with urllib.request.urlopen(  # nosec B310
+                request, timeout=self.timeout
+            ) as response:
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
