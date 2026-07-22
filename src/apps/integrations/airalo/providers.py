@@ -44,6 +44,7 @@ class AiraloPackageProvider:
         location_slug = str(item.get("slug") or "").strip()
         location_title = str(item.get("title") or "").strip()
         country_code = str(item.get("country_code") or "").upper()
+        country_code = AiraloPackageProvider._normalize_iso2(country_code)
         image_url = self._extract_image_url(item.get("image"))
 
         mapped: list[PackageDTO] = []
@@ -75,9 +76,9 @@ class AiraloPackageProvider:
         plan_type = str(operator.get("plan_type", "data"))
         countries = operator.get("countries") or []
         if country_code_override is not None:
-            country_code = country_code_override
+            country_code = self._normalize_iso2(country_code_override)
         else:
-            country_code = self._primary_country_code(countries)
+            country_code = self._normalize_iso2(self._primary_country_code(countries))
         covered_codes = self._covered_country_codes(countries)
         coverage_type = self._resolve_coverage_type(
             operator_type=str(operator.get("type") or ""),
@@ -198,6 +199,13 @@ class AiraloPackageProvider:
             return str(image.get("url") or "").strip()
         if isinstance(image, str):
             return image.strip()
+        return ""
+
+    @staticmethod
+    def _normalize_iso2(code: str) -> str:
+        normalized = (code or "").upper().strip()
+        if len(normalized) == 2 and normalized.isalpha():
+            return normalized
         return ""
 
     @staticmethod
