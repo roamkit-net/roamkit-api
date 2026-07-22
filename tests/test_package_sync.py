@@ -1,6 +1,6 @@
 """Tests for package sync service."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -65,7 +65,7 @@ def test_package_sync_deactivates_missing_packages(
         validity_days=3,
         price_usd=Decimal("5.00"),
         is_active=True,
-        synced_at=datetime.now(timezone.utc),
+        synced_at=datetime.now(UTC),
     )
 
     provider = FakePackageProvider([sample_package_dto])

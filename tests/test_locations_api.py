@@ -1,6 +1,6 @@
 """Tests for locations API endpoint."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -32,7 +32,7 @@ def _create_package(
         validity_days=7,
         price_usd=Decimal(price),
         is_active=True,
-        synced_at=datetime.now(timezone.utc),
+        synced_at=datetime.now(UTC),
     )
 
 

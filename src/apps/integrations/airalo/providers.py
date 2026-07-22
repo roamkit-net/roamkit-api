@@ -175,6 +175,7 @@ class AiraloPackageProvider:
         if not country_code:
             return COVERAGE_REGIONAL
         return COVERAGE_LOCAL
+
     @staticmethod
     def _fallback_slug(
         *,

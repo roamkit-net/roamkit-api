@@ -17,6 +17,9 @@ jobs:
 
   docker:
     needs: ci
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/docker-build-push.yml
     with:
       image-name: roamkit-api
@@ -25,5 +28,7 @@ jobs:
   deploy:
     needs: docker
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    permissions:
+      contents: read
     uses: ./.github/workflows/deploy-staging.yml
     secrets: inherit

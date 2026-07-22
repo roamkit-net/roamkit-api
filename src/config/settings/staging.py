@@ -5,7 +5,9 @@ from .base import *  # noqa: F403
 DEBUG = False
 
 # Docker healthchecks and deploy script curl localhost from inside the container.
-ALLOWED_HOSTS = list(dict.fromkeys([*ALLOWED_HOSTS, "localhost", "127.0.0.1"]))
+ALLOWED_HOSTS = list(
+    dict.fromkeys([*ALLOWED_HOSTS, "localhost", "127.0.0.1"])  # noqa: F405
+)
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = True

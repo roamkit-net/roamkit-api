@@ -7,32 +7,65 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('catalog', '0001_initial'),
+        ("catalog", "0001_initial"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='Location',
+            name="Location",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('slug', models.SlugField(max_length=128, unique=True)),
-                ('title', models.CharField(max_length=255)),
-                ('country_code', models.CharField(blank=True, db_index=True, max_length=2)),
-                ('coverage_type', models.CharField(choices=[('local', 'Local'), ('regional', 'Regional'), ('global', 'Global')], db_index=True, max_length=16)),
-                ('image_url', models.URLField(blank=True, max_length=512)),
-                ('covered_country_codes', models.JSONField(blank=True, default=list)),
-                ('is_popular', models.BooleanField(db_index=True, default=False)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('updated_at', models.DateTimeField(auto_now=True)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("slug", models.SlugField(max_length=128, unique=True)),
+                ("title", models.CharField(max_length=255)),
+                (
+                    "country_code",
+                    models.CharField(blank=True, db_index=True, max_length=2),
+                ),
+                (
+                    "coverage_type",
+                    models.CharField(
+                        choices=[
+                            ("local", "Local"),
+                            ("regional", "Regional"),
+                            ("global", "Global"),
+                        ],
+                        db_index=True,
+                        max_length=16,
+                    ),
+                ),
+                ("image_url", models.URLField(blank=True, max_length=512)),
+                ("covered_country_codes", models.JSONField(blank=True, default=list)),
+                ("is_popular", models.BooleanField(db_index=True, default=False)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
             ],
             options={
-                'ordering': ['title'],
-                'indexes': [models.Index(fields=['coverage_type', 'is_popular'], name='catalog_loc_coverage_pop_idx')],
+                "ordering": ["title"],
+                "indexes": [
+                    models.Index(
+                        fields=["coverage_type", "is_popular"],
+                        name="catalog_loc_coverage_pop_idx",
+                    )
+                ],
             },
         ),
         migrations.AddField(
-            model_name='package',
-            name='location',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='packages', to='catalog.location'),
+            model_name="package",
+            name="location",
+            field=models.ForeignKey(
+                blank=True,
+                null=True,
+                on_delete=django.db.models.deletion.SET_NULL,
+                related_name="packages",
+                to="catalog.location",
+            ),
         ),
     ]

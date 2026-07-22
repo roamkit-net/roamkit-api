@@ -1,6 +1,6 @@
 """Tests for packages API endpoint."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -29,7 +29,7 @@ def active_package() -> Package:
         is_unlimited=False,
         plan_type="data",
         is_active=True,
-        synced_at=datetime.now(timezone.utc),
+        synced_at=datetime.now(UTC),
     )
 
 
@@ -46,7 +46,7 @@ def test_packages_list_returns_active_packages(
         validity_days=3,
         price_usd=Decimal("4.00"),
         is_active=False,
-        synced_at=datetime.now(timezone.utc),
+        synced_at=datetime.now(UTC),
     )
 
     response = client.get("/api/v1/packages/")
@@ -64,7 +64,7 @@ def test_packages_list_returns_active_packages(
 
 @pytest.mark.django_db
 def test_packages_list_filters_by_country(client: Client) -> None:
-    synced_at = datetime.now(timezone.utc)
+    synced_at = datetime.now(UTC)
     Package.objects.create(
         external_id="pkg-us",
         title="US plan",

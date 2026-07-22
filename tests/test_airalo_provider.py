@@ -289,8 +289,7 @@ def test_airalo_order_provider_maps_create_order() -> None:
     assert result.manual_installation == "<p>Manual</p>"
     assert result.qrcode_installation == "<p>QR</p>"
     assert (
-        result.installation_guide_url
-        == "https://sandbox.airalo.com/installation-guide"
+        result.installation_guide_url == "https://sandbox.airalo.com/installation-guide"
     )
     assert len(result.sims) == 1
     sim = result.sims[0]

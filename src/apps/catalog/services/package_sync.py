@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from django.db import transaction
@@ -80,7 +80,7 @@ class PackageSyncService:
         """Fetch packages from the provider and upsert them locally."""
         filters = filters or PackageFilters()
         packages = self.provider.list_packages(filters)
-        synced_at = datetime.now(timezone.utc)
+        synced_at = datetime.now(UTC)
 
         with transaction.atomic():
             synced_ids = self._upsert_packages(packages, synced_at)
@@ -147,8 +147,7 @@ class PackageSyncService:
 
         covered = list(dto.covered_country_codes)
         is_popular = (
-            slug in POPULAR_LOCATION_SLUGS
-            or country_code in POPULAR_COUNTRY_CODES
+            slug in POPULAR_LOCATION_SLUGS or country_code in POPULAR_COUNTRY_CODES
         )
 
         location, _ = Location.objects.update_or_create(

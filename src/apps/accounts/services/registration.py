@@ -9,7 +9,10 @@ from django.db import IntegrityError, transaction
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 
-from apps.accounts.services.email import send_activation_email, send_password_reset_email
+from apps.accounts.services.email import (
+    send_activation_email,
+    send_password_reset_email,
+)
 from apps.accounts.tokens import account_activation_token
 
 User = get_user_model()

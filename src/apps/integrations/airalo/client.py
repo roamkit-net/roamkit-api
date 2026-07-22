@@ -79,6 +79,7 @@ class AiraloClient:
             page += 1
 
         return items
+
     def create_order(
         self,
         *,
@@ -106,7 +107,7 @@ class AiraloClient:
         return data if isinstance(data, dict) else {}
 
     def list_topups(self, iccid: str) -> list[dict[str, Any]]:
-        """List available top-up packages for an eSIM via GET /v2/sims/{iccid}/topups."""
+        """List top-up packages for an eSIM via GET /v2/sims/{iccid}/topups."""
         path = f"/v2/sims/{urllib.parse.quote(iccid, safe='')}/topups"
         payload = self._request("GET", path)
         data = payload.get("data", [])
