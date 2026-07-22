@@ -77,6 +77,45 @@ def test_package_sync_deactivates_missing_packages(
 
 
 @pytest.mark.django_db
+def test_package_sync_upserts_location(sample_package_dto: PackageDTO) -> None:
+    dto = PackageDTO(
+        external_id=sample_package_dto.external_id,
+        title=sample_package_dto.title,
+        operator_title=sample_package_dto.operator_title,
+        operator_id=sample_package_dto.operator_id,
+        country_code="US",
+        data_allowance=sample_package_dto.data_allowance,
+        validity_days=sample_package_dto.validity_days,
+        price_usd=sample_package_dto.price_usd,
+        net_price_usd=sample_package_dto.net_price_usd,
+        is_unlimited=sample_package_dto.is_unlimited,
+        plan_type=sample_package_dto.plan_type,
+        location_slug="united-states",
+        location_title="United States",
+        location_image_url="https://cdn.example.com/us.png",
+        coverage_type="local",
+        covered_country_codes=("US",),
+    )
+    provider = FakePackageProvider([dto])
+    service = PackageSyncService(provider)
+
+    service.sync()
+
+    from apps.catalog.models import Location
+
+    location = Location.objects.get(slug="united-states")
+    assert location.title == "United States"
+    assert location.country_code == "US"
+    assert location.coverage_type == "local"
+    assert location.image_url == "https://cdn.example.com/us.png"
+    assert location.covered_country_codes == ["US"]
+    assert location.is_popular is True
+
+    package = Package.objects.get(external_id="pkg-us-1gb-7d")
+    assert package.location_id == location.id
+
+
+@pytest.mark.django_db
 def test_package_sync_publishes_event(sample_package_dto: PackageDTO) -> None:
     from shared.events.event_bus import event_bus
 

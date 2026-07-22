@@ -16,6 +16,10 @@ from shared.providers.esim import (
     UsageDTO,
 )
 
+COVERAGE_LOCAL = "local"
+COVERAGE_REGIONAL = "regional"
+COVERAGE_GLOBAL = "global"
+
 
 class AiraloPackageProvider:
     """Maps Airalo Partner API packages to domain DTOs."""
@@ -30,28 +34,65 @@ class AiraloPackageProvider:
         for item in items:
             # GET /v2/packages returns countries with nested operators.
             if "operators" in item:
-                country_code = str(item.get("country_code", "")).upper()
-                for operator in item.get("operators") or []:
-                    packages.extend(
-                        self._map_operator(operator, country_code_override=country_code)
-                    )
+                packages.extend(self._map_location_item(item))
             else:
                 packages.extend(self._map_operator(item))
 
         return packages
+
+    def _map_location_item(self, item: dict[str, Any]) -> list[PackageDTO]:
+        location_slug = str(item.get("slug") or "").strip()
+        location_title = str(item.get("title") or "").strip()
+        country_code = str(item.get("country_code") or "").upper()
+        image_url = self._extract_image_url(item.get("image"))
+
+        mapped: list[PackageDTO] = []
+        for operator in item.get("operators") or []:
+            if not isinstance(operator, dict):
+                continue
+            mapped.extend(
+                self._map_operator(
+                    operator,
+                    country_code_override=country_code,
+                    location_slug=location_slug,
+                    location_title=location_title,
+                    location_image_url=image_url,
+                )
+            )
+        return mapped
 
     def _map_operator(
         self,
         operator: dict[str, Any],
         *,
         country_code_override: str | None = None,
+        location_slug: str = "",
+        location_title: str = "",
+        location_image_url: str = "",
     ) -> list[PackageDTO]:
         operator_id = str(operator.get("id", ""))
         operator_title = str(operator.get("title", ""))
         plan_type = str(operator.get("plan_type", "data"))
-        country_code = country_code_override or self._primary_country_code(
-            operator.get("countries", [])
+        countries = operator.get("countries") or []
+        if country_code_override is not None:
+            country_code = country_code_override
+        else:
+            country_code = self._primary_country_code(countries)
+        covered_codes = self._covered_country_codes(countries)
+        coverage_type = self._resolve_coverage_type(
+            operator_type=str(operator.get("type") or ""),
+            location_slug=location_slug,
+            country_code=country_code,
         )
+        if coverage_type != COVERAGE_LOCAL:
+            country_code = ""
+
+        resolved_slug = location_slug or self._fallback_slug(
+            coverage_type=coverage_type,
+            country_code=country_code,
+            operator_title=operator_title,
+        )
+        resolved_title = location_title or operator_title or resolved_slug
 
         mapped: list[PackageDTO] = []
         for package in operator.get("packages", []):
@@ -61,6 +102,11 @@ class AiraloPackageProvider:
                 operator_title=operator_title,
                 plan_type=plan_type,
                 country_code=country_code,
+                location_slug=resolved_slug,
+                location_title=resolved_title,
+                location_image_url=location_image_url,
+                coverage_type=coverage_type,
+                covered_country_codes=covered_codes,
             )
             if dto is not None:
                 mapped.append(dto)
@@ -74,6 +120,11 @@ class AiraloPackageProvider:
         operator_title: str,
         plan_type: str,
         country_code: str,
+        location_slug: str,
+        location_title: str,
+        location_image_url: str,
+        coverage_type: str,
+        covered_country_codes: tuple[str, ...],
     ) -> PackageDTO | None:
         external_id = str(package.get("id", "")).strip()
         if not external_id:
@@ -94,13 +145,76 @@ class AiraloPackageProvider:
             net_price_usd=net_price_usd,
             is_unlimited=bool(package.get("is_unlimited", False)),
             plan_type=plan_type,
+            location_slug=location_slug,
+            location_title=location_title,
+            location_image_url=location_image_url,
+            coverage_type=coverage_type,
+            covered_country_codes=covered_country_codes,
         )
+
+    @staticmethod
+    def _resolve_coverage_type(
+        *,
+        operator_type: str,
+        location_slug: str,
+        country_code: str,
+    ) -> str:
+        slug = location_slug.strip().lower()
+        if slug in {"world", "global"}:
+            return COVERAGE_GLOBAL
+
+        normalized_type = operator_type.strip().lower()
+        if normalized_type == "local":
+            return COVERAGE_LOCAL
+
+        # Airalo marks both regional and worldwide as type=global; slug distinguishes.
+        if normalized_type in {"global", "worldwide", "regional", "region"}:
+            return COVERAGE_REGIONAL
+
+        # Regional/global packages often have an empty country_code.
+        if not country_code:
+            return COVERAGE_REGIONAL
+        return COVERAGE_LOCAL
+    @staticmethod
+    def _fallback_slug(
+        *,
+        coverage_type: str,
+        country_code: str,
+        operator_title: str,
+    ) -> str:
+        if coverage_type == COVERAGE_GLOBAL:
+            return "world"
+        if country_code:
+            return country_code.lower()
+        slug = "".join(
+            ch.lower() if ch.isalnum() else "-" for ch in operator_title.strip()
+        ).strip("-")
+        return slug or "unknown"
+
+    @staticmethod
+    def _extract_image_url(image: Any) -> str:
+        if isinstance(image, dict):
+            return str(image.get("url") or "").strip()
+        if isinstance(image, str):
+            return image.strip()
+        return ""
 
     @staticmethod
     def _primary_country_code(countries: list[dict[str, Any]]) -> str:
         if not countries:
             return ""
         return str(countries[0].get("country_code", "")).upper()
+
+    @staticmethod
+    def _covered_country_codes(countries: list[Any]) -> tuple[str, ...]:
+        codes: list[str] = []
+        for country in countries:
+            if not isinstance(country, dict):
+                continue
+            code = str(country.get("country_code") or "").upper().strip()
+            if code and code not in codes:
+                codes.append(code)
+        return tuple(codes)
 
     @staticmethod
     def _format_data_allowance(package: dict[str, Any]) -> str:

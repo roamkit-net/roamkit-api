@@ -44,16 +44,41 @@ class AiraloClient:
         self.base_url = (base_url or settings.AIRALO_BASE_URL).rstrip("/")
         self.timeout = timeout
 
-    def list_packages(self, *, country_code: str | None = None) -> list[dict[str, Any]]:
-        """Fetch the full package catalog from Airalo."""
+    def list_packages(
+        self,
+        *,
+        country_code: str | None = None,
+        package_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch the full package catalog from Airalo, following pagination."""
         params: dict[str, str] = {}
         if country_code:
             params["filter[country]"] = country_code
+        if package_type:
+            params["filter[type]"] = package_type
 
-        query = f"?{urllib.parse.urlencode(params)}" if params else ""
-        payload = self._request("GET", f"/v2/packages{query}")
-        return payload.get("data", [])
+        items: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            page_params = {**params, "page": str(page)}
+            query = f"?{urllib.parse.urlencode(page_params)}"
+            payload = self._request("GET", f"/v2/packages{query}")
+            data = payload.get("data", [])
+            if isinstance(data, list):
+                items.extend(data)
+            else:
+                data = []
 
+            meta = payload.get("meta") or {}
+            last_page = int(meta.get("last_page") or meta.get("lastPage") or page)
+            links = payload.get("links") or {}
+            has_next = bool(links.get("next")) if isinstance(links, dict) else False
+
+            if not data or (page >= last_page and not has_next):
+                break
+            page += 1
+
+        return items
     def create_order(
         self,
         *,

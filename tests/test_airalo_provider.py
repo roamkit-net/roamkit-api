@@ -18,10 +18,12 @@ class _FakePackageClient:
                 "slug": "united-states",
                 "country_code": "US",
                 "title": "United States",
+                "image": {"url": "https://cdn.example.com/us.png"},
                 "operators": [
                     {
                         "id": 123,
                         "title": "Change",
+                        "type": "local",
                         "plan_type": "data",
                         "countries": [{"country_code": "US", "title": "United States"}],
                         "packages": [
@@ -41,7 +43,69 @@ class _FakePackageClient:
                         ],
                     }
                 ],
-            }
+            },
+            {
+                "slug": "europe",
+                "country_code": "",
+                "title": "Europe",
+                "image": {"url": "https://cdn.example.com/eu.png"},
+                "operators": [
+                    {
+                        "id": 456,
+                        "title": "Eurolink",
+                        "type": "global",
+                        "plan_type": "data",
+                        "countries": [
+                            {"country_code": "HR", "title": "Croatia"},
+                            {"country_code": "DE", "title": "Germany"},
+                        ],
+                        "packages": [
+                            {
+                                "id": "europe-10gb-30d",
+                                "title": "10 GB - 30 Days",
+                                "data": "10 GB",
+                                "day": 30,
+                                "is_unlimited": False,
+                                "price": 29.0,
+                                "prices": {
+                                    "recommended_retail_price": {"USD": 29.0},
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "slug": "world",
+                "country_code": "",
+                "title": "World",
+                "image": {"url": "https://cdn.example.com/world.png"},
+                "operators": [
+                    {
+                        "id": 789,
+                        "title": "Discover",
+                        "type": "global",
+                        "plan_type": "data",
+                        "countries": [
+                            {"country_code": "US", "title": "United States"},
+                            {"country_code": "JP", "title": "Japan"},
+                        ],
+                        "packages": [
+                            {
+                                "id": "world-20gb-30d",
+                                "title": "20 GB - 30 Days",
+                                "data": "20 GB",
+                                "day": 30,
+                                "is_unlimited": False,
+                                "price": 69.0,
+                                "prices": {
+                                    "recommended_retail_price": {"USD": 69.0},
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
         ]
 
 
@@ -165,7 +229,7 @@ def test_airalo_provider_maps_operator_packages() -> None:
 
     packages = provider.list_packages(PackageFilters())
 
-    assert len(packages) == 1
+    assert len(packages) == 3
     package = packages[0]
     assert package.external_id == "change-7days-1gb"
     assert package.title == "1 GB - 7 Days"
@@ -177,6 +241,30 @@ def test_airalo_provider_maps_operator_packages() -> None:
     assert package.net_price_usd == Decimal("6.30")
     assert package.is_unlimited is False
     assert package.plan_type == "data"
+    assert package.location_slug == "united-states"
+    assert package.location_title == "United States"
+    assert package.location_image_url == "https://cdn.example.com/us.png"
+    assert package.coverage_type == "local"
+    assert package.covered_country_codes == ("US",)
+
+
+def test_airalo_provider_maps_regional_and_global() -> None:
+    provider = AiraloPackageProvider(client=_FakePackageClient())
+
+    packages = provider.list_packages(PackageFilters())
+    by_id = {pkg.external_id: pkg for pkg in packages}
+
+    europe = by_id["europe-10gb-30d"]
+    assert europe.country_code == ""
+    assert europe.location_slug == "europe"
+    assert europe.coverage_type == "regional"
+    assert europe.covered_country_codes == ("HR", "DE")
+    assert europe.location_image_url == "https://cdn.example.com/eu.png"
+
+    world = by_id["world-20gb-30d"]
+    assert world.location_slug == "world"
+    assert world.coverage_type == "global"
+    assert world.covered_country_codes == ("US", "JP")
 
 
 def test_airalo_order_provider_maps_create_order() -> None:

@@ -27,6 +27,11 @@ class PackageDTO:
     net_price_usd: Decimal | None
     is_unlimited: bool
     plan_type: str
+    location_slug: str = ""
+    location_title: str = ""
+    location_image_url: str = ""
+    coverage_type: str = "local"
+    covered_country_codes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -3,6 +3,43 @@
 from django.db import models
 
 
+class Location(models.Model):
+    """A catalog destination (local country, regional, or global)."""
+
+    COVERAGE_LOCAL = "local"
+    COVERAGE_REGIONAL = "regional"
+    COVERAGE_GLOBAL = "global"
+    COVERAGE_CHOICES = [
+        (COVERAGE_LOCAL, "Local"),
+        (COVERAGE_REGIONAL, "Regional"),
+        (COVERAGE_GLOBAL, "Global"),
+    ]
+
+    slug = models.SlugField(max_length=128, unique=True)
+    title = models.CharField(max_length=255)
+    country_code = models.CharField(max_length=2, blank=True, db_index=True)
+    coverage_type = models.CharField(
+        max_length=16, choices=COVERAGE_CHOICES, db_index=True
+    )
+    image_url = models.URLField(blank=True, max_length=512)
+    covered_country_codes = models.JSONField(default=list, blank=True)
+    is_popular = models.BooleanField(default=False, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["title"]
+        indexes = [
+            models.Index(
+                fields=["coverage_type", "is_popular"],
+                name="catalog_loc_coverage_pop_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.title} ({self.slug})"
+
+
 class Package(models.Model):
     """Cached eSIM package synced from an external provider."""
 
@@ -11,6 +48,13 @@ class Package(models.Model):
     operator_title = models.CharField(max_length=255)
     operator_id = models.CharField(max_length=64, blank=True)
     country_code = models.CharField(max_length=2, blank=True, db_index=True)
+    location = models.ForeignKey(
+        Location,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="packages",
+    )
     data_allowance = models.CharField(max_length=64)
     validity_days = models.PositiveIntegerField()
     price_usd = models.DecimalField(max_digits=10, decimal_places=2)
