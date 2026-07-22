@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Any
 
@@ -133,10 +134,17 @@ class AiraloPackageProvider:
 
         price_usd = self._extract_usd_price(package)
         net_price_usd = self._extract_usd_net_price(package)
+        title = str(package.get("title", ""))
+        voice_minutes = self._optional_positive_int(package.get("voice"))
+        text_sms = self._optional_positive_int(package.get("text"))
+        if voice_minutes is None and text_sms is None:
+            parsed_voice, parsed_text = self._parse_voice_text_from_title(title)
+            voice_minutes = parsed_voice
+            text_sms = parsed_text
 
         return PackageDTO(
             external_id=external_id,
-            title=str(package.get("title", "")),
+            title=title,
             operator_title=operator_title,
             operator_id=operator_id,
             country_code=country_code,
@@ -146,8 +154,8 @@ class AiraloPackageProvider:
             net_price_usd=net_price_usd,
             is_unlimited=bool(package.get("is_unlimited", False)),
             plan_type=plan_type,
-            voice_minutes=self._optional_positive_int(package.get("voice")),
-            text_sms=self._optional_positive_int(package.get("text")),
+            voice_minutes=voice_minutes,
+            text_sms=text_sms,
             location_slug=location_slug,
             location_title=location_title,
             location_image_url=location_image_url,
@@ -282,6 +290,15 @@ class AiraloPackageProvider:
         if parsed <= 0:
             return None
         return parsed
+
+    @staticmethod
+    def _parse_voice_text_from_title(title: str) -> tuple[int | None, int | None]:
+        """Fallback when Airalo omits package.voice/text but encodes them in the title."""
+        voice_match = re.search(r"(\d+)\s*mins?\b", title, flags=re.IGNORECASE)
+        text_match = re.search(r"(\d+)\s*sms\b", title, flags=re.IGNORECASE)
+        voice = int(voice_match.group(1)) if voice_match else None
+        text = int(text_match.group(1)) if text_match else None
+        return voice, text
 
 
 class AiraloOrderProvider:

@@ -55,6 +55,19 @@ class _FakePackageClient:
                                     "recommended_retail_price": {"USD": 49.0},
                                 },
                             },
+                            {
+                                "id": "change-1gb-title-voice",
+                                "title": "1 GB - 10 SMS - 10 Mins - 7 days",
+                                "data": "1 GB",
+                                "day": 7,
+                                "is_unlimited": False,
+                                "voice": None,
+                                "text": None,
+                                "price": 15.0,
+                                "prices": {
+                                    "recommended_retail_price": {"USD": 15.0},
+                                },
+                            },
                         ],
                     }
                 ],
@@ -244,7 +257,7 @@ def test_airalo_provider_maps_operator_packages() -> None:
 
     packages = provider.list_packages(PackageFilters())
 
-    assert len(packages) == 4
+    assert len(packages) == 5
     package = packages[0]
     assert package.external_id == "change-7days-1gb"
     assert package.title == "1 GB - 7 Days"
@@ -268,6 +281,12 @@ def test_airalo_provider_maps_operator_packages() -> None:
     assert dct.voice_minutes == 200
     assert dct.text_sms == 200
     assert dct.plan_type == "data"
+
+    from_title = next(
+        pkg for pkg in packages if pkg.external_id == "change-1gb-title-voice"
+    )
+    assert from_title.voice_minutes == 10
+    assert from_title.text_sms == 10
 
 
 def test_airalo_provider_maps_regional_and_global() -> None:
