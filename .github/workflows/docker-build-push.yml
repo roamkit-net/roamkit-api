@@ -40,7 +40,7 @@ jobs:
         with:
           images: ghcr.io/roamkit-net/${{ inputs.image-name }}
           tags: |
-            type=sha
+            type=raw,value=${{ github.sha }}
             type=ref,event=branch
 
       - name: Build and push

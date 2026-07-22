@@ -27,7 +27,7 @@ jobs:
           script: |
             cd ${{ inputs.stack-dir }}
             export API_IMAGE=ghcr.io/roamkit-net/roamkit-api:${{ github.sha }}
-            export WEB_IMAGE=ghcr.io/roamkit-net/roamkit-web:${{ github.sha }}
+            export WEB_IMAGE=ghcr.io/roamkit-net/roamkit-web:develop
             ./scripts/deploy-staging.sh
 
       - name: Smoke test (from runner)
