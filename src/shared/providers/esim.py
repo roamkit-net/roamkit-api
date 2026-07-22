@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -34,6 +34,8 @@ class PackageDTO:
     location_image_url: str = ""
     coverage_type: str = "local"
     covered_country_codes: tuple[str, ...] = ()
+    # [{code, name, networks: [{name, types}]}]
+    coverages: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)

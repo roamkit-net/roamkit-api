@@ -12,7 +12,18 @@ from shared.providers.esim import PackageFilters
 
 
 class _FakePackageClient:
-    def list_packages(self, *, country_code: str | None = None):
+    def __init__(self) -> None:
+        self.list_packages_calls: list[dict[str, str | None]] = []
+
+    def list_packages(
+        self,
+        *,
+        country_code: str | None = None,
+        package_type: str | None = None,
+    ):
+        self.list_packages_calls.append(
+            {"country_code": country_code, "package_type": package_type}
+        )
         return [
             {
                 "slug": "united-states",
@@ -26,6 +37,16 @@ class _FakePackageClient:
                         "type": "local",
                         "plan_type": "data",
                         "countries": [{"country_code": "US", "title": "United States"}],
+                        "coverages": [
+                            {
+                                "name": "United States",
+                                "code": "US",
+                                "networks": [
+                                    {"name": "T-Mobile", "types": ["5G", "LTE"]},
+                                    {"name": "AT&T", "types": ["LTE"]},
+                                ],
+                            }
+                        ],
                         "packages": [
                             {
                                 "id": "change-7days-1gb",
@@ -68,6 +89,28 @@ class _FakePackageClient:
                                     "recommended_retail_price": {"USD": 15.0},
                                 },
                             },
+                            {
+                                "id": "change-7days-unlimited",
+                                "title": "Unlimited - 7 Days",
+                                "data": "Unlimited",
+                                "day": 7,
+                                "is_unlimited": True,
+                                "price": 21.0,
+                                "prices": {
+                                    "recommended_retail_price": {"USD": 21.0},
+                                },
+                            },
+                            {
+                                "id": "change-10days-unlimited-no-flag",
+                                "title": "Unlimited - 10 Days",
+                                "data": "Unlimited",
+                                "day": 10,
+                                "is_unlimited": False,
+                                "price": 28.0,
+                                "prices": {
+                                    "recommended_retail_price": {"USD": 28.0},
+                                },
+                            },
                         ],
                     }
                 ],
@@ -87,6 +130,32 @@ class _FakePackageClient:
                             {"country_code": "HR", "title": "Croatia"},
                             {"country_code": "DE", "title": "Germany"},
                         ],
+                        "coverages": [
+                            {
+                                "name": "Croatia",
+                                "code": "HR",
+                                "networks": [
+                                    {"name": "Telemach", "types": ["5G"]},
+                                    {"name": "A1 Hrvatska", "types": ["LTE"]},
+                                ],
+                            },
+                            {
+                                "name": "Germany",
+                                "code": "DE",
+                                "networks": [
+                                    {"name": "Telekom", "types": ["5G", "LTE"]},
+                                ],
+                            },
+                            {
+                                # Duplicate code — networks should merge.
+                                "name": "Croatia",
+                                "code": "HR",
+                                "networks": [
+                                    {"name": "Telemach", "types": ["LTE"]},
+                                    {"name": "Hrvatski Telekom", "types": ["LTE"]},
+                                ],
+                            },
+                        ],
                         "packages": [
                             {
                                 "id": "europe-10gb-30d",
@@ -98,15 +167,26 @@ class _FakePackageClient:
                                 "prices": {
                                     "recommended_retail_price": {"USD": 29.0},
                                 },
-                            }
+                            },
+                            {
+                                "id": "europe-7days-unlimited",
+                                "title": "Unlimited - 7 Days",
+                                "data": "Unlimited",
+                                "day": 7,
+                                "is_unlimited": True,
+                                "price": 35.0,
+                                "prices": {
+                                    "recommended_retail_price": {"USD": 35.0},
+                                },
+                            },
                         ],
                     }
                 ],
             },
             {
-                "slug": "world",
+                "slug": "discover",
                 "country_code": "",
-                "title": "World",
+                "title": "Discover Global",
                 "image": {"url": "https://cdn.example.com/world.png"},
                 "operators": [
                     {
@@ -129,7 +209,18 @@ class _FakePackageClient:
                                 "prices": {
                                     "recommended_retail_price": {"USD": 69.0},
                                 },
-                            }
+                            },
+                            {
+                                "id": "discover-in-7days-unlimited",
+                                "title": "Unlimited - 7 days",
+                                "data": "Unlimited",
+                                "day": 7,
+                                "is_unlimited": False,
+                                "price": 45.0,
+                                "prices": {
+                                    "recommended_retail_price": {"USD": 45.0},
+                                },
+                            },
                         ],
                     }
                 ],
@@ -253,11 +344,16 @@ class _FakeTopupClient:
 
 
 def test_airalo_provider_maps_operator_packages() -> None:
-    provider = AiraloPackageProvider(client=_FakePackageClient())
+    client = _FakePackageClient()
+    provider = AiraloPackageProvider(client=client)
 
     packages = provider.list_packages(PackageFilters())
 
-    assert len(packages) == 5
+    assert client.list_packages_calls == [
+        {"country_code": None, "package_type": "local"},
+        {"country_code": None, "package_type": "global"},
+    ]
+    assert len(packages) == 9
     package = packages[0]
     assert package.external_id == "change-7days-1gb"
     assert package.title == "1 GB - 7 Days"
@@ -276,6 +372,16 @@ def test_airalo_provider_maps_operator_packages() -> None:
     assert package.location_image_url == "https://cdn.example.com/us.png"
     assert package.coverage_type == "local"
     assert package.covered_country_codes == ("US",)
+    assert package.coverages == (
+        {
+            "code": "US",
+            "name": "United States",
+            "networks": [
+                {"name": "T-Mobile", "types": ["5G", "LTE"]},
+                {"name": "AT&T", "types": ["LTE"]},
+            ],
+        },
+    )
 
     dct = next(pkg for pkg in packages if pkg.external_id == "change-20gb-365d-voice")
     assert dct.voice_minutes == 200
@@ -287,6 +393,31 @@ def test_airalo_provider_maps_operator_packages() -> None:
     )
     assert from_title.voice_minutes == 10
     assert from_title.text_sms == 10
+
+
+def test_airalo_provider_resolves_is_unlimited_from_flag_and_data() -> None:
+    provider = AiraloPackageProvider(client=_FakePackageClient())
+
+    packages = provider.list_packages(PackageFilters())
+    by_id = {pkg.external_id: pkg for pkg in packages}
+
+    flagged = by_id["change-7days-unlimited"]
+    assert flagged.is_unlimited is True
+    assert flagged.data_allowance == "Unlimited"
+
+    # Flag false but data/title say Unlimited — still treat as unlimited.
+    inferred = by_id["change-10days-unlimited-no-flag"]
+    assert inferred.is_unlimited is True
+    assert inferred.data_allowance == "Unlimited"
+
+    regional = by_id["europe-7days-unlimited"]
+    assert regional.is_unlimited is True
+    assert regional.coverage_type == "regional"
+
+    discover = by_id["discover-in-7days-unlimited"]
+    assert discover.is_unlimited is True
+    assert discover.location_slug == "world"
+    assert discover.coverage_type == "global"
 
 
 def test_airalo_provider_maps_regional_and_global() -> None:
@@ -301,11 +432,39 @@ def test_airalo_provider_maps_regional_and_global() -> None:
     assert europe.coverage_type == "regional"
     assert europe.covered_country_codes == ("HR", "DE")
     assert europe.location_image_url == "https://cdn.example.com/eu.png"
+    assert len(europe.coverages) == 2
+    croatia = europe.coverages[0]
+    assert croatia["code"] == "HR"
+    assert croatia["name"] == "Croatia"
+    assert croatia["networks"] == [
+        {"name": "Telemach", "types": ["5G", "LTE"]},
+        {"name": "A1 Hrvatska", "types": ["LTE"]},
+        {"name": "Hrvatski Telekom", "types": ["LTE"]},
+    ]
+    germany = europe.coverages[1]
+    assert germany["code"] == "DE"
+    assert germany["networks"] == [
+        {"name": "Telekom", "types": ["5G", "LTE"]},
+    ]
 
     world = by_id["world-20gb-30d"]
     assert world.location_slug == "world"
+    assert world.location_title == "Discover Global"
     assert world.coverage_type == "global"
     assert world.covered_country_codes == ("US", "JP")
+    assert world.coverages == ()
+    assert world.is_unlimited is False
+
+
+def test_airalo_provider_dedupes_local_and_global_catalog_fetches() -> None:
+    client = _FakePackageClient()
+    provider = AiraloPackageProvider(client=client)
+
+    packages = provider.list_packages(PackageFilters())
+
+    # Fake returns the same catalog for both type filters; merge must not double.
+    assert len(packages) == 9
+    assert len({pkg.external_id for pkg in packages}) == 9
 
 
 def test_airalo_order_provider_maps_create_order() -> None:

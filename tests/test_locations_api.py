@@ -110,12 +110,34 @@ def test_location_detail_includes_broader_coverage(client: Client) -> None:
         title="Croatia",
         country_code="HR",
         coverage_type=Location.COVERAGE_LOCAL,
+        coverages=[
+            {
+                "code": "HR",
+                "name": "Croatia",
+                "networks": [
+                    {"name": "Telemach", "types": ["5G"]},
+                    {"name": "A1 Hrvatska", "types": ["LTE"]},
+                ],
+            }
+        ],
     )
     europe = Location.objects.create(
         slug="europe",
         title="Europe",
         coverage_type=Location.COVERAGE_REGIONAL,
         covered_country_codes=["HR", "DE", "IT"],
+        coverages=[
+            {
+                "code": "HR",
+                "name": "Croatia",
+                "networks": [{"name": "Telemach", "types": ["5G"]}],
+            },
+            {
+                "code": "DE",
+                "name": "Germany",
+                "networks": [{"name": "Telekom", "types": ["LTE"]}],
+            },
+        ],
     )
     asia = Location.objects.create(
         slug="asia",
@@ -140,9 +162,23 @@ def test_location_detail_includes_broader_coverage(client: Client) -> None:
     payload = response.json()
     assert payload["slug"] == "croatia"
     assert payload["min_price_usd"] == "5.00"
+    assert payload["coverages"] == [
+        {
+            "code": "HR",
+            "name": "Croatia",
+            "networks": [
+                {"name": "Telemach", "types": ["5G"]},
+                {"name": "A1 Hrvatska", "types": ["LTE"]},
+            ],
+        }
+    ]
     broader_slugs = {item["slug"] for item in payload["broader_locations"]}
     assert broader_slugs == {"europe", "world"}
     assert "asia" not in broader_slugs
+
+    europe_detail = client.get("/api/v1/locations/europe/").json()
+    assert len(europe_detail["coverages"]) == 2
+    assert europe_detail["coverages"][0]["code"] == "HR"
 
 
 @pytest.mark.django_db

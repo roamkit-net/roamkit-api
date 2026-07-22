@@ -126,6 +126,16 @@ def test_package_sync_upserts_location(sample_package_dto: PackageDTO) -> None:
         location_image_url="https://cdn.example.com/us.png",
         coverage_type="local",
         covered_country_codes=("US",),
+        coverages=(
+            {
+                "code": "US",
+                "name": "United States",
+                "networks": [
+                    {"name": "T-Mobile", "types": ["5G"]},
+                    {"name": "AT&T", "types": ["LTE"]},
+                ],
+            },
+        ),
     )
     provider = FakePackageProvider([dto])
     service = PackageSyncService(provider)
@@ -140,10 +150,68 @@ def test_package_sync_upserts_location(sample_package_dto: PackageDTO) -> None:
     assert location.coverage_type == "local"
     assert location.image_url == "https://cdn.example.com/us.png"
     assert location.covered_country_codes == ["US"]
+    assert location.coverages == [
+        {
+            "code": "US",
+            "name": "United States",
+            "networks": [
+                {"name": "T-Mobile", "types": ["5G"]},
+                {"name": "AT&T", "types": ["LTE"]},
+            ],
+        },
+    ]
     assert location.is_popular is True
 
     package = Package.objects.get(external_id="pkg-us-1gb-7d")
     assert package.location_id == location.id
+
+
+@pytest.mark.django_db
+def test_package_sync_upserts_regional_coverages() -> None:
+    dto = PackageDTO(
+        external_id="europe-10gb-30d",
+        title="10 GB - 30 Days",
+        operator_title="Eurolink",
+        operator_id="op-eu",
+        country_code="",
+        data_allowance="10 GB",
+        validity_days=30,
+        price_usd=Decimal("29.00"),
+        net_price_usd=None,
+        is_unlimited=False,
+        plan_type="data",
+        location_slug="europe",
+        location_title="Europe",
+        location_image_url="https://cdn.example.com/eu.png",
+        coverage_type="regional",
+        covered_country_codes=("HR", "DE"),
+        coverages=(
+            {
+                "code": "HR",
+                "name": "Croatia",
+                "networks": [{"name": "Telemach", "types": ["5G"]}],
+            },
+            {
+                "code": "DE",
+                "name": "Germany",
+                "networks": [{"name": "Telekom", "types": ["LTE"]}],
+            },
+        ),
+    )
+    provider = FakePackageProvider([dto])
+    service = PackageSyncService(provider)
+
+    service.sync()
+
+    from apps.catalog.models import Location
+
+    location = Location.objects.get(slug="europe")
+    assert location.coverage_type == "regional"
+    assert location.country_code == ""
+    assert location.covered_country_codes == ["HR", "DE"]
+    assert len(location.coverages) == 2
+    assert location.coverages[0]["code"] == "HR"
+    assert location.coverages[1]["name"] == "Germany"
 
 
 @pytest.mark.django_db

@@ -148,6 +148,7 @@ class PackageSyncService:
             country_code = ""
 
         covered = list(dto.covered_country_codes)
+        coverages = [dict(entry) for entry in dto.coverages]
         is_popular = (
             slug in POPULAR_LOCATION_SLUGS or country_code in POPULAR_COUNTRY_CODES
         )
@@ -160,6 +161,7 @@ class PackageSyncService:
                 "coverage_type": coverage_type,
                 "image_url": dto.location_image_url or "",
                 "covered_country_codes": covered,
+                "coverages": coverages,
                 "is_popular": is_popular,
             },
         )

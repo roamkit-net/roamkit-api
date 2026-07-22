@@ -23,6 +23,8 @@ class Location(models.Model):
     )
     image_url = models.URLField(blank=True, max_length=512)
     covered_country_codes = models.JSONField(default=list, blank=True)
+    # [{code, name, networks: [{name, types}]}] from provider operator.coverages
+    coverages = models.JSONField(default=list, blank=True)
     is_popular = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

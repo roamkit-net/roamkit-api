@@ -21,6 +21,11 @@ COVERAGE_LOCAL = "local"
 COVERAGE_REGIONAL = "regional"
 COVERAGE_GLOBAL = "global"
 
+# Airalo consumer URLs use /discover-esim; Partner API slug is usually "world".
+_GLOBAL_LOCATION_SLUG_ALIASES = frozenset(
+    {"world", "global", "worldwide", "discover", "discover-global"}
+)
+
 
 class AiraloPackageProvider:
     """Maps Airalo Partner API packages to domain DTOs."""
@@ -29,7 +34,7 @@ class AiraloPackageProvider:
         self.client = client or AiraloClient()
 
     def list_packages(self, filters: PackageFilters) -> list[PackageDTO]:
-        items = self.client.list_packages(country_code=filters.country_code)
+        items = self._fetch_catalog_items(filters)
         packages: list[PackageDTO] = []
 
         for item in items:
@@ -41,8 +46,50 @@ class AiraloPackageProvider:
 
         return packages
 
+    def _fetch_catalog_items(self, filters: PackageFilters) -> list[dict[str, Any]]:
+        """Load catalog rows, merging local+global when unfiltered.
+
+        Airalo docs recommend filter[type]=local|global for complete regional/
+        worldwide coverage; unfiltered pagination can omit rows. When a country
+        filter is set, a single request is enough.
+        """
+        if filters.country_code:
+            return self.client.list_packages(country_code=filters.country_code)
+
+        return self._merge_catalog_items(
+            self.client.list_packages(package_type="local"),
+            self.client.list_packages(package_type="global"),
+        )
+
+    @staticmethod
+    def _merge_catalog_items(
+        *batches: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Dedupe location/operator rows across filtered catalog responses."""
+        merged: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for batch in batches:
+            for item in batch:
+                key = AiraloPackageProvider._catalog_item_key(item)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(item)
+        return merged
+
+    @staticmethod
+    def _catalog_item_key(item: dict[str, Any]) -> str:
+        slug = str(item.get("slug") or "").strip().lower()
+        if slug:
+            return f"slug:{slug}"
+        operator_id = str(item.get("id") or "").strip()
+        if operator_id:
+            return f"operator:{operator_id}"
+        title = str(item.get("title") or "").strip().lower()
+        return f"title:{title}"
+
     def _map_location_item(self, item: dict[str, Any]) -> list[PackageDTO]:
-        location_slug = str(item.get("slug") or "").strip()
+        location_slug = self._normalize_location_slug(str(item.get("slug") or ""))
         location_title = str(item.get("title") or "").strip()
         country_code = str(item.get("country_code") or "").upper()
         country_code = AiraloPackageProvider._normalize_iso2(country_code)
@@ -80,7 +127,12 @@ class AiraloPackageProvider:
             country_code = self._normalize_iso2(country_code_override)
         else:
             country_code = self._normalize_iso2(self._primary_country_code(countries))
+        coverages = self._map_coverages(operator.get("coverages") or [])
         covered_codes = self._covered_country_codes(countries)
+        if not covered_codes:
+            covered_codes = tuple(
+                entry["code"] for entry in coverages if entry.get("code")
+            )
         coverage_type = self._resolve_coverage_type(
             operator_type=str(operator.get("type") or ""),
             location_slug=location_slug,
@@ -89,10 +141,13 @@ class AiraloPackageProvider:
         if coverage_type != COVERAGE_LOCAL:
             country_code = ""
 
-        resolved_slug = location_slug or self._fallback_slug(
-            coverage_type=coverage_type,
-            country_code=country_code,
-            operator_title=operator_title,
+        resolved_slug = self._normalize_location_slug(
+            location_slug
+            or self._fallback_slug(
+                coverage_type=coverage_type,
+                country_code=country_code,
+                operator_title=operator_title,
+            )
         )
         resolved_title = location_title or operator_title or resolved_slug
 
@@ -109,6 +164,7 @@ class AiraloPackageProvider:
                 location_image_url=location_image_url,
                 coverage_type=coverage_type,
                 covered_country_codes=covered_codes,
+                coverages=coverages,
             )
             if dto is not None:
                 mapped.append(dto)
@@ -127,6 +183,7 @@ class AiraloPackageProvider:
         location_image_url: str,
         coverage_type: str,
         covered_country_codes: tuple[str, ...],
+        coverages: tuple[dict[str, Any], ...],
     ) -> PackageDTO | None:
         external_id = str(package.get("id", "")).strip()
         if not external_id:
@@ -135,6 +192,7 @@ class AiraloPackageProvider:
         price_usd = self._extract_usd_price(package)
         net_price_usd = self._extract_usd_net_price(package)
         title = str(package.get("title", ""))
+        is_unlimited = self._resolve_is_unlimited(package)
         voice_minutes = self._optional_positive_int(package.get("voice"))
         text_sms = self._optional_positive_int(package.get("text"))
         if voice_minutes is None and text_sms is None:
@@ -148,11 +206,13 @@ class AiraloPackageProvider:
             operator_title=operator_title,
             operator_id=operator_id,
             country_code=country_code,
-            data_allowance=self._format_data_allowance(package),
+            data_allowance=self._format_data_allowance(
+                package, is_unlimited=is_unlimited
+            ),
             validity_days=int(package.get("day") or 0),
             price_usd=price_usd,
             net_price_usd=net_price_usd,
-            is_unlimited=bool(package.get("is_unlimited", False)),
+            is_unlimited=is_unlimited,
             plan_type=plan_type,
             voice_minutes=voice_minutes,
             text_sms=text_sms,
@@ -161,7 +221,87 @@ class AiraloPackageProvider:
             location_image_url=location_image_url,
             coverage_type=coverage_type,
             covered_country_codes=covered_country_codes,
+            coverages=coverages,
         )
+
+    @staticmethod
+    def _map_coverages(raw: list[Any]) -> tuple[dict[str, Any], ...]:
+        """Normalize operator.coverages: dedupe by code/name, merge networks."""
+        by_key: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            code = AiraloPackageProvider._normalize_iso2(str(entry.get("code") or ""))
+            name = str(entry.get("name") or "").strip()
+            if not code and not name:
+                continue
+            key = code or name.lower()
+            networks = AiraloPackageProvider._map_networks(entry.get("networks") or [])
+
+            existing = by_key.get(key)
+            if existing is None:
+                by_key[key] = {
+                    "code": code,
+                    "name": name,
+                    "networks": networks,
+                }
+                order.append(key)
+                continue
+
+            if name and not existing["name"]:
+                existing["name"] = name
+            if code and not existing["code"]:
+                existing["code"] = code
+            existing["networks"] = AiraloPackageProvider._merge_networks(
+                existing["networks"], networks
+            )
+
+        return tuple(by_key[key] for key in order)
+
+    @staticmethod
+    def _map_networks(raw: list[Any]) -> list[dict[str, Any]]:
+        networks: list[dict[str, Any]] = []
+        for network in raw:
+            if not isinstance(network, dict):
+                continue
+            name = str(network.get("name") or "").strip()
+            if not name:
+                continue
+            types: list[str] = []
+            for network_type in network.get("types") or []:
+                label = str(network_type or "").strip()
+                if label and label not in types:
+                    types.append(label)
+            networks.append({"name": name, "types": types})
+        return AiraloPackageProvider._merge_networks([], networks)
+
+    @staticmethod
+    def _merge_networks(
+        existing: list[dict[str, Any]], incoming: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        by_name: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for network in existing + incoming:
+            name = str(network.get("name") or "").strip()
+            if not name:
+                continue
+            key = name.lower()
+            types = [
+                str(t).strip()
+                for t in (network.get("types") or [])
+                if str(t or "").strip()
+            ]
+            current = by_name.get(key)
+            if current is None:
+                by_name[key] = {"name": name, "types": list(types)}
+                order.append(key)
+                continue
+            for network_type in types:
+                if network_type not in current["types"]:
+                    current["types"].append(network_type)
+        return [by_name[key] for key in order]
 
     @staticmethod
     def _resolve_coverage_type(
@@ -170,8 +310,8 @@ class AiraloPackageProvider:
         location_slug: str,
         country_code: str,
     ) -> str:
-        slug = location_slug.strip().lower()
-        if slug in {"world", "global"}:
+        slug = AiraloPackageProvider._normalize_location_slug(location_slug)
+        if slug in _GLOBAL_LOCATION_SLUG_ALIASES:
             return COVERAGE_GLOBAL
 
         normalized_type = operator_type.strip().lower()
@@ -188,6 +328,13 @@ class AiraloPackageProvider:
         return COVERAGE_LOCAL
 
     @staticmethod
+    def _normalize_location_slug(location_slug: str) -> str:
+        slug = location_slug.strip().lower()
+        if slug in _GLOBAL_LOCATION_SLUG_ALIASES:
+            return "world"
+        return slug
+
+    @staticmethod
     def _fallback_slug(
         *,
         coverage_type: str,
@@ -202,6 +349,23 @@ class AiraloPackageProvider:
             ch.lower() if ch.isalnum() else "-" for ch in operator_title.strip()
         ).strip("-")
         return slug or "unknown"
+
+    @staticmethod
+    def _resolve_is_unlimited(package: dict[str, Any]) -> bool:
+        """Treat Airalo unlimited SKUs even when is_unlimited is missing/false.
+
+        Partner payloads usually set is_unlimited, but some rows only mark
+        unlimited via data="Unlimited" or an Unlimited title.
+        """
+        if package.get("is_unlimited"):
+            return True
+        data = str(package.get("data") or "").strip().lower()
+        if data == "unlimited":
+            return True
+        title = str(package.get("title") or "").strip().lower()
+        if "unlimited" in title:
+            return True
+        return False
 
     @staticmethod
     def _extract_image_url(image: Any) -> str:
@@ -236,10 +400,17 @@ class AiraloPackageProvider:
         return tuple(codes)
 
     @staticmethod
-    def _format_data_allowance(package: dict[str, Any]) -> str:
+    def _format_data_allowance(
+        package: dict[str, Any], *, is_unlimited: bool | None = None
+    ) -> str:
         if package.get("data"):
             return str(package["data"])
-        if package.get("is_unlimited"):
+        unlimited = (
+            is_unlimited
+            if is_unlimited is not None
+            else AiraloPackageProvider._resolve_is_unlimited(package)
+        )
+        if unlimited:
             return "Unlimited"
         amount = package.get("amount")
         if amount is None:
@@ -386,8 +557,9 @@ class AiraloTopupProvider:
 
         price = package.get("price")
         net_price = package.get("net_price")
+        is_unlimited = AiraloPackageProvider._resolve_is_unlimited(package)
         data_allowance = str(package.get("data") or "")
-        if not data_allowance and package.get("is_unlimited"):
+        if not data_allowance and is_unlimited:
             data_allowance = "Unlimited"
 
         return TopupPackage(
@@ -397,7 +569,7 @@ class AiraloTopupProvider:
             validity_days=int(package.get("day") or 0),
             price_usd=Decimal(str(price)) if price is not None else Decimal("0.00"),
             net_price_usd=Decimal(str(net_price)) if net_price is not None else None,
-            is_unlimited=bool(package.get("is_unlimited", False)),
+            is_unlimited=is_unlimited,
             plan_type=str(package.get("type") or "topup"),
         )
 
