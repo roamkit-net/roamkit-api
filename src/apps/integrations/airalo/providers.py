@@ -293,7 +293,7 @@ class AiraloPackageProvider:
 
     @staticmethod
     def _parse_voice_text_from_title(title: str) -> tuple[int | None, int | None]:
-        """Fallback when Airalo omits package.voice/text but encodes them in the title."""
+        """Parse mins/SMS from title when Airalo omits voice/text fields."""
         voice_match = re.search(r"(\d+)\s*mins?\b", title, flags=re.IGNORECASE)
         text_match = re.search(r"(\d+)\s*sms\b", title, flags=re.IGNORECASE)
         voice = int(voice_match.group(1)) if voice_match else None
