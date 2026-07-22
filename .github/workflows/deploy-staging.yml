@@ -9,6 +9,11 @@ on:
         required: false
         type: string
         default: /opt/stacks/roamkit-net
+    secrets:
+      STAGING_HOST:
+        required: true
+      STAGING_SSH_KEY:
+        required: true
 
 jobs:
   deploy:

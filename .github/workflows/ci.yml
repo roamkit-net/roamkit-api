@@ -23,7 +23,8 @@ jobs:
     uses: ./.github/workflows/docker-build-push.yml
     with:
       image-name: roamkit-api
-    secrets: inherit
+    secrets:
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
 
   deploy:
     needs: docker
@@ -31,4 +32,6 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/deploy-staging.yml
-    secrets: inherit
+    secrets:
+      STAGING_HOST: ${{ secrets.STAGING_HOST }}
+      STAGING_SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
