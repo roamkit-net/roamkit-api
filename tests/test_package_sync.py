@@ -50,6 +50,37 @@ def test_package_sync_upserts_packages(sample_package_dto: PackageDTO) -> None:
     assert package.title == "1 GB - 7 Days"
     assert package.country_code == "US"
     assert package.is_active is True
+    assert package.voice_minutes is None
+    assert package.text_sms is None
+
+
+@pytest.mark.django_db
+def test_package_sync_upserts_voice_and_text(
+    sample_package_dto: PackageDTO,
+) -> None:
+    dto = PackageDTO(
+        external_id="pkg-us-20gb-voice",
+        title="20 GB - 365 Days",
+        operator_title=sample_package_dto.operator_title,
+        operator_id=sample_package_dto.operator_id,
+        country_code="US",
+        data_allowance="20 GB",
+        validity_days=365,
+        price_usd=Decimal("49.00"),
+        net_price_usd=None,
+        is_unlimited=False,
+        plan_type="data",
+        voice_minutes=200,
+        text_sms=200,
+    )
+    provider = FakePackageProvider([dto])
+    service = PackageSyncService(provider)
+
+    service.sync()
+
+    package = Package.objects.get(external_id="pkg-us-20gb-voice")
+    assert package.voice_minutes == 200
+    assert package.text_sms == 200
 
 
 @pytest.mark.django_db

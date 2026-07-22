@@ -33,13 +33,28 @@ class _FakePackageClient:
                                 "data": "1 GB",
                                 "day": 7,
                                 "is_unlimited": False,
+                                "voice": None,
+                                "text": None,
                                 "price": 11.5,
                                 "net_price": 6.3,
                                 "prices": {
                                     "recommended_retail_price": {"USD": 11.5},
                                     "net_price": {"USD": 6.3},
                                 },
-                            }
+                            },
+                            {
+                                "id": "change-20gb-365d-voice",
+                                "title": "20 GB - 365 Days",
+                                "data": "20 GB",
+                                "day": 365,
+                                "is_unlimited": False,
+                                "voice": 200,
+                                "text": 200,
+                                "price": 49.0,
+                                "prices": {
+                                    "recommended_retail_price": {"USD": 49.0},
+                                },
+                            },
                         ],
                     }
                 ],
@@ -229,7 +244,7 @@ def test_airalo_provider_maps_operator_packages() -> None:
 
     packages = provider.list_packages(PackageFilters())
 
-    assert len(packages) == 3
+    assert len(packages) == 4
     package = packages[0]
     assert package.external_id == "change-7days-1gb"
     assert package.title == "1 GB - 7 Days"
@@ -241,11 +256,18 @@ def test_airalo_provider_maps_operator_packages() -> None:
     assert package.net_price_usd == Decimal("6.30")
     assert package.is_unlimited is False
     assert package.plan_type == "data"
+    assert package.voice_minutes is None
+    assert package.text_sms is None
     assert package.location_slug == "united-states"
     assert package.location_title == "United States"
     assert package.location_image_url == "https://cdn.example.com/us.png"
     assert package.coverage_type == "local"
     assert package.covered_country_codes == ("US",)
+
+    dct = next(pkg for pkg in packages if pkg.external_id == "change-20gb-365d-voice")
+    assert dct.voice_minutes == 200
+    assert dct.text_sms == 200
+    assert dct.plan_type == "data"
 
 
 def test_airalo_provider_maps_regional_and_global() -> None:

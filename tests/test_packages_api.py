@@ -60,6 +60,36 @@ def test_packages_list_returns_active_packages(
     assert result["title"] == "1 GB - 7 Days"
     assert result["country_code"] == "US"
     assert result["price_usd"] == "11.50"
+    assert result["voice_minutes"] is None
+    assert result["text_sms"] is None
+
+
+@pytest.mark.django_db
+def test_packages_list_includes_voice_and_text(client: Client) -> None:
+    Package.objects.create(
+        external_id="pkg-us-20gb-voice",
+        title="20 GB - 365 Days",
+        operator_title="Change",
+        operator_id="op-1",
+        country_code="US",
+        data_allowance="20 GB",
+        validity_days=365,
+        price_usd=Decimal("49.00"),
+        is_unlimited=False,
+        plan_type="data",
+        voice_minutes=200,
+        text_sms=200,
+        is_active=True,
+        synced_at=datetime.now(UTC),
+    )
+
+    response = client.get("/api/v1/packages/")
+
+    assert response.status_code == 200
+    result = response.json()["results"][0]
+    assert result["id"] == "pkg-us-20gb-voice"
+    assert result["voice_minutes"] == 200
+    assert result["text_sms"] == 200
 
 
 @pytest.mark.django_db

@@ -22,6 +22,8 @@ class PackageSerializer(serializers.ModelSerializer):
             "price_usd",
             "is_unlimited",
             "plan_type",
+            "voice_minutes",
+            "text_sms",
         ]
         read_only_fields = fields
 

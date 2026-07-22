@@ -146,6 +146,8 @@ class AiraloPackageProvider:
             net_price_usd=net_price_usd,
             is_unlimited=bool(package.get("is_unlimited", False)),
             plan_type=plan_type,
+            voice_minutes=self._optional_positive_int(package.get("voice")),
+            text_sms=self._optional_positive_int(package.get("text")),
             location_slug=location_slug,
             location_title=location_title,
             location_image_url=location_image_url,
@@ -267,6 +269,19 @@ class AiraloPackageProvider:
             return Decimal(str(package["net_price"]))
 
         return None
+
+    @staticmethod
+    def _optional_positive_int(value: Any) -> int | None:
+        """Map Airalo voice/text: null → None; positive ints kept; 0/invalid → None."""
+        if value is None:
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        if parsed <= 0:
+            return None
+        return parsed
 
 
 class AiraloOrderProvider:

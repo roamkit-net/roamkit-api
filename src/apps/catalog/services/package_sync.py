@@ -113,6 +113,8 @@ class PackageSyncService:
                     "net_price_usd": dto.net_price_usd,
                     "is_unlimited": dto.is_unlimited,
                     "plan_type": dto.plan_type,
+                    "voice_minutes": dto.voice_minutes,
+                    "text_sms": dto.text_sms,
                     "source": self.source,
                     "is_active": True,
                     "synced_at": synced_at,

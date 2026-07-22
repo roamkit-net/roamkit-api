@@ -27,6 +27,8 @@ class PackageDTO:
     net_price_usd: Decimal | None
     is_unlimited: bool
     plan_type: str
+    voice_minutes: int | None = None
+    text_sms: int | None = None
     location_slug: str = ""
     location_title: str = ""
     location_image_url: str = ""

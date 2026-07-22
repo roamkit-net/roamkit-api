@@ -63,6 +63,8 @@ class Package(models.Model):
     )
     is_unlimited = models.BooleanField(default=False)
     plan_type = models.CharField(max_length=32, default="data")
+    voice_minutes = models.PositiveIntegerField(null=True, blank=True)
+    text_sms = models.PositiveIntegerField(null=True, blank=True)
     source = models.CharField(max_length=32, default="airalo")
     is_active = models.BooleanField(default=True, db_index=True)
     synced_at = models.DateTimeField()
