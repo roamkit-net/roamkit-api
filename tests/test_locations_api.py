@@ -78,8 +78,8 @@ def test_locations_list_filters_by_type(client: Client) -> None:
         is_popular=False,
     )
     global_loc = Location.objects.create(
-        slug="world",
-        title="World",
+        slug="global",
+        title="Discover Global",
         coverage_type=Location.COVERAGE_GLOBAL,
         covered_country_codes=["HR", "US"],
         is_popular=True,
@@ -89,7 +89,7 @@ def test_locations_list_filters_by_type(client: Client) -> None:
     _create_package(external_id="world-pkg", location=global_loc, price="50.00")
 
     popular = client.get("/api/v1/locations/?type=popular").json()
-    assert {item["slug"] for item in popular["results"]} == {"croatia", "world"}
+    assert {item["slug"] for item in popular["results"]} == {"croatia", "global"}
 
     locals_only = client.get("/api/v1/locations/?type=local").json()
     assert [item["slug"] for item in locals_only["results"]] == ["croatia"]
@@ -99,7 +99,7 @@ def test_locations_list_filters_by_type(client: Client) -> None:
     assert regionals["results"][0]["covered_country_codes"] == ["HR", "DE"]
 
     globals_only = client.get("/api/v1/locations/?type=global").json()
-    assert [item["slug"] for item in globals_only["results"]] == ["world"]
+    assert [item["slug"] for item in globals_only["results"]] == ["global"]
     assert globals_only["results"][0]["covered_country_codes"] == ["HR", "US"]
 
 
@@ -146,8 +146,8 @@ def test_location_detail_includes_broader_coverage(client: Client) -> None:
         covered_country_codes=["JP", "KR"],
     )
     world = Location.objects.create(
-        slug="world",
-        title="World",
+        slug="global",
+        title="Discover Global",
         coverage_type=Location.COVERAGE_GLOBAL,
         covered_country_codes=["HR", "US", "JP"],
     )
@@ -173,7 +173,7 @@ def test_location_detail_includes_broader_coverage(client: Client) -> None:
         }
     ]
     broader_slugs = {item["slug"] for item in payload["broader_locations"]}
-    assert broader_slugs == {"europe", "world"}
+    assert broader_slugs == {"europe", "global"}
     assert "asia" not in broader_slugs
 
     europe_detail = client.get("/api/v1/locations/europe/").json()
@@ -204,3 +204,24 @@ def test_packages_list_filters_by_location(client: Client) -> None:
     payload = response.json()
     assert payload["count"] == 1
     assert payload["results"][0]["id"] == "hr"
+
+
+@pytest.mark.django_db
+def test_location_aliases_resolve_to_global(client: Client) -> None:
+    global_loc = Location.objects.create(
+        slug="global",
+        title="Discover Global",
+        coverage_type=Location.COVERAGE_GLOBAL,
+        covered_country_codes=["US", "JP"],
+        is_popular=True,
+    )
+    _create_package(external_id="discover-std", location=global_loc, price="8.50")
+
+    for alias in ("world", "discover", "global"):
+        detail = client.get(f"/api/v1/locations/{alias}/")
+        assert detail.status_code == 200, alias
+        assert detail.json()["slug"] == "global"
+
+        packages = client.get(f"/api/v1/packages/?location={alias}").json()
+        assert packages["count"] == 1, alias
+        assert packages["results"][0]["id"] == "discover-std"

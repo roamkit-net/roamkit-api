@@ -21,9 +21,17 @@ COVERAGE_LOCAL = "local"
 COVERAGE_REGIONAL = "regional"
 COVERAGE_GLOBAL = "global"
 
-# Airalo consumer URLs use /discover-esim; Partner API slug is usually "world".
+# Partner API uses slug "world"; Airalo consumer product is /discover-esim.
+# We canonicalize to "global" so the store URL is /global-esim.
+_GLOBAL_LOCATION_CANONICAL_SLUG = "global"
 _GLOBAL_LOCATION_SLUG_ALIASES = frozenset(
-    {"world", "global", "worldwide", "discover", "discover-global"}
+    {
+        "world",
+        "global",
+        "worldwide",
+        "discover",
+        "discover-global",
+    }
 )
 
 
@@ -311,7 +319,7 @@ class AiraloPackageProvider:
         country_code: str,
     ) -> str:
         slug = AiraloPackageProvider._normalize_location_slug(location_slug)
-        if slug in _GLOBAL_LOCATION_SLUG_ALIASES:
+        if slug == _GLOBAL_LOCATION_CANONICAL_SLUG:
             return COVERAGE_GLOBAL
 
         normalized_type = operator_type.strip().lower()
@@ -331,7 +339,7 @@ class AiraloPackageProvider:
     def _normalize_location_slug(location_slug: str) -> str:
         slug = location_slug.strip().lower()
         if slug in _GLOBAL_LOCATION_SLUG_ALIASES:
-            return "world"
+            return _GLOBAL_LOCATION_CANONICAL_SLUG
         return slug
 
     @staticmethod
@@ -342,7 +350,7 @@ class AiraloPackageProvider:
         operator_title: str,
     ) -> str:
         if coverage_type == COVERAGE_GLOBAL:
-            return "world"
+            return _GLOBAL_LOCATION_CANONICAL_SLUG
         if country_code:
             return country_code.lower()
         slug = "".join(

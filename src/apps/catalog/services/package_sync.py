@@ -64,7 +64,7 @@ POPULAR_LOCATION_SLUGS = frozenset(
         "brazil",
         "india",
         "europe",
-        "world",
+        "global",
     }
 )
 
@@ -152,6 +152,17 @@ class PackageSyncService:
         is_popular = (
             slug in POPULAR_LOCATION_SLUGS or country_code in POPULAR_COUNTRY_CODES
         )
+
+        # Partner historically used slug "world"; rename in place so packages
+        # keep the same Location row when we canonicalize to "global".
+        if slug == "global":
+            legacy = Location.objects.filter(slug="world").first()
+            if (
+                legacy is not None
+                and not Location.objects.filter(slug="global").exists()
+            ):
+                legacy.slug = "global"
+                legacy.save(update_fields=["slug"])
 
         location, _ = Location.objects.update_or_create(
             slug=slug,

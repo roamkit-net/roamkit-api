@@ -1,9 +1,11 @@
 """Catalog API views."""
 
 from django.db.models import Min, Q
+from django.shortcuts import get_object_or_404
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.permissions import AllowAny
 
+from apps.catalog.location_slugs import resolve_location_slug
 from apps.catalog.models import Location, Package
 from apps.catalog.serializers import (
     LocationListSerializer,
@@ -29,7 +31,9 @@ class PackageListView(ListAPIView):
             queryset = queryset.filter(country_code__iexact=country.strip())
         location = self.request.query_params.get("location")
         if location:
-            queryset = queryset.filter(location__slug__iexact=location.strip())
+            queryset = queryset.filter(
+                location__slug__iexact=resolve_location_slug(location)
+            )
         return queryset
 
 
@@ -71,7 +75,10 @@ class LocationDetailView(RetrieveAPIView):
         return Location.objects.annotate(min_price_usd=_active_package_min_price())
 
     def get_object(self):
-        location = super().get_object()
+        queryset = self.filter_queryset(self.get_queryset())
+        raw_slug = self.kwargs[self.lookup_url_kwarg]
+        slug = resolve_location_slug(raw_slug)
+        location = get_object_or_404(queryset, slug__iexact=slug)
         location.broader_locations = self._broader_locations(location)
         return location
 

@@ -416,7 +416,7 @@ def test_airalo_provider_resolves_is_unlimited_from_flag_and_data() -> None:
 
     discover = by_id["discover-in-7days-unlimited"]
     assert discover.is_unlimited is True
-    assert discover.location_slug == "world"
+    assert discover.location_slug == "global"
     assert discover.coverage_type == "global"
 
 
@@ -448,7 +448,7 @@ def test_airalo_provider_maps_regional_and_global() -> None:
     ]
 
     world = by_id["world-20gb-30d"]
-    assert world.location_slug == "world"
+    assert world.location_slug == "global"
     assert world.location_title == "Discover Global"
     assert world.coverage_type == "global"
     assert world.covered_country_codes == ("US", "JP")
