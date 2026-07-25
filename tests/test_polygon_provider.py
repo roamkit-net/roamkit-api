@@ -221,6 +221,45 @@ def test_fetch_usdt_transfer_no_matching_log(provider_settings) -> None:
 
 
 @pytest.mark.django_db
+def test_fetch_usdt_transfer_wrong_token_only_raises(provider_settings) -> None:
+    other_token = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    client = _ScriptedRpcClient(
+        {
+            "eth_chainId": "0x89",
+            "eth_getTransactionReceipt": _receipt(
+                logs=[_transfer_log(contract=other_token, amount_raw=5_000_000)]
+            ),
+            "eth_blockNumber": "0x100",
+        }
+    )
+    provider = PolygonProvider(client=client)  # type: ignore[arg-type]
+
+    with pytest.raises(TransferNotFoundError, match="No USDT transfer"):
+        provider.fetch_usdt_transfer(TX_HASH)
+
+
+@pytest.mark.django_db
+def test_fetch_usdt_transfer_wrong_destination_only_raises(provider_settings) -> None:
+    client = _ScriptedRpcClient(
+        {
+            "eth_chainId": "0x89",
+            "eth_getTransactionReceipt": _receipt(
+                logs=[
+                    _transfer_log(
+                        to_address="0x3333333333333333333333333333333333333333"
+                    )
+                ]
+            ),
+            "eth_blockNumber": "0x100",
+        }
+    )
+    provider = PolygonProvider(client=client)  # type: ignore[arg-type]
+
+    with pytest.raises(TransferNotFoundError, match="No USDT transfer"):
+        provider.fetch_usdt_transfer(TX_HASH)
+
+
+@pytest.mark.django_db
 def test_fetch_usdt_transfer_rejects_wrong_chain_id(provider_settings) -> None:
     client = _ScriptedRpcClient({"eth_chainId": "0x1"})
     provider = PolygonProvider(client=client)  # type: ignore[arg-type]
