@@ -10,7 +10,13 @@ permissions:
   packages: write
 
 jobs:
+  secret-scan:
+    uses: ./.github/workflows/secret-scan.yml
+    permissions:
+      contents: read
+
   ci:
+    needs: secret-scan
     uses: ./.github/workflows/ci-python.yml
     with:
       coverage-threshold: "70"
@@ -35,3 +41,13 @@ jobs:
     secrets:
       STAGING_HOST: ${{ secrets.STAGING_HOST }}
       STAGING_SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+
+  deploy-production:
+    needs: docker
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/deploy-production.yml
+    secrets:
+      PRODUCTION_HOST: ${{ secrets.PRODUCTION_HOST }}
+      PRODUCTION_SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}

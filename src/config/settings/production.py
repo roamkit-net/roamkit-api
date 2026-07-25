@@ -2,6 +2,8 @@
 
 import os
 
+from config.sentry import init_sentry
+
 from .base import *  # noqa: F403
 from .secrets import require_production_secret
 
@@ -38,3 +40,5 @@ CSRF_TRUSTED_ORIGINS = [
 # Prefer explicit production label when unset.
 if not ROAMKIT_ENVIRONMENT:  # noqa: F405
     ROAMKIT_ENVIRONMENT = "production"
+
+init_sentry(environment=ROAMKIT_ENVIRONMENT)
