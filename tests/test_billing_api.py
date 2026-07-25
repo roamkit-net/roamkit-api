@@ -182,6 +182,48 @@ def test_billing_config_etag_stable_for_same_payload(client: Client) -> None:
 
 
 @pytest.mark.django_db
+@override_settings(BILLING_ENABLED=True, **_POLYGON)
+def test_billing_config_not_modified_when_if_none_match(client: Client) -> None:
+    initial = client.get("/api/v1/billing/config/")
+    assert initial.status_code == 200
+    etag = initial["ETag"]
+
+    response = client.get(
+        "/api/v1/billing/config/",
+        HTTP_IF_NONE_MATCH=etag,
+    )
+
+    assert response.status_code == 304
+    assert response.content == b""
+    assert response["Cache-Control"] == "public, max-age=300"
+    assert response["ETag"] == etag
+
+
+@pytest.mark.django_db
+@override_settings(**_POLYGON)
+def test_billing_config_etag_changes_when_config_changes(client: Client) -> None:
+    with override_settings(BILLING_ENABLED=True):
+        enabled = client.get("/api/v1/billing/config/")
+    with override_settings(BILLING_ENABLED=False):
+        disabled = client.get("/api/v1/billing/config/")
+
+    assert enabled.status_code == 200
+    assert disabled.status_code == 200
+    assert enabled["ETag"] != disabled["ETag"]
+
+    with override_settings(BILLING_ENABLED=False):
+        stale = client.get(
+            "/api/v1/billing/config/",
+            HTTP_IF_NONE_MATCH=enabled["ETag"],
+        )
+
+    assert stale.status_code == 200
+    _assert_billing_config_payload(stale.json(), billing_enabled=False)
+    assert stale["ETag"] == disabled["ETag"]
+    assert stale["Cache-Control"] == "public, max-age=300"
+
+
+@pytest.mark.django_db
 @override_settings(
     BILLING_ENABLED=True,
     WALLETCONNECT_ENABLED=True,
