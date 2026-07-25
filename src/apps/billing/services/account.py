@@ -1,4 +1,4 @@
-"""Billing helpers (schema-era; CreditService arrives in a later PR)."""
+"""Account provisioning helpers."""
 
 from __future__ import annotations
 
