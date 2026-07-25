@@ -149,11 +149,29 @@ SIMPLE_JWT = {
 PACKAGE_PROVIDER = "apps.integrations.airalo.providers.AiraloPackageProvider"
 ORDER_PROVIDER = "apps.integrations.airalo.providers.AiraloOrderProvider"
 TOPUP_PROVIDER = "apps.integrations.airalo.providers.AiraloTopupProvider"
+BLOCKCHAIN_PROVIDER = os.environ.get(
+    "BLOCKCHAIN_PROVIDER",
+    "apps.integrations.polygon.providers.PolygonProvider",
+)
 
 AIRALO_CLIENT_ID = os.environ.get("AIRALO_CLIENT_ID", "")
 AIRALO_CLIENT_SECRET = os.environ.get("AIRALO_CLIENT_SECRET", "")
 AIRALO_SANDBOX = os.environ.get("AIRALO_SANDBOX", "true").lower() == "true"
 AIRALO_BASE_URL = os.environ.get("AIRALO_BASE_URL", "https://partners-api.airalo.com")
+
+# Polygon USDT deposits (ADR-010). Defaults match mainnet; set wallet in env.
+POLYGON_RPC_URL = os.environ.get("POLYGON_RPC_URL", "")
+POLYGON_USDT_CONTRACT = os.environ.get(
+    "POLYGON_USDT_CONTRACT",
+    "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+)
+POLYGON_PLATFORM_WALLET = os.environ.get("POLYGON_PLATFORM_WALLET", "")
+POLYGON_CHAIN_ID = int(os.environ.get("POLYGON_CHAIN_ID", "137"))
+POLYGON_MIN_CONFIRMATIONS = int(os.environ.get("POLYGON_MIN_CONFIRMATIONS", "20"))
+POLYGON_USDT_DECIMALS = int(os.environ.get("POLYGON_USDT_DECIMALS", "6"))
+POLYGON_RPC_TIMEOUT = float(os.environ.get("POLYGON_RPC_TIMEOUT", "10"))
+POLYGON_RPC_RETRIES = int(os.environ.get("POLYGON_RPC_RETRIES", "3"))
+POLYGON_RPC_BACKOFF_BASE = float(os.environ.get("POLYGON_RPC_BACKOFF_BASE", "0.5"))
 
 FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "http://localhost:3000").rstrip(
     "/"

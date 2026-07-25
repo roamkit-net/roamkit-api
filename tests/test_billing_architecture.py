@@ -17,6 +17,7 @@ from apps.billing.models import (
 
 SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
 AIRALO_ROOT = SRC_ROOT / "apps" / "integrations" / "airalo"
+POLYGON_ROOT = SRC_ROOT / "apps" / "integrations" / "polygon"
 
 # Only CreditService may mutate Account.balance after create.
 _ALLOWED_BALANCE_WRITERS = frozenset(
@@ -68,24 +69,40 @@ def _collect_balance_writes(path: Path) -> list[str]:
 def test_airalo_modules_do_not_import_billing() -> None:
     offenders: list[str] = []
     for path in _iter_python_files(AIRALO_ROOT):
-        source = path.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name == "apps.billing" or alias.name.startswith(
-                        "apps.billing."
-                    ):
-                        offenders.append(f"{path}:{node.lineno} import {alias.name}")
-            elif isinstance(node, ast.ImportFrom):
-                module = node.module or ""
-                if module == "apps.billing" or module.startswith("apps.billing."):
-                    offenders.append(f"{path}:{node.lineno} from {module}")
-                if module == "apps" and any(
-                    alias.name == "billing" for alias in node.names
-                ):
-                    offenders.append(f"{path}:{node.lineno} from apps import billing")
+        offenders.extend(_collect_billing_imports(path))
     assert offenders == []
+
+
+def test_polygon_provider_does_not_import_billing_money_path() -> None:
+    """BlockchainProvider must stay read-only wrt credits / ledger / Account."""
+    offenders: list[str] = []
+    for path in _iter_python_files(POLYGON_ROOT):
+        offenders.extend(_collect_billing_imports(path))
+    assert (
+        offenders == []
+    ), "Polygon provider must not import billing money models or CreditService"
+
+
+def _collect_billing_imports(path: Path) -> list[str]:
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(path))
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "apps.billing" or alias.name.startswith(
+                    "apps.billing."
+                ):
+                    offenders.append(f"{path}:{node.lineno} import {alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == "apps.billing" or module.startswith("apps.billing."):
+                offenders.append(f"{path}:{node.lineno} from {module}")
+            if module == "apps" and any(
+                alias.name == "billing" for alias in node.names
+            ):
+                offenders.append(f"{path}:{node.lineno} from apps import billing")
+    return offenders
 
 
 def test_account_balance_mutations_only_in_credit_service() -> None:
