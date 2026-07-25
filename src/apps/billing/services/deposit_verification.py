@@ -61,6 +61,31 @@ class DepositVerificationService:
             return int(settings.POLYGON_MIN_CONFIRMATIONS)
         return self._min_confirmations
 
+    def reverify(self, deposit: DepositRequest) -> DepositRequest:
+        """Ops re-verify for PENDING (retry) or FAILED (reset + retry).
+
+        ``COMPLETED`` deposits are returned unchanged. Idempotent credits use
+        the existing ``deposit:{id}`` ledger key.
+        """
+        if not settings.BILLING_ENABLED:
+            raise BillingDisabledError("Billing is disabled")
+
+        with transaction.atomic():
+            locked = DepositRequest.objects.select_for_update().get(pk=deposit.pk)
+            if locked.status == DepositRequest.Status.COMPLETED:
+                return locked
+            if locked.status == DepositRequest.Status.FAILED:
+                if not locked.tx_hash:
+                    raise DepositVerificationError(
+                        "Cannot re-verify a failed deposit without tx_hash"
+                    )
+                locked.status = DepositRequest.Status.PENDING
+                locked.failure_reason = ""
+                locked.save(update_fields=["status", "failure_reason", "updated_at"])
+            deposit = locked
+
+        return self._verify_pending(deposit)
+
     def verify(
         self,
         account: Account,

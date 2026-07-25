@@ -5,10 +5,13 @@ from __future__ import annotations
 import logging
 
 from shared.events.billing_events import (
+    BalanceDriftDetected,
     CreditDebited,
     CreditGranted,
     DepositVerified,
     FulfillmentRefunded,
+    SubscriptionPaused,
+    SubscriptionRenewed,
 )
 from shared.events.event_bus import event_bus
 from shared.events.order_events import AiraloOrderCreated, TopupCompleted
@@ -110,6 +113,53 @@ def handle_fulfillment_refunded(event: FulfillmentRefunded) -> None:
     )
 
 
+def handle_subscription_renewed(event: SubscriptionRenewed) -> None:
+    """Stub: log subscription renewal; email/webhook comes later."""
+    logger.info(
+        "SubscriptionRenewed subscription_id=%s account_id=%s esim_id=%s "
+        "amount=%s balance_after=%s next_billing_date=%s "
+        "ledger_entry_id=%s created_at=%s",
+        event.subscription_id,
+        event.account_id,
+        event.esim_id,
+        event.amount,
+        event.balance_after,
+        event.next_billing_date,
+        event.ledger_entry_id,
+        event.created_at,
+    )
+
+
+def handle_subscription_paused(event: SubscriptionPaused) -> None:
+    """Stub: log underfunded pause; email to deposit_url comes later."""
+    logger.info(
+        "SubscriptionPaused subscription_id=%s account_id=%s esim_id=%s "
+        "amount_required=%s balance=%s deposit_url=%s "
+        "next_billing_date=%s created_at=%s",
+        event.subscription_id,
+        event.account_id,
+        event.esim_id,
+        event.amount_required,
+        event.balance,
+        event.deposit_url,
+        event.next_billing_date,
+        event.created_at,
+    )
+
+
+def handle_balance_drift_detected(event: BalanceDriftDetected) -> None:
+    """Stub: ops alert when balance cache drifts from ledger."""
+    logger.error(
+        "BalanceDriftDetected account_id=%s cached_balance=%s "
+        "ledger_sum=%s drift=%s detected_at=%s",
+        event.account_id,
+        event.cached_balance,
+        event.ledger_sum,
+        event.drift,
+        event.detected_at,
+    )
+
+
 def register_handlers() -> None:
     """Subscribe stub handlers once (safe under Django autoreload)."""
     global _registered
@@ -121,4 +171,7 @@ def register_handlers() -> None:
     event_bus.subscribe(CreditGranted, handle_credit_granted)
     event_bus.subscribe(CreditDebited, handle_credit_debited)
     event_bus.subscribe(FulfillmentRefunded, handle_fulfillment_refunded)
+    event_bus.subscribe(SubscriptionRenewed, handle_subscription_renewed)
+    event_bus.subscribe(SubscriptionPaused, handle_subscription_paused)
+    event_bus.subscribe(BalanceDriftDetected, handle_balance_drift_detected)
     _registered = True

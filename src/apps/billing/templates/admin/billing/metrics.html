@@ -1,0 +1,19 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<h1>Billing metrics</h1>
+<table>
+  <tr><th>Total deposited USDT</th><td>{{ metrics.total_deposited_usdt }}</td></tr>
+  <tr><th>Completed deposits</th><td>{{ metrics.deposit_count }}</td></tr>
+  <tr><th>Average deposit</th><td>{{ metrics.average_deposit|default:"—" }}</td></tr>
+  <tr><th>Total spent credits</th><td>{{ metrics.total_spent_credits }}</td></tr>
+  <tr><th>Failed verifications</th><td>{{ metrics.failed_verify_count }}</td></tr>
+</table>
+<h2>Spend by reference type</h2>
+<table>
+  <tr><th>Type</th><th>Spent</th></tr>
+  {% for ref, amount in spend_by_type.items %}
+  <tr><td>{{ ref }}</td><td>{{ amount }}</td></tr>
+  {% endfor %}
+</table>
+<p><a href="{% url 'admin:billing_account_changelist' %}">← Back to accounts</a></p>
+{% endblock %}

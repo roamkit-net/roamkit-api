@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from django.db import IntegrityError, transaction
+from django.db.models import Sum
 
 from apps.billing.exceptions import (
     CreditServiceError,
@@ -145,6 +146,67 @@ class CreditService:
             if existing is not None:
                 return existing
             raise
+
+    def admin_adjust(
+        self,
+        account: Account,
+        amount: Decimal | int | str,
+        *,
+        credit: bool,
+        reason: str,
+        actor_id: str | UUID,
+        idempotency_key: str | None = None,
+    ) -> CreditLedgerEntry:
+        """Apply an admin credit or debit via ``ADMIN_ADJUSTMENT``.
+
+        ``amount`` must be > 0. ``credit=True`` adds funds; ``False`` debits.
+        ``reason`` is required for audit (stored as part of the reference id
+        prefix is not enough — callers should persist reason in admin logs).
+        """
+        if not (reason or "").strip():
+            raise CreditServiceError("Admin adjustment reason is required")
+        key = idempotency_key or f"admin-adjust:{uuid4()}"
+        ref_id = f"{actor_id}:{uuid4()}"
+        if credit:
+            return self.credit(
+                account,
+                amount,
+                reference_type=LedgerReferenceType.ADMIN_ADJUSTMENT,
+                reference_id=ref_id,
+                idempotency_key=key,
+            )
+        return self.debit(
+            account,
+            amount,
+            reference_type=LedgerReferenceType.ADMIN_ADJUSTMENT,
+            reference_id=ref_id,
+            idempotency_key=key,
+        )
+
+    def ledger_sum(self, account: Account) -> Decimal:
+        """Return SUM(delta) for ``account`` (ledger source of truth)."""
+        total = CreditLedgerEntry.objects.filter(account=account).aggregate(
+            total=Sum("delta")
+        )["total"]
+        if total is None:
+            return Decimal("0.000000")
+        return Decimal(total).quantize(MONEY_QUANT)
+
+    def rebuild_balance_from_ledger(self, account: Account) -> Decimal:
+        """Set ``Account.balance`` cache from ledger SUM (explicit ops action).
+
+        Does **not** insert a ledger row — the ledger is already correct and
+        the cache is being repaired. Bumps ``version`` when the cache changes.
+        """
+        with transaction.atomic():
+            locked = Account.objects.select_for_update().get(pk=account.pk)
+            expected = self.ledger_sum(locked)
+            if locked.balance == expected:
+                return expected
+            locked.balance = expected
+            locked.version = locked.version + 1
+            locked.save(update_fields=["balance", "version", "updated_at"])
+            return expected
 
     @staticmethod
     def _normalize_amount(amount: Decimal | int | str) -> Decimal:
