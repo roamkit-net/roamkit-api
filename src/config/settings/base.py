@@ -120,6 +120,14 @@ CELERY_BEAT_SCHEDULE = {
         "task": "catalog.sync_airalo_packages",
         "schedule": 3600.0,
     },
+    "billing-renew-subscriptions-daily": {
+        "task": "billing.renew_subscriptions",
+        "schedule": 86400.0,
+    },
+    "billing-reconcile-balances-daily": {
+        "task": "billing.reconcile_balances",
+        "schedule": 86400.0,
+    },
 }
 
 REST_FRAMEWORK = {

@@ -79,3 +79,15 @@ class InsufficientConfirmationsError(DepositVerificationError):
 
 class DepositVerificationFailedError(DepositVerificationError):
     """Raised when on-chain verification fails (wrong amount, reverted, missing)."""
+
+
+class SubscriptionsDisabledError(CreditServiceError):
+    """Raised when subscriptions are disabled via SUBSCRIPTIONS_ENABLED."""
+
+
+class SubscriptionError(Exception):
+    """Base error for subscription renewal operations."""
+
+
+class SubscriptionNotActiveError(SubscriptionError):
+    """Raised when renewing a non-active subscription."""

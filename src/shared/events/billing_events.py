@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from shared.events.events import DomainEvent
@@ -77,3 +77,45 @@ class FulfillmentRefunded(DomainEvent):
     ledger_entry_id: str
     reason: str
     created_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class SubscriptionRenewed(DomainEvent):
+    """Published after subscription debit; next_billing_date advanced."""
+
+    event_version: int = 1
+    subscription_id: str
+    account_id: str
+    esim_id: str
+    amount: Decimal
+    balance_after: Decimal
+    next_billing_date: date
+    ledger_entry_id: str
+    created_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class SubscriptionPaused(DomainEvent):
+    """Published when renewal fails for insufficient funds (email → /me/deposit)."""
+
+    event_version: int = 1
+    subscription_id: str
+    account_id: str
+    esim_id: str
+    amount_required: Decimal
+    balance: Decimal
+    deposit_url: str
+    next_billing_date: date
+    created_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class BalanceDriftDetected(DomainEvent):
+    """Published when Account.balance cache differs from ledger SUM (ops alert)."""
+
+    event_version: int = 1
+    account_id: str
+    cached_balance: Decimal
+    ledger_sum: Decimal
+    drift: Decimal
+    detected_at: datetime

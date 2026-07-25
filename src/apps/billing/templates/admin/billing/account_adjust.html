@@ -1,0 +1,12 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<h1>Adjust balance</h1>
+<p>Account: <strong>{{ account }}</strong> — current balance: <strong>{{ account.balance }}</strong></p>
+<p>Adjustments go through <code>CreditService</code> with <code>ADMIN_ADJUSTMENT</code>. Balance is never edited directly.</p>
+<form method="post">
+  {% csrf_token %}
+  {{ form.as_p }}
+  <input type="submit" value="Apply adjustment" class="default">
+  <a href="{% url 'admin:billing_account_change' account.pk %}">Cancel</a>
+</form>
+{% endblock %}
