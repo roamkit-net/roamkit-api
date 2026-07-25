@@ -62,6 +62,11 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            ROAMKIT_GIT_SHA=${{ github.sha }}
+            ROAMKIT_BUILD_DATE=${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}
+            ROAMKIT_IMAGE_TAG=${{ github.sha }}
+            ROAMKIT_ENVIRONMENT=${{ github.ref_name == 'main' && 'production' || github.ref_name }}
 
       - name: Trivy scan
         if: github.event_name == 'push'
