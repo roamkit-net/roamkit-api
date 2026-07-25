@@ -10,8 +10,6 @@ from apps.billing.services import ensure_billing_account
 
 
 @receiver(post_save, sender=settings.AUTH_USER_MODEL)
-def create_billing_account_for_user(
-    sender, instance, created: bool, **kwargs
-) -> None:
+def create_billing_account_for_user(sender, instance, created: bool, **kwargs) -> None:
     if created:
         ensure_billing_account(instance)

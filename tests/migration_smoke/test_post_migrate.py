@@ -41,13 +41,11 @@ def test_order_account_backfill_preserves_owner() -> None:
 @pytest.mark.django_db
 def test_orders_table_dropped_user_id() -> None:
     with connection.cursor() as cur:
-        cur.execute(
-            """
+        cur.execute("""
             SELECT column_name
             FROM information_schema.columns
             WHERE table_name = 'orders_order'
-            """
-        )
+            """)
         columns = {row[0] for row in cur.fetchall()}
     assert "account_id" in columns
     assert "user_id" not in columns
