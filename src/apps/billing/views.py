@@ -5,7 +5,7 @@ from __future__ import annotations
 from django.conf import settings
 from rest_framework import status
 from rest_framework.exceptions import NotFound, PermissionDenied
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -21,12 +21,18 @@ from apps.billing.exceptions import (
 from apps.billing.models import DepositRequest
 from apps.billing.serializers import (
     BalanceSerializer,
+    BillingConfigSerializer,
     DepositInfoSerializer,
     DepositRequestSerializer,
     VerifyDepositSerializer,
 )
 from apps.billing.services.account import ensure_billing_account
-from apps.billing.services.deposit_info import get_deposit_info
+from apps.billing.services.deposit_info import (
+    BILLING_CONFIG_CACHE_MAX_AGE,
+    billing_config_etag,
+    get_billing_config,
+    get_deposit_info,
+)
 from apps.billing.services.deposit_verification import deposit_verification_service
 from shared.providers.blockchain import BlockchainRPCError
 
@@ -43,6 +49,19 @@ class BillingAPIView(APIView):
             raise NotFound(detail="Not found.")
         if self.require_walletconnect and not settings.WALLETCONNECT_ENABLED:
             raise PermissionDenied(detail="WalletConnect deposits are disabled.")
+
+
+class BillingConfigView(APIView):
+    """GET /api/v1/billing/config/ — public display config (AllowAny; no secrets)."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request: Request) -> Response:
+        payload = BillingConfigSerializer(get_billing_config()).data
+        response = Response(payload)
+        response["Cache-Control"] = f"public, max-age={BILLING_CONFIG_CACHE_MAX_AGE}"
+        response["ETag"] = billing_config_etag(payload)
+        return response
 
 
 class BalanceView(BillingAPIView):

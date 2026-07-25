@@ -6,7 +6,12 @@ from apps.billing.services.credit import (
     credit_service,
     resolve_reference,
 )
-from apps.billing.services.deposit_info import build_eip681_uri, get_deposit_info
+from apps.billing.services.deposit_info import (
+    billing_config_etag,
+    build_eip681_uri,
+    get_billing_config,
+    get_deposit_info,
+)
 from apps.billing.services.deposit_verification import (
     DepositVerificationService,
     deposit_verification_service,
@@ -30,11 +35,13 @@ __all__ = [
     "RebuildService",
     "ReconcileService",
     "SubscriptionService",
+    "billing_config_etag",
     "build_eip681_uri",
     "collect_billing_metrics",
     "credit_service",
     "deposit_verification_service",
     "ensure_billing_account",
+    "get_billing_config",
     "get_deposit_info",
     "rebuild_service",
     "reconcile_service",
