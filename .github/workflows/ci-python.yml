@@ -16,7 +16,12 @@ on:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - roamkit
+      - default
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,7 +37,12 @@ jobs:
         run: bandit -r src/ -ll
 
   migration-smoke:
-    runs-on: ubuntu-latest
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - roamkit
+      - docker
     needs: lint
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +68,12 @@ jobs:
         run: docker compose -f docker/docker-compose.test.yml down -v
 
   test:
-    runs-on: ubuntu-latest
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - roamkit
+      - docker
     needs: [lint, migration-smoke]
     steps:
       - uses: actions/checkout@v4
