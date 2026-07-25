@@ -112,9 +112,9 @@ def test_non_billing_modules_never_write_account_balance() -> None:
             continue
         for path in _iter_python_files(root):
             offenders.extend(_collect_balance_writes(path))
-    assert offenders == [], (
-        "Modules outside apps.billing must not write Account.balance"
-    )
+    assert (
+        offenders == []
+    ), "Modules outside apps.billing must not write Account.balance"
 
 
 @pytest.mark.django_db
