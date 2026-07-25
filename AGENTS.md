@@ -48,8 +48,13 @@ Every feature follows this lifecycle:
 
 Never continue development on a merged branch.
 
-Staging deploys from `develop`. Production/`main` is a later, explicit step — do not
-treat “merge to main” as the default for Faza work unless asked.
+**Branch model:** RoamKit app repos use **`develop` only** as the default and
+integration branch. Do not open PRs against `main`, do not create `main`, and do
+not assume a production `main` workflow exists unless the user explicitly starts
+that phase. (A leftover `main` branch on GitHub, if present, is not part of the
+active workflow.)
+
+Staging deploys from `develop`.
 
 ---
 
