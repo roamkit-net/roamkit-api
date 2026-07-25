@@ -78,7 +78,7 @@ def test_debit_decrements_balance(account: Account) -> None:
 
 @pytest.mark.django_db
 def test_debit_insufficient_funds_raises(account: Account) -> None:
-    with pytest.raises(InsufficientFundsError):
+    with pytest.raises(InsufficientFundsError) as exc_info:
         credit_service.debit(
             account,
             Decimal("1.000000"),
@@ -86,6 +86,11 @@ def test_debit_insufficient_funds_raises(account: Account) -> None:
             reference_id="ord-2",
             idempotency_key="debit-under",
         )
+    err = exc_info.value
+    assert err.account_balance == Decimal("0.000000")
+    assert err.amount_required == Decimal("1.000000")
+    assert err.amount_missing == Decimal("1.000000")
+    assert err.to_api_dict()["code"] == "INSUFFICIENT_CREDITS"
     account.refresh_from_db()
     assert account.balance == Decimal("0")
     assert account.version == 0
@@ -306,6 +311,7 @@ def test_reference_models_registry_resolves_order(account: Account) -> None:
     resolved = resolve_reference(LedgerReferenceType.ORDER, str(order.pk))
     assert resolved is not None
     assert resolved.pk == order.pk
+    assert REFERENCE_MODELS[LedgerReferenceType.TOPUP] is not None
     assert resolve_reference(LedgerReferenceType.TOPUP, "anything") is None
 
 

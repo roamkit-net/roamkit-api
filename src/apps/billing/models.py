@@ -234,11 +234,11 @@ class Subscription(models.Model):
         return f"Subscription {self.pk} ({self.status})"
 
 
-# Admin deep-link registry (TOPUP target TBD when top-up records exist).
+# Admin deep-link registry (ORDER / TOPUP filled in AppConfig.ready).
 REFERENCE_MODELS: dict[str, type[models.Model] | None] = {
     LedgerReferenceType.DEPOSIT: DepositRequest,
-    LedgerReferenceType.ORDER: None,  # resolved to orders.Order when needed
-    LedgerReferenceType.TOPUP: None,
+    LedgerReferenceType.ORDER: None,  # resolved to orders.Order in BillingConfig.ready
+    LedgerReferenceType.TOPUP: None,  # resolved to esims.Topup in EsimsConfig.ready
     LedgerReferenceType.SUBSCRIPTION: Subscription,
     LedgerReferenceType.REFUND: None,
     LedgerReferenceType.ADMIN_ADJUSTMENT: None,

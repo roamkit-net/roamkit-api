@@ -42,3 +42,38 @@ class CreditGranted(DomainEvent):
     reference_id: str
     ledger_entry_id: str
     created_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class CreditDebited(DomainEvent):
+    """Published after credits are debited for an order / top-up spend.
+
+    Snapshot fields are enough for happy-path handlers — no ledger re-fetch.
+    """
+
+    event_version: int = 1
+    account_id: str
+    amount: Decimal
+    balance_after: Decimal
+    reference_type: str
+    reference_id: str
+    ledger_entry_id: str
+    created_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class FulfillmentRefunded(DomainEvent):
+    """Published after provider failure triggers a compensating REFUND credit.
+
+    Snapshot fields cover the refund without re-fetching ledger or order/top-up.
+    """
+
+    event_version: int = 1
+    account_id: str
+    amount: Decimal
+    balance_after: Decimal
+    reference_type: str
+    reference_id: str
+    ledger_entry_id: str
+    reason: str
+    created_at: datetime

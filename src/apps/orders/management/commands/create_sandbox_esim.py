@@ -48,6 +48,7 @@ class Command(BaseCommand):
             user=user,
             package=package,
             customer_ref=f"sandbox:{user.email}",
+            skip_payment=True,
         )
 
         iccids = list(order.esims.values_list("iccid", flat=True))
