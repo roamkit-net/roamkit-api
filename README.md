@@ -40,6 +40,7 @@ Health checks:
 
 - `GET /health/live` — process liveness
 - `GET /health/ready` — database + Redis readiness
+- `GET /version` — non-secret release metadata (`git_sha`, `build_date`, `image_tag`, `environment`)
 
 ## Tests
 
