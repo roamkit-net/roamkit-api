@@ -41,7 +41,7 @@ def esim(db) -> Esim:
         synced_at=timezone.now(),
     )
     order = Order.objects.create(
-        user=user,
+        account=user.billing_account,
         package=package,
         status=Order.Status.FULFILLED,
         external_order_id="1",

@@ -52,6 +52,20 @@ pytest
 docker compose -f docker/docker-compose.test.yml down -v
 ```
 
+### Migration smoke (Order.user → Order.account)
+
+CI runs a dump → migrate → verify path before the main pytest job. Locally:
+
+```bash
+docker compose -f docker/docker-compose.test.yml up -d --wait
+export POSTGRES_HOST=localhost POSTGRES_PORT=5433
+export POSTGRES_USER=roamkit POSTGRES_PASSWORD=roamkit_test
+export REDIS_URL=redis://localhost:6380/0
+./scripts/run_migration_smoke.sh
+```
+
+The fixture dump (`tests/fixtures/migration_smoke/pre_billing.sql`) is a small pre-billing snapshot (users + orders across statuses). Regenerate with `./scripts/build_migration_smoke_dump.sh` after intentional schema changes below that baseline.
+
 Phase 2 DoD coverage lives in `tests/test_phase2_dod.py` (register → `create_sandbox_esim` → `me/esims` + usage + isolation). On staging after deploy, run `roamkit-infra/scripts/staging-dod-faza2.sh` (use `CREATE_SANDBOX=1` on the host to fulfill a sandbox eSIM).
 
 ## CI / deploy

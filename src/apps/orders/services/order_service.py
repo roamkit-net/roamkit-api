@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from django.db import transaction
 
+from apps.billing.services import ensure_billing_account
 from apps.esims.models import Esim
 from apps.orders.models import Order
 from shared.events.event_bus import event_bus
@@ -63,8 +64,9 @@ class OrderService:
         customer_ref: str | None,
     ) -> Order:
         with transaction.atomic():
+            account = ensure_billing_account(user)
             order = Order.objects.create(
-                user=user,
+                account=account,
                 package=package,
                 status=Order.Status.FULFILLING,
                 customer_ref=customer_ref or "",
@@ -84,7 +86,7 @@ class OrderService:
             for sim in result.sims:
                 esims.append(
                     Esim.objects.create(
-                        user=order.user,
+                        user=order.account.user,
                         order=order,
                         iccid=sim.iccid,
                         lpa=sim.lpa,

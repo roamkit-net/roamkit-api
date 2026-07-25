@@ -9,12 +9,13 @@ from apps.accounts.models import User
 @admin.register(User)
 class UserAdmin(DjangoUserAdmin):
     ordering = ("email",)
-    list_display = ("email", "is_staff", "is_active", "created_at")
-    search_fields = ("email",)
+    list_display = ("email", "wallet_address", "is_staff", "is_active", "created_at")
+    search_fields = ("email", "wallet_address")
     list_filter = ("is_staff", "is_active")
 
     fieldsets = (
         (None, {"fields": ("email", "password")}),
+        ("Wallet", {"fields": ("wallet_address",)}),
         (
             "Permissions",
             {

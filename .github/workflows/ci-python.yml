@@ -31,9 +31,35 @@ jobs:
       - name: Bandit
         run: bandit -r src/ -ll
 
-  test:
+  migration-smoke:
     runs-on: ubuntu-latest
     needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start test infrastructure
+        run: docker compose -f docker/docker-compose.test.yml up -d --wait
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Install dependencies
+        run: pip install -r requirements/dev.txt
+      - name: Restore dump, migrate, verify
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5433
+          POSTGRES_USER: roamkit
+          POSTGRES_PASSWORD: roamkit_test
+          REDIS_URL: redis://localhost:6380/0
+        run: |
+          chmod +x scripts/run_migration_smoke.sh
+          ./scripts/run_migration_smoke.sh
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker/docker-compose.test.yml down -v
+
+  test:
+    runs-on: ubuntu-latest
+    needs: [lint, migration-smoke]
     steps:
       - uses: actions/checkout@v4
       - name: Start test infrastructure

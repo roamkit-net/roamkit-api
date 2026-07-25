@@ -41,6 +41,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     """RoamKit user identified by email."""
 
     email = models.EmailField(unique=True, db_index=True)
+    wallet_address = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

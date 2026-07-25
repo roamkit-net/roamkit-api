@@ -95,7 +95,7 @@ def package(db) -> Package:
 
 def _make_esim(*, user: User, package: Package, iccid: str) -> Esim:
     order = Order.objects.create(
-        user=user,
+        account=user.billing_account,
         package=package,
         status=Order.Status.FULFILLED,
         external_order_id=f"ext-{iccid[-4:]}",

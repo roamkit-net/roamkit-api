@@ -14,6 +14,7 @@ from apps.accounts.services.email import (
     send_password_reset_email,
 )
 from apps.accounts.tokens import account_activation_token
+from apps.billing.services import ensure_billing_account
 
 User = get_user_model()
 
@@ -60,6 +61,7 @@ def register_user(*, email: str) -> None:
             user.set_unusable_password()
             try:
                 user.save()
+                ensure_billing_account(user)
             except IntegrityError:
                 # Race: another request created the same email.
                 user = User.objects.filter(email=normalized).first()
