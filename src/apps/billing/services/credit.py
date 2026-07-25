@@ -119,8 +119,8 @@ class CreditService:
                 new_balance = locked.balance + delta
                 if new_balance < 0:
                     raise InsufficientFundsError(
-                        "Insufficient funds: "
-                        f"balance={locked.balance} debit={normalized}"
+                        account_balance=locked.balance,
+                        amount_required=normalized,
                     )
 
                 entry = CreditLedgerEntry(
@@ -182,6 +182,8 @@ credit_service = CreditService()
 
 def resolve_reference(reference_type: str, reference_id: str) -> Any | None:
     """Return the related model instance for admin deep-links, if registered."""
+    from django.core.exceptions import ValidationError
+
     from apps.billing.models import REFERENCE_MODELS
 
     model = REFERENCE_MODELS.get(reference_type)
@@ -189,5 +191,5 @@ def resolve_reference(reference_type: str, reference_id: str) -> Any | None:
         return None
     try:
         return model.objects.filter(pk=reference_id).first()
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, ValidationError):
         return None

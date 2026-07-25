@@ -1,5 +1,9 @@
 """Billing domain exceptions."""
 
+from __future__ import annotations
+
+from decimal import Decimal
+
 
 class CreditServiceError(Exception):
     """Base error for CreditService operations."""
@@ -7,6 +11,41 @@ class CreditServiceError(Exception):
 
 class InsufficientFundsError(CreditServiceError):
     """Raised when a debit would make Account.balance negative."""
+
+    def __init__(
+        self,
+        message: str = "Insufficient funds",
+        *,
+        account_balance: Decimal | None = None,
+        amount_required: Decimal | None = None,
+    ) -> None:
+        self.account_balance = account_balance
+        self.amount_required = amount_required
+        self.amount_missing = (
+            (amount_required - account_balance)
+            if account_balance is not None and amount_required is not None
+            else None
+        )
+        if account_balance is not None and amount_required is not None:
+            message = (
+                f"Insufficient funds: balance={account_balance} "
+                f"debit={amount_required}"
+            )
+        super().__init__(message)
+
+    def to_api_dict(self) -> dict[str, str]:
+        """Structured 402 payload so clients need not re-fetch balance."""
+        payload: dict[str, str] = {
+            "code": "INSUFFICIENT_CREDITS",
+            "detail": str(self),
+        }
+        if self.amount_required is not None:
+            payload["required"] = f"{self.amount_required:.6f}"
+        if self.account_balance is not None:
+            payload["balance"] = f"{self.account_balance:.6f}"
+        if self.amount_missing is not None:
+            payload["missing"] = f"{self.amount_missing:.6f}"
+        return payload
 
 
 class InvalidAmountError(CreditServiceError):

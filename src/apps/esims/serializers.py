@@ -2,7 +2,7 @@
 
 from rest_framework import serializers
 
-from apps.esims.models import Esim
+from apps.esims.models import Esim, Topup
 
 
 class EsimSerializer(serializers.ModelSerializer):
@@ -49,7 +49,7 @@ class UsageSerializer(serializers.Serializer):
 
 
 class TopupPackageSerializer(serializers.Serializer):
-    """Available top-up package for an eSIM (list-only in Phase 2)."""
+    """Available top-up package for an eSIM."""
 
     id = serializers.CharField(source="external_id")
     title = serializers.CharField()
@@ -58,3 +58,28 @@ class TopupPackageSerializer(serializers.Serializer):
     price_usd = serializers.DecimalField(max_digits=10, decimal_places=2)
     is_unlimited = serializers.BooleanField()
     plan_type = serializers.CharField()
+
+
+class PurchaseTopupSerializer(serializers.Serializer):
+    """Request body for POST /api/v1/me/esims/{id}/topups/."""
+
+    package_id = serializers.CharField(max_length=64)
+    idempotency_key = serializers.CharField(max_length=128)
+
+
+class TopupSerializer(serializers.ModelSerializer):
+    """Persisted top-up purchase response."""
+
+    class Meta:
+        model = Topup
+        fields = [
+            "id",
+            "package_external_id",
+            "amount",
+            "status",
+            "external_order_id",
+            "idempotency_key",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields

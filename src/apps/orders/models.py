@@ -33,6 +33,13 @@ class Order(models.Model):
     )
     external_order_id = models.CharField(max_length=64, blank=True, db_index=True)
     customer_ref = models.CharField(max_length=255, blank=True)
+    idempotency_key = models.CharField(
+        max_length=128,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
