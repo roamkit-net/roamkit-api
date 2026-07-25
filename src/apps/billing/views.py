@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from django.conf import settings
+from django.http import HttpResponse
+from django.utils.cache import get_conditional_response
 from rest_framework import status
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -56,12 +58,14 @@ class BillingConfigView(APIView):
 
     permission_classes = [AllowAny]
 
-    def get(self, request: Request) -> Response:
+    def get(self, request: Request) -> HttpResponse:
         payload = BillingConfigSerializer(get_billing_config()).data
+        etag = billing_config_etag(payload)
         response = Response(payload)
         response["Cache-Control"] = f"public, max-age={BILLING_CONFIG_CACHE_MAX_AGE}"
-        response["ETag"] = billing_config_etag(payload)
-        return response
+        response["ETag"] = etag
+        # Matching If-None-Match → 304, empty body, Cache-Control retained.
+        return get_conditional_response(request, etag=etag, response=response)
 
 
 class BalanceView(BillingAPIView):
