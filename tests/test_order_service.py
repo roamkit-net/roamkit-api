@@ -169,7 +169,9 @@ def test_create_sandbox_esim_command(
 
     out = capsys.readouterr().out
     assert "891000000000009125" in out
-    assert Order.objects.filter(user=user, status=Order.Status.FULFILLED).exists()
+    assert Order.objects.filter(
+        account=user.billing_account, status=Order.Status.FULFILLED
+    ).exists()
 
 
 @pytest.mark.django_db

@@ -1,6 +1,5 @@
 """Order models."""
 
-from django.conf import settings
 from django.db import models
 
 
@@ -16,8 +15,8 @@ class Order(models.Model):
         FAILED = "failed", "Failed"
         CANCELLED = "cancelled", "Cancelled"
 
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+    account = models.ForeignKey(
+        "billing.Account",
         on_delete=models.CASCADE,
         related_name="orders",
     )
@@ -40,7 +39,7 @@ class Order(models.Model):
     class Meta:
         ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=["user", "status"]),
+            models.Index(fields=["account", "status"]),
         ]
 
     def __str__(self) -> str:

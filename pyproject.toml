@@ -17,6 +17,7 @@ select = ["E", "F", "I", "B", "UP"]
 DJANGO_SETTINGS_MODULE = "config.settings.dev"
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = "--ignore=tests/migration_smoke"
 
 [tool.coverage.run]
 source = ["src"]

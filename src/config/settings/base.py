@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",
     "core",
     "apps.accounts",
+    "apps.billing",
     "apps.catalog",
     "apps.orders",
     "apps.esims",
