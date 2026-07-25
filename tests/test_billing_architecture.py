@@ -151,3 +151,83 @@ def test_ledger_append_only_enforced_on_model() -> None:
         entry.save()
     with pytest.raises(AppendOnlyViolation):
         entry.delete()
+
+
+# --- PR0.5 readiness gates (go-live must-have #1 extensions) ---
+
+_MONEY_PATH_ROOTS = (
+    SRC_ROOT / "apps" / "billing",
+    SRC_ROOT / "apps" / "orders" / "services",
+    SRC_ROOT / "apps" / "esims" / "services",
+    SRC_ROOT / "apps" / "integrations" / "polygon",
+    SRC_ROOT / "apps" / "integrations" / "airalo",
+)
+
+_FORBIDDEN_FRONTEND_IMPORT_PREFIXES = (
+    "next",
+    "react",
+    "react-dom",
+    "@/",  # Next app alias — must never appear in Django source
+)
+
+
+def test_money_path_has_no_todo_or_fixme() -> None:
+    """Scoped gate: unfinished work markers must not ship on the money path."""
+    offenders: list[str] = []
+    for root in _MONEY_PATH_ROOTS:
+        if not root.exists():
+            continue
+        for path in _iter_python_files(root):
+            rel = str(path.relative_to(SRC_ROOT.parent))
+            for lineno, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                # Match whole-word TODO/FIXME in comments or strings used as markers.
+                upper = line.upper()
+                if "TODO" in upper or "FIXME" in upper:
+                    # Allow words like "todolist" false positives only if not markers.
+                    if (
+                        "TODO" in line
+                        or "FIXME" in line
+                        or "todo:" in line.lower()
+                        or "fixme:" in line.lower()
+                    ):
+                        offenders.append(f"{rel}:{lineno}: {line.strip()}")
+    assert offenders == [], "Remove TODO/FIXME from money-path modules before go-live"
+
+
+def test_billing_does_not_import_frontend_packages() -> None:
+    """Billing (and Django src) must not depend on Next/React client packages."""
+    billing_root = SRC_ROOT / "apps" / "billing"
+    offenders: list[str] = []
+    for path in _iter_python_files(billing_root):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            names: list[str] = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    names = [node.module]
+            for name in names:
+                if any(
+                    name == prefix or name.startswith(prefix + ".")
+                    for prefix in _FORBIDDEN_FRONTEND_IMPORT_PREFIXES
+                    if not prefix.startswith("@")
+                ):
+                    offenders.append(f"{path}:{node.lineno} import {name}")
+    assert offenders == [], "apps.billing must not import frontend packages"
+
+
+def test_orders_and_esims_do_not_bypass_credit_service_for_balance() -> None:
+    """Spend apps may call CreditService; they must not write Account.balance."""
+    offenders: list[str] = []
+    for root in (
+        SRC_ROOT / "apps" / "orders",
+        SRC_ROOT / "apps" / "esims",
+    ):
+        for path in _iter_python_files(root):
+            offenders.extend(_collect_balance_writes(path))
+    assert (
+        offenders == []
+    ), "orders/esims must debit/credit only via CreditService (no .balance writes)"
