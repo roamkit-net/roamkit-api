@@ -48,13 +48,18 @@ Every feature follows this lifecycle:
 
 Never continue development on a merged branch.
 
-**Branch model:** RoamKit app repos use **`develop` only** as the default and
-integration branch. Do not open PRs against `main`, do not create `main`, and do
-not assume a production `main` workflow exists unless the user explicitly starts
-that phase. (A leftover `main` branch on GitHub, if present, is not part of the
-active workflow.)
+**Branch model (Faza 4 / ADR 013):**
 
-Staging deploys from `develop`.
+- Feature work: branch from `develop`, open PRs into `develop` (staging auto-deploy).
+- Production: promote via PR `develop` → `main`. When the production stack and
+  deploy CI exist, `main` auto-deploys to `/opt/stacks/roamkit-production/`.
+- Do not push directly to `main` or `develop`.
+- Do not treat a leftover GitHub `main` as live production until ADR 013 infra
+  PRs (compose + deploy CI) are in place.
+
+Staging deploys from `develop`. Production deploys from `main` (ADR 013).
+
+Go-live ops: `roamkit-docs/docs/ops/production-go-live-checklist.md`.
 
 ---
 
