@@ -28,7 +28,9 @@ jobs:
         with:
           python-version: ${{ inputs.python-version }}
       - name: Install lint tools
-        run: pip install ruff black bandit
+        # Pin Black to match requirements/dev.txt (black>=24.0,<25).
+        # Unpinned `pip install black` can pull 26.x and disagree on wrapping.
+        run: pip install ruff "black>=24.0,<25" bandit
       - name: Ruff
         run: ruff check src/ tests/
       - name: Black
