@@ -149,6 +149,28 @@ CI must remain green. Fix CI on the same PR before merge.
 
 ---
 
+## Lint before push
+
+Do not push until local lint matches what CI runs. Fix lint on the same branch
+before opening or updating the PR — avoid a “style fix” follow-up commit when
+possible.
+
+For **`roamkit-api`**, CI runs **both Ruff and Black**. Passing Ruff alone is
+**not** enough. Black often disagrees with Ruff on wrapping (especially
+multi-line `assert` / message strings) and will fail the lint job.
+
+Before every `roamkit-api` push:
+
+```bash
+ruff check src/ tests/
+black --check src/ tests/
+```
+
+If Black wants changes, run `black src/ tests/` (or the listed files), include
+the formatting in the commit, then push.
+
+---
+
 ## Git
 
 Commit messages follow Conventional Commits.
