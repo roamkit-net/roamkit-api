@@ -37,7 +37,12 @@ jobs:
         run: bandit -r src/ -ll
 
   migration-smoke:
-    runs-on: ubuntu-latest
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - roamkit
+      - docker
     needs: lint
     steps:
       - uses: actions/checkout@v4
