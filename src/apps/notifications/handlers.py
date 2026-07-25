@@ -27,13 +27,16 @@ def handle_deposit_verified(event: DepositVerified) -> None:
     """Stub: log deposit verification; email/webhook comes later."""
     logger.info(
         "DepositVerified deposit_id=%s account_id=%s amount=%s "
-        "balance_after=%s tx_hash=%s payment_method=%s",
+        "balance_after=%s tx_hash=%s payment_method=%s "
+        "ledger_entry_id=%s verified_at=%s",
         event.deposit_id,
         event.account_id,
         event.amount,
         event.balance_after,
         event.tx_hash,
         event.payment_method,
+        event.ledger_entry_id,
+        event.verified_at,
     )
 
 
@@ -41,13 +44,14 @@ def handle_credit_granted(event: CreditGranted) -> None:
     """Stub: log credit grant; email/webhook comes later."""
     logger.info(
         "CreditGranted account_id=%s amount=%s balance_after=%s "
-        "reference_type=%s reference_id=%s ledger_entry_id=%s",
+        "reference_type=%s reference_id=%s ledger_entry_id=%s created_at=%s",
         event.account_id,
         event.amount,
         event.balance_after,
         event.reference_type,
         event.reference_id,
         event.ledger_entry_id,
+        event.created_at,
     )
 
 

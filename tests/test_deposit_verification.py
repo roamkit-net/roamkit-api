@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from typing import Any
 
 import pytest
+from django.db import connection
 from django.test import override_settings
 
 from apps.accounts.models import User
@@ -149,10 +151,59 @@ def test_verify_success_credits_account_and_publishes_snapshots(
     assert verified.balance_after == Decimal("15.500000")
     assert verified.tx_hash == TX_HASH
     assert verified.payment_method == DepositRequest.PaymentMethod.WALLET_CONNECT
+    assert verified.ledger_entry_id == str(entry.pk)
+    assert verified.verified_at == deposit.verified_at
     assert granted.event_version == 1
-    assert granted.ledger_entry_id == str(entry.pk)
-    assert granted.reference_type == LedgerReferenceType.DEPOSIT
+    assert granted.account_id == str(account.pk)
     assert granted.amount == Decimal("15.500000")
+    assert granted.balance_after == Decimal("15.500000")
+    assert granted.reference_type == LedgerReferenceType.DEPOSIT
+    assert granted.reference_id == str(deposit.pk)
+    assert granted.ledger_entry_id == str(entry.pk)
+    assert granted.created_at == entry.created_at
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(BILLING_ENABLED=True)
+def test_concurrent_verify_same_idempotency_key_credits_once(account: Account) -> None:
+    """Two parallel verify calls: one credit, one ledger row, same deposit."""
+    provider = _FakeBlockchainProvider(_transfer(amount=Decimal("10.000000")))
+    account_id = account.pk
+
+    def _verify() -> str:
+        # Fresh Account reference + DB connection per thread (Django default).
+        acct = Account.objects.get(pk=account_id)
+        service = DepositVerificationService(
+            blockchain_provider=provider,  # type: ignore[arg-type]
+            min_confirmations=20,
+        )
+        deposit = service.verify(
+            acct,
+            tx_hash=TX_HASH,
+            payment_method=DepositRequest.PaymentMethod.WALLET_CONNECT,
+            amount_requested=Decimal("10.000000"),
+            idempotency_key="race-verify",
+        )
+        connection.close()
+        return str(deposit.pk)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: _verify(), range(2)))
+
+    assert results[0] == results[1]
+    account.refresh_from_db()
+    assert account.balance == Decimal("10.000000")
+    assert account.version == 1
+    assert DepositRequest.objects.filter(idempotency_key="race-verify").count() == 1
+    assert (
+        DepositRequest.objects.get(idempotency_key="race-verify").status
+        == DepositRequest.Status.COMPLETED
+    )
+    assert CreditLedgerEntry.objects.filter(account=account).count() == 1
+    assert (
+        CreditLedgerEntry.objects.filter(idempotency_key__startswith="deposit:").count()
+        == 1
+    )
 
 
 @pytest.mark.django_db

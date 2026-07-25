@@ -1,6 +1,7 @@
 """Tests for notification event handlers."""
 
 import logging
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from apps.notifications.handlers import (
@@ -28,6 +29,7 @@ def test_airalo_order_created_stub_logs(caplog) -> None:
 
 
 def test_deposit_verified_stub_logs(caplog) -> None:
+    verified_at = datetime(2026, 7, 25, 12, 0, tzinfo=UTC)
     event = DepositVerified(
         deposit_id="dep-1",
         account_id="acc-1",
@@ -35,6 +37,8 @@ def test_deposit_verified_stub_logs(caplog) -> None:
         balance_after=Decimal("10.000000"),
         tx_hash="0xabc",
         payment_method="wallet_connect",
+        ledger_entry_id="led-1",
+        verified_at=verified_at,
     )
 
     with caplog.at_level(logging.INFO):
@@ -43,9 +47,12 @@ def test_deposit_verified_stub_logs(caplog) -> None:
     assert "DepositVerified" in caplog.text
     assert "dep-1" in caplog.text
     assert "0xabc" in caplog.text
+    assert "led-1" in caplog.text
+    assert "verified_at=" in caplog.text
 
 
 def test_credit_granted_stub_logs(caplog) -> None:
+    created_at = datetime(2026, 7, 25, 12, 0, tzinfo=UTC)
     event = CreditGranted(
         account_id="acc-1",
         amount=Decimal("10.000000"),
@@ -53,6 +60,7 @@ def test_credit_granted_stub_logs(caplog) -> None:
         reference_type="deposit",
         reference_id="dep-1",
         ledger_entry_id="led-1",
+        created_at=created_at,
     )
 
     with caplog.at_level(logging.INFO):
@@ -60,3 +68,4 @@ def test_credit_granted_stub_logs(caplog) -> None:
 
     assert "CreditGranted" in caplog.text
     assert "led-1" in caplog.text
+    assert "created_at=" in caplog.text

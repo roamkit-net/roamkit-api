@@ -276,6 +276,8 @@ class DepositVerificationService:
                     balance_after=entry.balance_after,
                     tx_hash=locked.tx_hash or transfer.tx_hash,
                     payment_method=locked.payment_method,
+                    ledger_entry_id=str(entry.pk),
+                    verified_at=locked.verified_at,
                 )
             )
             events.append(
@@ -286,6 +288,7 @@ class DepositVerificationService:
                     reference_type=LedgerReferenceType.DEPOSIT,
                     reference_id=str(locked.pk),
                     ledger_entry_id=str(entry.pk),
+                    created_at=entry.created_at,
                 )
             )
             deposit = locked
