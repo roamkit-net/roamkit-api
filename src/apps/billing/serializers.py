@@ -11,6 +11,17 @@ class BalanceSerializer(serializers.Serializer):
     balance = serializers.DecimalField(max_digits=20, decimal_places=6)
 
 
+class BillingConfigSerializer(serializers.Serializer):
+    """Public currency / presentation config (ADR-010 ``GET …/billing/config/``)."""
+
+    config_version = serializers.IntegerField()
+    token_symbol = serializers.CharField()
+    token_name = serializers.CharField()
+    token_decimals = serializers.IntegerField()
+    display_decimals = serializers.IntegerField()
+    billing_enabled = serializers.BooleanField()
+
+
 class DepositInfoSerializer(serializers.Serializer):
     """Full Polygon USDT deposit metadata for clients (no hardcoded chain/token)."""
 

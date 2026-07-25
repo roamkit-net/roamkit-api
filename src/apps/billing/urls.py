@@ -4,12 +4,14 @@ from django.urls import path
 
 from apps.billing.views import (
     BalanceView,
+    BillingConfigView,
     DepositInfoView,
     VerifyCexDepositView,
     VerifyWalletDepositView,
 )
 
 urlpatterns = [
+    path("config/", BillingConfigView.as_view(), name="billing-config"),
     path("balance/", BalanceView.as_view(), name="billing-balance"),
     path("deposit-info/", DepositInfoView.as_view(), name="billing-deposit-info"),
     path(

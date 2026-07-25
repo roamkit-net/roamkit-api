@@ -108,6 +108,79 @@ def test_balance_hidden_when_billing_disabled(client: Client, user: User) -> Non
     assert response.status_code == 404
 
 
+_SECRET_CONFIG_KEYS = frozenset(
+    {"wallet", "contract", "eip681_uri", "eip681", "chain_id", "rpc"}
+)
+
+
+def _assert_billing_config_payload(
+    payload: dict[str, Any], *, billing_enabled: bool
+) -> None:
+    assert payload == {
+        "config_version": 1,
+        "token_symbol": "USDT",
+        "token_name": "USDT Credits",
+        "token_decimals": 6,
+        "display_decimals": 2,
+        "billing_enabled": billing_enabled,
+    }
+    assert _SECRET_CONFIG_KEYS.isdisjoint(payload.keys())
+
+
+@pytest.mark.django_db
+@override_settings(BILLING_ENABLED=True, **_POLYGON)
+def test_billing_config_anonymous(client: Client) -> None:
+    response = client.get("/api/v1/billing/config/")
+
+    assert response.status_code == 200
+    _assert_billing_config_payload(response.json(), billing_enabled=True)
+    assert response["Cache-Control"] == "public, max-age=300"
+    assert response["ETag"]
+    assert response["ETag"].startswith('"') and response["ETag"].endswith('"')
+
+
+@pytest.mark.django_db
+@override_settings(BILLING_ENABLED=True, **_POLYGON)
+def test_billing_config_authenticated(client: Client, user: User) -> None:
+    response = client.get(
+        "/api/v1/billing/config/",
+        **_auth_headers(client, user),
+    )
+
+    assert response.status_code == 200
+    _assert_billing_config_payload(response.json(), billing_enabled=True)
+    assert "Cache-Control" in response
+    assert "ETag" in response
+
+
+@pytest.mark.django_db
+@override_settings(BILLING_ENABLED=False, **_POLYGON)
+def test_billing_config_when_billing_disabled(client: Client) -> None:
+    response = client.get("/api/v1/billing/config/")
+
+    assert response.status_code == 200
+    payload = response.json()
+    _assert_billing_config_payload(payload, billing_enabled=False)
+    assert payload["token_symbol"] == "USDT"
+    assert "wallet" not in payload
+    assert "contract" not in payload
+    assert "eip681_uri" not in payload
+    assert response["Cache-Control"] == "public, max-age=300"
+    assert response["ETag"]
+
+
+@pytest.mark.django_db
+@override_settings(BILLING_ENABLED=True, **_POLYGON)
+def test_billing_config_etag_stable_for_same_payload(client: Client) -> None:
+    first = client.get("/api/v1/billing/config/")
+    second = client.get("/api/v1/billing/config/")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first["ETag"] == second["ETag"]
+    assert first.json() == second.json()
+
+
 @pytest.mark.django_db
 @override_settings(
     BILLING_ENABLED=True,
