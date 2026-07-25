@@ -42,5 +42,18 @@ jobs:
 
       - name: Smoke test (from runner)
         run: |
-          curl -sf https://api.staging.roamkit.net/health/live
-          curl -sf https://api.staging.roamkit.net/health/ready
+          # Prefer IPv4: Cloudflare AAAA can fail from the runner; on-host smoke uses -4.
+          wait_http() {
+            local url="$1"
+            local i
+            for i in $(seq 1 20); do
+              if curl -4sf --max-time 15 "${url}" >/dev/null; then
+                return 0
+              fi
+              sleep 3
+            done
+            echo "Smoke failed: ${url}" >&2
+            return 1
+          }
+          wait_http https://api.staging.roamkit.net/health/live
+          wait_http https://api.staging.roamkit.net/health/ready
