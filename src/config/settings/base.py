@@ -159,7 +159,7 @@ AIRALO_CLIENT_SECRET = os.environ.get("AIRALO_CLIENT_SECRET", "")
 AIRALO_SANDBOX = os.environ.get("AIRALO_SANDBOX", "true").lower() == "true"
 AIRALO_BASE_URL = os.environ.get("AIRALO_BASE_URL", "https://partners-api.airalo.com")
 
-# Billing feature flags (ADR-010). API gating lands in PR5; services respect these.
+# Billing feature flags (ADR-010). Gated on /api/v1/billing/* views.
 BILLING_ENABLED = os.environ.get("BILLING_ENABLED", "true").lower() == "true"
 SUBSCRIPTIONS_ENABLED = (
     os.environ.get("SUBSCRIPTIONS_ENABLED", "false").lower() == "true"
