@@ -51,6 +51,26 @@ data.pop("x-tagGroups", None)
 if isinstance(data.get("info"), dict):
     data["info"].pop("x-logo", None)
 
+
+def dedupe_security(sec):
+    if not isinstance(sec, list):
+        return sec
+    seen = []
+    for item in sec:
+        if item not in seen:
+            seen.append(item)
+    return seen
+
+
+if isinstance(data.get("security"), list):
+    data["security"] = dedupe_security(data["security"])
+for _path, methods in (data.get("paths") or {}).items():
+    if not isinstance(methods, dict):
+        continue
+    for _method, op in methods.items():
+        if isinstance(op, dict) and "security" in op:
+            op["security"] = dedupe_security(op["security"])
+
 ordered = sort_obj(data)
 # Prefer conventional top-level key order while keeping nested keys sorted.
 preferred = [

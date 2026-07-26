@@ -2,6 +2,12 @@
 
 from django.db.models import Min, Q
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    OpenApiResponse,
+    extend_schema,
+    extend_schema_view,
+)
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.permissions import AllowAny
 
@@ -18,6 +24,36 @@ def _active_package_min_price():
     return Min("packages__price_usd", filter=Q(packages__is_active=True))
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Catalog"],
+        operation_id="catalog_packages_list",
+        summary="List packages",
+        description="List active packages synced from external providers.",
+        auth=[],
+        parameters=[
+            OpenApiParameter(
+                name="country",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Filter by ISO country code",
+            ),
+            OpenApiParameter(
+                name="location",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Filter by location slug",
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(
+                response=PackageSerializer(many=True), description="Paginated packages"
+            ),
+        },
+    ),
+)
 class PackageListView(ListAPIView):
     """List active packages synced from external providers."""
 
@@ -37,6 +73,30 @@ class PackageListView(ListAPIView):
         return queryset
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Catalog"],
+        operation_id="catalog_locations_list",
+        summary="List locations",
+        description="List catalog locations that have at least one active package.",
+        auth=[],
+        parameters=[
+            OpenApiParameter(
+                name="type",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Filter: popular | local | regional | global",
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(
+                response=LocationListSerializer(many=True),
+                description="Paginated locations",
+            ),
+        },
+    ),
+)
 class LocationListView(ListAPIView):
     """List catalog locations with optional coverage-type filters."""
 
@@ -63,6 +123,21 @@ class LocationListView(ListAPIView):
         return queryset
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Catalog"],
+        operation_id="catalog_locations_retrieve",
+        summary="Retrieve location",
+        description=(
+            "Retrieve a single location by slug, including broader coverage options."
+        ),
+        auth=[],
+        responses={
+            200: OpenApiResponse(response=LocationSerializer, description="Location"),
+            404: OpenApiResponse(description="Location not found"),
+        },
+    ),
+)
 class LocationDetailView(RetrieveAPIView):
     """Retrieve a single location by slug, with broader coverage options."""
 

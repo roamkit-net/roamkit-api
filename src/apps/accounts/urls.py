@@ -1,10 +1,11 @@
 """Auth URL configuration."""
 
 from django.urls import path
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from apps.accounts.views import (
     ActivateView,
+    AuthTokenObtainView,
+    AuthTokenRefreshView,
     MeView,
     PasswordResetConfirmView,
     PasswordResetRequestView,
@@ -24,7 +25,7 @@ urlpatterns = [
         PasswordResetConfirmView.as_view(),
         name="auth-password-reset-confirm",
     ),
-    path("token/", TokenObtainPairView.as_view(), name="auth-token"),
-    path("token/refresh/", TokenRefreshView.as_view(), name="auth-token-refresh"),
+    path("token/", AuthTokenObtainView.as_view(), name="auth-token"),
+    path("token/refresh/", AuthTokenRefreshView.as_view(), name="auth-token-refresh"),
     path("me/", MeView.as_view(), name="auth-me"),
 ]
