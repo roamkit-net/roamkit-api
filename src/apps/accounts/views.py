@@ -19,8 +19,16 @@ from apps.accounts.serializers import (
     RegisterSerializer,
     UserSerializer,
 )
+from apps.accounts.services.human_verification.enforce import enforce_human_verification
 from apps.accounts.services.password_reset import GENERIC_PASSWORD_RESET_MESSAGE
 from apps.accounts.services.registration import GENERIC_REGISTER_MESSAGE
+from apps.accounts.throttles import (
+    AuthActivateRateThrottle,
+    AuthPasswordResetConfirmRateThrottle,
+    AuthPasswordResetRateThrottle,
+    AuthRegisterRateThrottle,
+    AuthTokenRateThrottle,
+)
 from core.openapi_serializers import DetailMessageSerializer, ErrorDetailSerializer
 
 
@@ -51,8 +59,10 @@ class RegisterView(APIView):
 
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthRegisterRateThrottle]
 
     def post(self, request: Request) -> Response:
+        enforce_human_verification(request, endpoint="auth_register")
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -83,6 +93,7 @@ class ActivateView(APIView):
 
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthActivateRateThrottle]
 
     def post(self, request: Request) -> Response:
         serializer = ActivateSerializer(data=request.data)
@@ -117,8 +128,10 @@ class PasswordResetRequestView(APIView):
 
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthPasswordResetRateThrottle]
 
     def post(self, request: Request) -> Response:
+        enforce_human_verification(request, endpoint="auth_password_reset")
         serializer = PasswordResetRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -151,6 +164,7 @@ class PasswordResetConfirmView(APIView):
 
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthPasswordResetConfirmRateThrottle]
 
     def post(self, request: Request) -> Response:
         serializer = PasswordResetConfirmSerializer(data=request.data)
@@ -205,6 +219,12 @@ class MeView(APIView):
 )
 class AuthTokenObtainView(TokenObtainPairView):
     """POST /api/v1/auth/token/ — JWT obtain."""
+
+    throttle_classes = [AuthTokenRateThrottle]
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        enforce_human_verification(request, endpoint="auth_token")
+        return super().post(request, *args, **kwargs)
 
 
 @extend_schema_view(
