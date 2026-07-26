@@ -3,6 +3,8 @@ djangorestframework>=3.15,<4
 djangorestframework-simplejwt>=5.3,<6
 drf-spectacular==0.28.0
 django-cors-headers>=4.4,<5
+google-auth>=2.0,<3
+requests>=2.31,<3
 psycopg[binary]>=3.2,<4
 redis>=5.0,<6
 celery>=5.4,<6

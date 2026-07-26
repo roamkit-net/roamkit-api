@@ -58,4 +58,14 @@ if TURNSTILE_ENABLED:  # noqa: F405
             "in production."
         )
 
+if GOOGLE_OAUTH_ENABLED:  # noqa: F405
+    _google_client_id = (GOOGLE_OAUTH_CLIENT_ID or "").strip()  # noqa: F405
+    if not _google_client_id:
+        from django.core.exceptions import ImproperlyConfigured
+
+        raise ImproperlyConfigured(
+            "GOOGLE_OAUTH_CLIENT_ID must be set when GOOGLE_OAUTH_ENABLED=true "
+            "in production."
+        )
+
 init_sentry(environment=ROAMKIT_ENVIRONMENT)

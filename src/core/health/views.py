@@ -104,3 +104,27 @@ def turnstile(_request):
     ok = secret_configured and resolvable
     payload["status"] = "ok" if ok else "misconfigured"
     return JsonResponse(payload, status=200 if ok else 503)
+
+
+@require_GET
+def google_oauth(_request):
+    """
+    Google OAuth config diagnostic — not used by Docker/Traefik probes.
+
+    Does not call Google; only checks flag and client id presence.
+    """
+    enabled = bool(getattr(settings, "GOOGLE_OAUTH_ENABLED", False))
+    client_id_configured = bool(
+        (getattr(settings, "GOOGLE_OAUTH_CLIENT_ID", "") or "").strip()
+    )
+    payload = {
+        "enabled": enabled,
+        "client_id_configured": client_id_configured,
+    }
+    if not enabled:
+        payload["status"] = "ok"
+        return JsonResponse(payload, status=200)
+
+    ok = client_id_configured
+    payload["status"] = "ok" if ok else "misconfigured"
+    return JsonResponse(payload, status=200 if ok else 503)

@@ -40,6 +40,10 @@ class UserManager(BaseUserManager):
 class User(AbstractBaseUser, PermissionsMixin):
     """RoamKit user identified by email."""
 
+    class LastLoginProvider(models.TextChoices):
+        PASSWORD = "password", "password"
+        GOOGLE = "google", "google"
+
     email = models.EmailField(unique=True, db_index=True)
     wallet_address = models.CharField(
         max_length=64,
@@ -47,6 +51,22 @@ class User(AbstractBaseUser, PermissionsMixin):
         blank=True,
         db_index=True,
     )
+    google_sub = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        unique=True,
+        db_index=True,
+    )
+    google_name = models.CharField(max_length=255, blank=True, default="")
+    google_picture = models.URLField(max_length=2048, blank=True, default="")
+    last_login_provider = models.CharField(
+        max_length=32,
+        choices=LastLoginProvider.choices,
+        null=True,
+        blank=True,
+    )
+    last_google_login_at = models.DateTimeField(null=True, blank=True)
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
