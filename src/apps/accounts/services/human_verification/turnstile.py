@@ -86,7 +86,7 @@ class TurnstileVerificationService(HumanVerificationService):
             return HumanVerificationResult.UNAVAILABLE, "network"
 
         payload: dict[str, str] = {"secret": secret, "response": token}
-        if remoteip and remoteip != "0.0.0.0":
+        if remoteip and remoteip != "unknown":
             payload["remoteip"] = remoteip
 
         url = getattr(
@@ -100,7 +100,8 @@ class TurnstileVerificationService(HumanVerificationService):
         request.add_header("Content-Type", "application/x-www-form-urlencoded")
 
         try:
-            with urlopen(request, timeout=timeout) as response:  # noqa: S310
+            # HTTPS siteverify only; URL comes from settings, not user input.
+            with urlopen(request, timeout=timeout) as response:  # nosec B310
                 body = response.read().decode()
                 status = getattr(response, "status", 200)
         except TimeoutError:
