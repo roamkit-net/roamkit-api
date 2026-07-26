@@ -14,3 +14,10 @@ class SpendInProgressError(SpendError):
 
 class IdempotencyKeyRequiredError(SpendError):
     """Paid spend path requires a non-empty idempotency_key."""
+
+
+class ProviderFulfillmentError(SpendError):
+    """External provider failed after debit; compensating refund applied."""
+
+    def __init__(self, message: str = "Provider fulfillment failed") -> None:
+        super().__init__(message)

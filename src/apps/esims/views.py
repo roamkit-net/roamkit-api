@@ -34,7 +34,11 @@ from apps.esims.serializers import (
 from apps.esims.services.lifecycle_service import lifecycle_service
 from apps.esims.services.topup_service import TopupService
 from apps.esims.services.usage_service import UsageService
-from apps.orders.exceptions import IdempotencyKeyRequiredError, SpendInProgressError
+from apps.orders.exceptions import (
+    IdempotencyKeyRequiredError,
+    ProviderFulfillmentError,
+    SpendInProgressError,
+)
 from core.openapi_serializers import (
     ErrorDetailSerializer,
     InsufficientCreditsSerializer,
@@ -307,6 +311,11 @@ class EsimTopupsView(OwnedEsimMixin, GenericAPIView):
             return Response(
                 {"detail": str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ProviderFulfillmentError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_502_BAD_GATEWAY,
             )
 
         return Response(TopupSerializer(topup).data, status=status.HTTP_201_CREATED)

@@ -14,6 +14,7 @@ from apps.catalog.models import Package
 from apps.esims.exceptions import TopupPackageNotFoundError
 from apps.esims.models import Esim, Topup
 from apps.esims.services.topup_service import TopupService
+from apps.orders.exceptions import ProviderFulfillmentError
 from apps.orders.models import Order
 from shared.events.billing_events import CreditDebited, FulfillmentRefunded
 from shared.events.event_bus import event_bus
@@ -178,7 +179,7 @@ def test_purchase_refunds_on_provider_failure(user: User, esim: Esim) -> None:
     refunded: list[FulfillmentRefunded] = []
     event_bus.subscribe(FulfillmentRefunded, refunded.append)
 
-    with pytest.raises(RuntimeError, match="provider unavailable"):
+    with pytest.raises(ProviderFulfillmentError, match="Provider fulfillment failed"):
         TopupService(FakeTopupProvider(fail=True)).purchase(
             esim, package_id="topup-1gb", idempotency_key="topup-fail-1"
         )
