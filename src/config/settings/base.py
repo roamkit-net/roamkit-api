@@ -187,6 +187,12 @@ SPECTACULAR_SETTINGS = {
         {"url": "https://api.roamkit.net", "description": "Production"},
     ],
     "SECURITY": [{"bearerAuth": []}],
+    "ENUM_NAME_OVERRIDES": {
+        "OrderStatusEnum": "apps.orders.models.Order.Status",
+        "DepositRequestStatusEnum": "apps.billing.models.DepositRequest.Status",
+        "DepositPaymentMethodEnum": "apps.billing.models.DepositRequest.PaymentMethod",
+        "LedgerReferenceTypeEnum": "apps.billing.models.LedgerReferenceType",
+    },
 }
 
 PACKAGE_PROVIDER = "apps.integrations.airalo.providers.AiraloPackageProvider"

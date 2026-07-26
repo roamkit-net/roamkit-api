@@ -210,6 +210,11 @@ paths:
         '200':
           content:
             application/json:
+              examples:
+                SampleBalance:
+                  summary: Sample balance
+                  value:
+                    balance: '42.500000'
               schema:
                 $ref: '#/components/schemas/Balance'
           description: Balance
@@ -239,6 +244,16 @@ paths:
         '200':
           content:
             application/json:
+              examples:
+                USDTDisplayConfig:
+                  summary: USDT display config
+                  value:
+                    billing_enabled: true
+                    config_version: 1
+                    display_decimals: 2
+                    token_decimals: 6
+                    token_name: Tether USD
+                    token_symbol: USDT
               schema:
                 $ref: '#/components/schemas/BillingConfig'
           description: Display currency config
@@ -637,6 +652,12 @@ paths:
       requestBody:
         content:
           application/json:
+            examples:
+              CreateOrder:
+                summary: Create order
+                value:
+                  idempotency_key: client-order-uuid-1
+                  package_id: airalo-pkg-123
             schema:
               $ref: '#/components/schemas/CreateOrderRequest'
         required: true
@@ -662,6 +683,15 @@ paths:
         '402':
           content:
             application/json:
+              examples:
+                InsufficientCredits:
+                  summary: Insufficient credits
+                  value:
+                    balance: '5.000000'
+                    code: INSUFFICIENT_CREDITS
+                    detail: Insufficient funds
+                    missing: '14.500000'
+                    required: '19.500000'
               schema:
                 $ref: '#/components/schemas/InsufficientCredits'
           description: Insufficient credits
@@ -829,6 +859,14 @@ components:
       - wallet
       - walletconnect_enabled
       type: object
+    DepositPaymentMethodEnum:
+      description: '* `wallet_connect` - WalletConnect
+
+        * `cex_manual` - CEX manual'
+      enum:
+      - wallet_connect
+      - cex_manual
+      type: string
     DepositRequest:
       properties:
         amount_credited:
@@ -858,11 +896,25 @@ components:
           type: string
         payment_method:
           allOf:
-          - $ref: '#/components/schemas/PaymentMethodEnum'
+          - $ref: '#/components/schemas/DepositPaymentMethodEnum'
+          description: 'How the USDT transfer was initiated (WalletConnect or CEX/manual).
+
+
+            * `wallet_connect` - WalletConnect
+
+            * `cex_manual` - CEX manual'
           readOnly: true
         status:
           allOf:
-          - $ref: '#/components/schemas/DepositStatusEnum'
+          - $ref: '#/components/schemas/DepositRequestStatusEnum'
+          description: 'Deposit verification status (pending / completed / failed).
+
+
+            * `pending` - Pending
+
+            * `completed` - Completed
+
+            * `failed` - Failed'
           readOnly: true
         tx_hash:
           nullable: true
@@ -890,7 +942,7 @@ components:
       - updated_at
       - verified_at
       type: object
-    DepositStatusEnum:
+    DepositRequestStatusEnum:
       description: '* `pending` - Pending
 
         * `completed` - Completed
@@ -1172,6 +1224,22 @@ components:
         status:
           allOf:
           - $ref: '#/components/schemas/OrderStatusEnum'
+          description: 'Order lifecycle status (draft → fulfilled / failed / cancelled).
+
+
+            * `draft` - Draft
+
+            * `pending_payment` - Pending payment
+
+            * `paid` - Paid
+
+            * `fulfilling` - Fulfilling
+
+            * `fulfilled` - Fulfilled
+
+            * `failed` - Failed
+
+            * `cancelled` - Cancelled'
           readOnly: true
         updated_at:
           format: date-time
@@ -1366,14 +1434,6 @@ components:
       required:
       - email
       type: object
-    PaymentMethodEnum:
-      description: '* `wallet_connect` - WalletConnect
-
-        * `cex_manual` - CEX manual'
-      enum:
-      - wallet_connect
-      - cex_manual
-      type: string
     PurchaseTopupRequest:
       description: Request body for POST /api/v1/me/esims/{id}/topups/.
       properties:
