@@ -58,8 +58,12 @@ class User(AbstractBaseUser, PermissionsMixin):
         unique=True,
         db_index=True,
     )
-    google_name = models.CharField(max_length=255, blank=True, default="")
-    google_picture = models.URLField(max_length=2048, blank=True, default="")
+    google_name = models.CharField(
+        max_length=255, blank=True, default="", db_default=""
+    )
+    google_picture = models.URLField(
+        max_length=2048, blank=True, default="", db_default=""
+    )
     last_login_provider = models.CharField(
         max_length=32,
         choices=LastLoginProvider.choices,

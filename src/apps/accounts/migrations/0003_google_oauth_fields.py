@@ -13,12 +13,16 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="user",
             name="google_name",
-            field=models.CharField(blank=True, default="", max_length=255),
+            field=models.CharField(
+                blank=True, db_default="", default="", max_length=255
+            ),
         ),
         migrations.AddField(
             model_name="user",
             name="google_picture",
-            field=models.URLField(blank=True, default="", max_length=2048),
+            field=models.URLField(
+                blank=True, db_default="", default="", max_length=2048
+            ),
         ),
         migrations.AddField(
             model_name="user",
