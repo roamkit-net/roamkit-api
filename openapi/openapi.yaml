@@ -1,0 +1,767 @@
+openapi: 3.0.3
+info:
+  description: Self-service eSIM API. Public REST under `/api/v1/`. Authenticate with JWT Bearer tokens
+    from `/api/v1/auth/token/`.
+  title: RoamKit API
+  version: 1.0.0
+servers:
+- description: Staging
+  url: https://api.staging.roamkit.net
+- description: Production
+  url: https://api.roamkit.net
+tags:
+- description: Registration, login, and password reset
+  name: Authentication
+- description: Prepaid credits, deposits, and wallet balance
+  name: Billing
+- description: Package purchase orders
+  name: Orders
+- description: Packages and locations
+  name: Catalog
+- description: User eSIM inventory, usage, and top-ups
+  name: eSIM
+- description: Authenticated user profile
+  name: Users
+paths:
+  /api/v1/auth/activate/:
+    post:
+      description: Set password from confirmation link and activate the account.
+      operationId: auth_activate_create
+      responses:
+        '200':
+          description: No response body
+      security:
+      - bearerAuth: []
+      - {}
+      tags:
+      - auth
+  /api/v1/auth/me/:
+    get:
+      description: Return the authenticated user's profile.
+      operationId: auth_me_retrieve
+      responses:
+        '200':
+          description: No response body
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      tags:
+      - auth
+  /api/v1/auth/password-reset/:
+    post:
+      description: Request a password reset email (always returns a generic success).
+      operationId: auth_password_reset_create
+      responses:
+        '200':
+          description: No response body
+      security:
+      - bearerAuth: []
+      - {}
+      tags:
+      - auth
+  /api/v1/auth/password-reset/confirm/:
+    post:
+      description: Confirm password reset with uid + token and set a new password.
+      operationId: auth_password_reset_confirm_create
+      responses:
+        '200':
+          description: No response body
+      security:
+      - bearerAuth: []
+      - {}
+      tags:
+      - auth
+  /api/v1/auth/register/:
+    post:
+      description: Start registration with email only (sends confirmation link).
+      operationId: auth_register_create
+      responses:
+        '200':
+          description: No response body
+      security:
+      - bearerAuth: []
+      - {}
+      tags:
+      - auth
+  /api/v1/auth/token/:
+    post:
+      description: 'Takes a set of user credentials and returns an access and refresh JSON web
+
+        token pair to prove the authentication of those credentials.'
+      operationId: auth_token_create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPairRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenObtainPair'
+          description: ''
+      security:
+      - bearerAuth: []
+      tags:
+      - auth
+  /api/v1/auth/token/refresh/:
+    post:
+      description: 'Takes a refresh type JSON web token and returns an access type JSON web
+
+        token if the refresh token is valid.'
+      operationId: auth_token_refresh_create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefresh'
+          description: ''
+      security:
+      - bearerAuth: []
+      tags:
+      - auth
+  /api/v1/billing/balance/:
+    get:
+      description: GET /api/v1/billing/balance/
+      operationId: billing_balance_retrieve
+      responses:
+        '200':
+          description: No response body
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      tags:
+      - billing
+  /api/v1/billing/config/:
+    get:
+      description: GET /api/v1/billing/config/ — public display config (AllowAny; no secrets).
+      operationId: billing_config_retrieve
+      responses:
+        '200':
+          description: No response body
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      - {}
+      tags:
+      - billing
+  /api/v1/billing/deposit-info/:
+    get:
+      description: GET /api/v1/billing/deposit-info/ — full Polygon USDT meta + EIP-681 URI.
+      operationId: billing_deposit_info_retrieve
+      responses:
+        '200':
+          description: No response body
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      tags:
+      - billing
+  /api/v1/billing/verify-cex/:
+    post:
+      description: POST /api/v1/billing/verify-cex/
+      operationId: billing_verify_cex_create
+      responses:
+        '200':
+          description: No response body
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      tags:
+      - billing
+  /api/v1/billing/verify-wallet/:
+    post:
+      description: POST /api/v1/billing/verify-wallet/
+      operationId: billing_verify_wallet_create
+      responses:
+        '200':
+          description: No response body
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      tags:
+      - billing
+  /api/v1/locations/:
+    get:
+      description: List catalog locations with optional coverage-type filters.
+      operationId: locations_list
+      parameters:
+      - description: A page number within the paginated result set.
+        in: query
+        name: page
+        required: false
+        schema:
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedLocationListList'
+          description: ''
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      - {}
+      tags:
+      - locations
+  /api/v1/locations/{slug}/:
+    get:
+      description: Retrieve a single location by slug, with broader coverage options.
+      operationId: locations_retrieve
+      parameters:
+      - in: path
+        name: slug
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Location'
+          description: ''
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      - {}
+      tags:
+      - locations
+  /api/v1/me/esims/:
+    get:
+      description: List eSIMs owned by the authenticated user.
+      operationId: me_esims_list
+      parameters:
+      - description: A page number within the paginated result set.
+        in: query
+        name: page
+        required: false
+        schema:
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedEsimList'
+          description: ''
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      tags:
+      - me
+  /api/v1/me/esims/{id}/:
+    get:
+      description: Retrieve a single owned eSIM.
+      operationId: me_esims_retrieve
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Esim'
+          description: ''
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      tags:
+      - me
+  /api/v1/me/esims/{id}/topups/:
+    get:
+      description: List or purchase top-up packages for an owned eSIM.
+      operationId: me_esims_topups_retrieve
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: No response body
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      tags:
+      - me
+    post:
+      description: List or purchase top-up packages for an owned eSIM.
+      operationId: me_esims_topups_create
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: No response body
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      tags:
+      - me
+  /api/v1/me/esims/{id}/usage/:
+    get:
+      description: Fetch live usage for an owned eSIM and refresh the cache.
+      operationId: me_esims_usage_retrieve
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: No response body
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      tags:
+      - me
+  /api/v1/orders/:
+    post:
+      description: POST /api/v1/orders/ — debit prepaid credits then fulfill via provider.
+      operationId: orders_create
+      responses:
+        '200':
+          description: No response body
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      tags:
+      - orders
+  /api/v1/packages/:
+    get:
+      description: List active packages synced from external providers.
+      operationId: packages_list
+      parameters:
+      - description: A page number within the paginated result set.
+        in: query
+        name: page
+        required: false
+        schema:
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedPackageList'
+          description: ''
+      security:
+      - jwtAuth: []
+      - bearerAuth: []
+      - {}
+      tags:
+      - packages
+components:
+  schemas:
+    CoverageTypeEnum:
+      description: '* `local` - Local
+
+        * `regional` - Regional
+
+        * `global` - Global'
+      enum:
+      - local
+      - regional
+      - global
+      type: string
+    Esim:
+      description: Owned eSIM with ICCID and installation / QR fields.
+      properties:
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        direct_apple_installation_url:
+          format: uri
+          readOnly: true
+          type: string
+        iccid:
+          readOnly: true
+          type: string
+        id:
+          readOnly: true
+          type: integer
+        installation_guide_url:
+          format: uri
+          readOnly: true
+          type: string
+        lpa:
+          readOnly: true
+          type: string
+        manual_installation:
+          readOnly: true
+          type: string
+        matching_id:
+          readOnly: true
+          type: string
+        qrcode:
+          readOnly: true
+          type: string
+        qrcode_installation:
+          readOnly: true
+          type: string
+        qrcode_url:
+          format: uri
+          readOnly: true
+          type: string
+        status:
+          allOf:
+          - $ref: '#/components/schemas/StatusEnum'
+          readOnly: true
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+        usage_expired_at:
+          format: date-time
+          nullable: true
+          readOnly: true
+          type: string
+        usage_is_unlimited:
+          nullable: true
+          readOnly: true
+          type: boolean
+        usage_remaining_mb:
+          nullable: true
+          readOnly: true
+          type: integer
+        usage_status:
+          readOnly: true
+          type: string
+        usage_synced_at:
+          format: date-time
+          nullable: true
+          readOnly: true
+          type: string
+        usage_total_mb:
+          nullable: true
+          readOnly: true
+          type: integer
+      required:
+      - created_at
+      - direct_apple_installation_url
+      - iccid
+      - id
+      - installation_guide_url
+      - lpa
+      - manual_installation
+      - matching_id
+      - qrcode
+      - qrcode_installation
+      - qrcode_url
+      - status
+      - updated_at
+      - usage_expired_at
+      - usage_is_unlimited
+      - usage_remaining_mb
+      - usage_status
+      - usage_synced_at
+      - usage_total_mb
+      type: object
+    Location:
+      description: Full location detail, optionally including broader coverage.
+      properties:
+        broader_locations:
+          items:
+            $ref: '#/components/schemas/LocationList'
+          readOnly: true
+          type: array
+        country_code:
+          readOnly: true
+          type: string
+        coverage_type:
+          allOf:
+          - $ref: '#/components/schemas/CoverageTypeEnum'
+          readOnly: true
+        coverages:
+          readOnly: true
+        covered_country_codes:
+          readOnly: true
+        image_url:
+          format: uri
+          readOnly: true
+          type: string
+        is_popular:
+          readOnly: true
+          type: boolean
+        min_price_usd:
+          format: decimal
+          nullable: true
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          readOnly: true
+          type: string
+        slug:
+          pattern: ^[-a-zA-Z0-9_]+$
+          readOnly: true
+          type: string
+        title:
+          readOnly: true
+          type: string
+      required:
+      - broader_locations
+      - country_code
+      - coverage_type
+      - coverages
+      - covered_country_codes
+      - image_url
+      - is_popular
+      - min_price_usd
+      - slug
+      - title
+      type: object
+    LocationList:
+      description: Location card for the store listing.
+      properties:
+        country_code:
+          readOnly: true
+          type: string
+        coverage_type:
+          allOf:
+          - $ref: '#/components/schemas/CoverageTypeEnum'
+          readOnly: true
+        coverages:
+          readOnly: true
+        covered_country_codes:
+          readOnly: true
+        image_url:
+          format: uri
+          readOnly: true
+          type: string
+        is_popular:
+          readOnly: true
+          type: boolean
+        min_price_usd:
+          format: decimal
+          nullable: true
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          readOnly: true
+          type: string
+        slug:
+          pattern: ^[-a-zA-Z0-9_]+$
+          readOnly: true
+          type: string
+        title:
+          readOnly: true
+          type: string
+      required:
+      - country_code
+      - coverage_type
+      - coverages
+      - covered_country_codes
+      - image_url
+      - is_popular
+      - min_price_usd
+      - slug
+      - title
+      type: object
+    Package:
+      description: Public package representation for the catalog API.
+      properties:
+        country_code:
+          readOnly: true
+          type: string
+        data_allowance:
+          readOnly: true
+          type: string
+        id:
+          readOnly: true
+          type: string
+        is_unlimited:
+          readOnly: true
+          type: boolean
+        operator_title:
+          readOnly: true
+          type: string
+        plan_type:
+          readOnly: true
+          type: string
+        price_usd:
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          readOnly: true
+          type: string
+        text_sms:
+          nullable: true
+          readOnly: true
+          type: integer
+        title:
+          readOnly: true
+          type: string
+        validity_days:
+          readOnly: true
+          type: integer
+        voice_minutes:
+          nullable: true
+          readOnly: true
+          type: integer
+      required:
+      - country_code
+      - data_allowance
+      - id
+      - is_unlimited
+      - operator_title
+      - plan_type
+      - price_usd
+      - text_sms
+      - title
+      - validity_days
+      - voice_minutes
+      type: object
+    PaginatedEsimList:
+      properties:
+        count:
+          example: 123
+          type: integer
+        next:
+          example: http://api.example.org/accounts/?page=4
+          format: uri
+          nullable: true
+          type: string
+        previous:
+          example: http://api.example.org/accounts/?page=2
+          format: uri
+          nullable: true
+          type: string
+        results:
+          items:
+            $ref: '#/components/schemas/Esim'
+          type: array
+      required:
+      - count
+      - results
+      type: object
+    PaginatedLocationListList:
+      properties:
+        count:
+          example: 123
+          type: integer
+        next:
+          example: http://api.example.org/accounts/?page=4
+          format: uri
+          nullable: true
+          type: string
+        previous:
+          example: http://api.example.org/accounts/?page=2
+          format: uri
+          nullable: true
+          type: string
+        results:
+          items:
+            $ref: '#/components/schemas/LocationList'
+          type: array
+      required:
+      - count
+      - results
+      type: object
+    PaginatedPackageList:
+      properties:
+        count:
+          example: 123
+          type: integer
+        next:
+          example: http://api.example.org/accounts/?page=4
+          format: uri
+          nullable: true
+          type: string
+        previous:
+          example: http://api.example.org/accounts/?page=2
+          format: uri
+          nullable: true
+          type: string
+        results:
+          items:
+            $ref: '#/components/schemas/Package'
+          type: array
+      required:
+      - count
+      - results
+      type: object
+    StatusEnum:
+      description: '* `unused` - Unused
+
+        * `active` - Active
+
+        * `exhausted` - Exhausted
+
+        * `expired` - Expired
+
+        * `unknown` - Unknown'
+      enum:
+      - unused
+      - active
+      - exhausted
+      - expired
+      - unknown
+      type: string
+    TokenObtainPair:
+      properties:
+        access:
+          readOnly: true
+          type: string
+        refresh:
+          readOnly: true
+          type: string
+      required:
+      - access
+      - refresh
+      type: object
+    TokenObtainPairRequest:
+      properties:
+        email:
+          minLength: 1
+          type: string
+          writeOnly: true
+        password:
+          minLength: 1
+          type: string
+          writeOnly: true
+      required:
+      - email
+      - password
+      type: object
+    TokenRefresh:
+      properties:
+        access:
+          readOnly: true
+          type: string
+      required:
+      - access
+      type: object
+    TokenRefreshRequest:
+      properties:
+        refresh:
+          minLength: 1
+          type: string
+          writeOnly: true
+      required:
+      - refresh
+      type: object
+  securitySchemes:
+    bearerAuth:
+      bearerFormat: JWT
+      scheme: bearer
+      type: http
+    jwtAuth:
+      bearerFormat: JWT
+      scheme: bearer
+      type: http

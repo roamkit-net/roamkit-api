@@ -26,6 +26,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "rest_framework_simplejwt",
+    "drf_spectacular",
     "core",
     "apps.accounts",
     "apps.billing",
@@ -145,6 +146,7 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 50,
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
 SIMPLE_JWT = {
@@ -152,6 +154,48 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": False,
     "AUTH_HEADER_TYPES": ("Bearer",),
+}
+
+# OpenAPI (C10) — generate only via scripts/generate_openapi.sh
+SPECTACULAR_SETTINGS = {
+    "TITLE": "RoamKit API",
+    "DESCRIPTION": (
+        "Self-service eSIM API. Public REST under `/api/v1/`. "
+        "Authenticate with JWT Bearer tokens from `/api/v1/auth/token/`."
+    ),
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SORT_OPERATIONS": True,
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SCHEMA_PATH_PREFIX": r"/api/v1",
+    "TAGS": [
+        {
+            "name": "Authentication",
+            "description": "Registration, login, and password reset",
+        },
+        {
+            "name": "Billing",
+            "description": "Prepaid credits, deposits, and wallet balance",
+        },
+        {"name": "Orders", "description": "Package purchase orders"},
+        {"name": "Catalog", "description": "Packages and locations"},
+        {"name": "eSIM", "description": "User eSIM inventory, usage, and top-ups"},
+        {"name": "Users", "description": "Authenticated user profile"},
+    ],
+    "SERVERS": [
+        {"url": "https://api.staging.roamkit.net", "description": "Staging"},
+        {"url": "https://api.roamkit.net", "description": "Production"},
+    ],
+    "APPEND_COMPONENTS": {
+        "securitySchemes": {
+            "bearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
+            }
+        }
+    },
+    "SECURITY": [{"bearerAuth": []}],
 }
 
 PACKAGE_PROVIDER = "apps.integrations.airalo.providers.AiraloPackageProvider"

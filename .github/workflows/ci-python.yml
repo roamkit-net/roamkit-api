@@ -38,6 +38,35 @@ jobs:
       - name: Bandit
         run: bandit -r src/ -ll
 
+  openapi:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - roamkit
+      - default
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Install dependencies
+        run: pip install -r requirements/dev.txt
+      - name: Validate OpenAPI schema
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.dev
+          PYTHONPATH: src
+        run: |
+          chmod +x scripts/generate_openapi.sh
+          ./scripts/generate_openapi.sh
+          # Ensure generation is deterministic: re-run must not change the file.
+          cp openapi/openapi.yaml /tmp/openapi-first.yaml
+          ./scripts/generate_openapi.sh
+          diff -u /tmp/openapi-first.yaml openapi/openapi.yaml
+          # Committed artifact must match generated output.
+          git diff --exit-code -- openapi/openapi.yaml
+
   migration-smoke:
     runs-on:
       - self-hosted
@@ -76,7 +105,7 @@ jobs:
       - x64
       - roamkit
       - docker
-    needs: [lint, migration-smoke]
+    needs: [lint, migration-smoke, openapi]
     steps:
       - uses: actions/checkout@v4
       - name: Start test infrastructure
