@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roamkit.net/contracts/billing-config.response.schema.json",
+  "title": "BillingConfigResponse",
+  "description": "Public GET /api/v1/billing/config/ body (ADR-010). Keep in sync across roamkit-docs, roamkit-api, and roamkit-web.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "config_version",
+    "token_symbol",
+    "token_name",
+    "token_decimals",
+    "display_decimals",
+    "billing_enabled"
+  ],
+  "properties": {
+    "config_version": { "type": "integer" },
+    "token_symbol": { "type": "string", "minLength": 1 },
+    "token_name": { "type": "string", "minLength": 1 },
+    "token_decimals": { "type": "integer", "minimum": 0 },
+    "display_decimals": { "type": "integer", "minimum": 0 },
+    "billing_enabled": { "type": "boolean" }
+  }
+}
