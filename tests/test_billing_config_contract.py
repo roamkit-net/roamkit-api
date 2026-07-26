@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 from django.test import Client, override_settings
-
 from tests.test_billing_api import _POLYGON
 
 SCHEMA_PATH = (
