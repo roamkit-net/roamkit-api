@@ -259,9 +259,7 @@ TURNSTILE_TOKEN_SEEN_TTL = int(os.environ.get("TURNSTILE_TOKEN_SEEN_TTL", "180")
 TURNSTILE_BYPASS_SECRET = os.environ.get("TURNSTILE_BYPASS_SECRET", "")
 
 # Google OAuth GIS ID token (ADR 015). Default off for local/dark deploy.
-GOOGLE_OAUTH_ENABLED = (
-    os.environ.get("GOOGLE_OAUTH_ENABLED", "false").lower() == "true"
-)
+GOOGLE_OAUTH_ENABLED = os.environ.get("GOOGLE_OAUTH_ENABLED", "false").lower() == "true"
 GOOGLE_OAUTH_CLIENT_ID = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
 GOOGLE_OAUTH_VERIFY_TIMEOUT = float(
     os.environ.get("GOOGLE_OAUTH_VERIFY_TIMEOUT", "2.5")
