@@ -115,6 +115,7 @@ class PackageSyncService:
                     "plan_type": dto.plan_type,
                     "voice_minutes": dto.voice_minutes,
                     "text_sms": dto.text_sms,
+                    "activation_policy": dto.activation_policy or "unknown",
                     "source": self.source,
                     "is_active": True,
                     "synced_at": synced_at,

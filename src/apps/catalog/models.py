@@ -67,6 +67,12 @@ class Package(models.Model):
     plan_type = models.CharField(max_length=32, default="data")
     voice_minutes = models.PositiveIntegerField(null=True, blank=True)
     text_sms = models.PositiveIntegerField(null=True, blank=True)
+    activation_policy = models.CharField(
+        max_length=32,
+        default="unknown",
+        db_index=True,
+        help_text="first_usage | installation | unknown (synced from provider).",
+    )
     source = models.CharField(max_length=32, default="airalo")
     is_active = models.BooleanField(default=True, db_index=True)
     synced_at = models.DateTimeField()

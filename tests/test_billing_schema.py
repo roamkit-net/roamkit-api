@@ -88,7 +88,7 @@ def test_billing_models_use_uuid_primary_keys() -> None:
         user=user,
         order=order,
         iccid="891000000000009001",
-        status=Esim.Status.UNUSED,
+        status=Esim.Status.PURCHASED,
     )
     subscription = Subscription.objects.create(
         account=account,
@@ -227,7 +227,7 @@ def test_check_constraints_reject_invalid_rows() -> None:
         user=user,
         order=order,
         iccid="891000000000009002",
-        status=Esim.Status.UNUSED,
+        status=Esim.Status.PURCHASED,
     )
     with pytest.raises(IntegrityError), transaction.atomic():
         Subscription.objects.create(
@@ -298,7 +298,9 @@ def test_order_account_backfill_migration() -> None:
             ("accounts", "0002_billing_schema"),
             ("billing", "0001_billing_schema"),
             ("orders", "0001_initial"),
-            ("catalog", "0004_location_coverages"),
+            # DB stays at catalog HEAD while orders is rolled back; model must
+            # match the live schema (activation_policy from 0005).
+            ("catalog", "0005_package_activation_policy"),
         ]
     )
     UserHistorical = state.apps.get_model("accounts", "User")
@@ -332,6 +334,7 @@ def test_order_account_backfill_migration() -> None:
         source="airalo",
         is_active=True,
         synced_at=timezone.now(),
+        activation_policy="unknown",
     )
     order = OrderHistorical.objects.create(
         user_id=user.pk,

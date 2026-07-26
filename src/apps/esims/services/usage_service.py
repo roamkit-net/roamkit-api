@@ -25,6 +25,9 @@ class UsageService:
         """Return provider usage for ``esim`` and persist the cache snapshot."""
         usage = self.provider.get_usage(esim.iccid)
         self._update_cache(esim, usage)
+        from apps.esims.services.lifecycle_service import lifecycle_service
+
+        lifecycle_service.apply_provider_usage(esim, usage)
         return usage
 
     def _update_cache(self, esim: Esim, usage: UsageDTO) -> None:

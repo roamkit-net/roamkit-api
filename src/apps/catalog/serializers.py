@@ -24,6 +24,7 @@ class PackageSerializer(serializers.ModelSerializer):
             "plan_type",
             "voice_minutes",
             "text_sms",
+            "activation_policy",
         ]
         read_only_fields = fields
 

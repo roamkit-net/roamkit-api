@@ -116,7 +116,7 @@ def _make_esim(*, user: User, package: Package, iccid: str) -> Esim:
         manual_installation="<p>Manual</p>",
         qrcode_installation="<p>QR</p>",
         installation_guide_url="https://sandbox.airalo.com/installation-guide",
-        status=Esim.Status.UNUSED,
+        status=Esim.Status.PURCHASED,
     )
 
 
@@ -313,3 +313,47 @@ def test_topups_hides_other_users_esim(
 
     assert response.status_code == 404
     assert provider.topup_calls == []
+
+
+@pytest.mark.django_db
+def test_events_idempotent_and_owned(
+    client: Client,
+    user: User,
+    alice_esim: Esim,
+    bob_esim: Esim,
+) -> None:
+    access = _access_token(client, user.email)
+    url = f"/api/v1/me/esims/{alice_esim.pk}/events/"
+    body = {
+        "event_type": "install.opened",
+        "idempotency_key": "setup-open-1",
+        "schema_version": 1,
+        "resume_step": 1,
+    }
+    first = client.post(
+        url,
+        data=json.dumps(body),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert first.status_code == 201
+    second = client.post(
+        url,
+        data=json.dumps(body),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert second.status_code == 200
+    assert first.json()["id"] == second.json()["id"]
+
+    listed = client.get(url, HTTP_AUTHORIZATION=f"Bearer {access}")
+    assert listed.status_code == 200
+    assert any(e["event_type"] == "install.opened" for e in listed.json())
+
+    other = client.post(
+        f"/api/v1/me/esims/{bob_esim.pk}/events/",
+        data=json.dumps({**body, "idempotency_key": "other"}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert other.status_code == 404
