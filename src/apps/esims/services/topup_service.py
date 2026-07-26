@@ -13,7 +13,11 @@ from apps.billing.models import LedgerReferenceType
 from apps.billing.services import credit_service, ensure_billing_account
 from apps.esims.exceptions import TopupPackageNotFoundError
 from apps.esims.models import Topup
-from apps.orders.exceptions import IdempotencyKeyRequiredError, SpendInProgressError
+from apps.orders.exceptions import (
+    IdempotencyKeyRequiredError,
+    ProviderFulfillmentError,
+    SpendInProgressError,
+)
 from shared.events.billing_events import (
     CreditDebited,
     CreditGranted,
@@ -86,10 +90,10 @@ class TopupService:
 
         try:
             result = self.provider.submit_topup(esim.iccid, package.external_id)
-        except Exception:
+        except Exception as exc:
             self._compensate_failed(topup=topup, account=account, amount=amount)
             logger.exception("Topup %s provider fulfillment failed", topup.pk)
-            raise
+            raise ProviderFulfillmentError("Provider fulfillment failed") from exc
 
         return self._persist_fulfillment(
             topup=topup,
