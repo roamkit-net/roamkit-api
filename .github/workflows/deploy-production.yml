@@ -1,4 +1,8 @@
 # Deploy to Hetzner production on merge to main (ADR 013 / Gate C)
+#
+# Cross-repo pairing: this workflow owns API_IMAGE (this repo SHA).
+# WEB_IMAGE uses the roamkit-web :main branch tag — never this repo's SHA.
+# Persist pins into host .env so later recreates do not drift (Gate D lesson).
 
 name: Deploy Production
 
@@ -35,9 +39,33 @@ jobs:
           username: root
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
           script: |
-            cd ${{ inputs.stack-dir }}
-            export API_IMAGE=ghcr.io/roamkit-net/roamkit-api:${{ github.sha }}
-            export WEB_IMAGE=ghcr.io/roamkit-net/roamkit-web:${{ github.sha }}
+            set -euo pipefail
+            STACK_DIR="${{ inputs.stack-dir }}"
+            cd "$STACK_DIR"
+            API_IMAGE="ghcr.io/roamkit-net/roamkit-api:${{ github.sha }}"
+            WEB_IMAGE="ghcr.io/roamkit-net/roamkit-web:main"
+            export API_IMAGE WEB_IMAGE
+            # Persist pins + API fingerprint (env_file overrides image bake).
+            if grep -q '^API_IMAGE=' .env; then
+              sed -i "s|^API_IMAGE=.*|API_IMAGE=${API_IMAGE}|" .env
+            else
+              echo "API_IMAGE=${API_IMAGE}" >> .env
+            fi
+            if grep -q '^WEB_IMAGE=' .env; then
+              sed -i "s|^WEB_IMAGE=.*|WEB_IMAGE=${WEB_IMAGE}|" .env
+            else
+              echo "WEB_IMAGE=${WEB_IMAGE}" >> .env
+            fi
+            if grep -q '^ROAMKIT_GIT_SHA=' .env; then
+              sed -i "s|^ROAMKIT_GIT_SHA=.*|ROAMKIT_GIT_SHA=${{ github.sha }}|" .env
+            else
+              echo "ROAMKIT_GIT_SHA=${{ github.sha }}" >> .env
+            fi
+            if grep -q '^ROAMKIT_IMAGE_TAG=' .env; then
+              sed -i "s|^ROAMKIT_IMAGE_TAG=.*|ROAMKIT_IMAGE_TAG=${{ github.sha }}|" .env
+            else
+              echo "ROAMKIT_IMAGE_TAG=${{ github.sha }}" >> .env
+            fi
             ./scripts/deploy-production.sh
 
       - name: Smoke test (from runner)
