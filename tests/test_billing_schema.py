@@ -298,7 +298,9 @@ def test_order_account_backfill_migration() -> None:
             ("accounts", "0002_billing_schema"),
             ("billing", "0001_billing_schema"),
             ("orders", "0001_initial"),
-            ("catalog", "0004_location_coverages"),
+            # DB stays at catalog HEAD while orders is rolled back; model must
+            # match the live schema (activation_policy from 0005).
+            ("catalog", "0005_package_activation_policy"),
         ]
     )
     UserHistorical = state.apps.get_model("accounts", "User")
@@ -332,6 +334,7 @@ def test_order_account_backfill_migration() -> None:
         source="airalo",
         is_active=True,
         synced_at=timezone.now(),
+        activation_policy="unknown",
     )
     order = OrderHistorical.objects.create(
         user_id=user.pk,
