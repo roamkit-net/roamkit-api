@@ -62,3 +62,7 @@ class AuthActivateRateThrottle(AuthScopedRateThrottle):
 
 class AuthPasswordResetConfirmRateThrottle(AuthScopedRateThrottle):
     scope = "auth_password_reset_confirm"
+
+
+class AuthGoogleRateThrottle(AuthScopedRateThrottle):
+    scope = "auth_google"

@@ -1,6 +1,13 @@
 """Auth API views."""
 
-from drf_spectacular.utils import OpenApiResponse, extend_schema, extend_schema_view
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from drf_spectacular.utils import (
+    OpenApiExample,
+    OpenApiResponse,
+    extend_schema,
+    extend_schema_view,
+)
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
@@ -12,8 +19,13 @@ from rest_framework_simplejwt.serializers import (
 )
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from apps.accounts.providers.google import authenticate_with_google
+from apps.accounts.providers.google.errors import GoogleAuthError, GoogleAuthErrorCode
 from apps.accounts.serializers import (
     ActivateSerializer,
+    GoogleAuthErrorSerializer,
+    GoogleAuthSerializer,
+    GoogleAuthTokenResponseSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     RegisterSerializer,
@@ -24,12 +36,15 @@ from apps.accounts.services.password_reset import GENERIC_PASSWORD_RESET_MESSAGE
 from apps.accounts.services.registration import GENERIC_REGISTER_MESSAGE
 from apps.accounts.throttles import (
     AuthActivateRateThrottle,
+    AuthGoogleRateThrottle,
     AuthPasswordResetConfirmRateThrottle,
     AuthPasswordResetRateThrottle,
     AuthRegisterRateThrottle,
     AuthTokenRateThrottle,
 )
 from core.openapi_serializers import DetailMessageSerializer, ErrorDetailSerializer
+
+User = get_user_model()
 
 
 @extend_schema_view(
@@ -224,7 +239,13 @@ class AuthTokenObtainView(TokenObtainPairView):
 
     def post(self, request: Request, *args, **kwargs) -> Response:
         enforce_human_verification(request, endpoint="auth_token")
-        return super().post(request, *args, **kwargs)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.user
+        User.objects.filter(pk=user.pk).update(
+            last_login_provider=User.LastLoginProvider.PASSWORD
+        )
+        return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 
 @extend_schema_view(
@@ -247,3 +268,126 @@ class AuthTokenObtainView(TokenObtainPairView):
 )
 class AuthTokenRefreshView(TokenRefreshView):
     """POST /api/v1/auth/token/refresh/ — JWT refresh."""
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Authentication"],
+        operation_id="auth_google",
+        summary="Sign in with Google (GIS ID token)",
+        description=(
+            "Verify a Google Identity Services ID token and return the same "
+            "SimpleJWT access/refresh pair as password login (ADR 015)."
+        ),
+        auth=[],
+        request=GoogleAuthSerializer,
+        examples=[
+            OpenApiExample(
+                "Request",
+                value={"credential": "<google_id_token>"},
+                request_only=True,
+            ),
+            OpenApiExample(
+                "Success",
+                value={"access": "eyJ...", "refresh": "eyJ..."},
+                response_only=True,
+                status_codes=["200"],
+            ),
+            OpenApiExample(
+                "Invalid token",
+                value={
+                    "code": "google_invalid_token",
+                    "detail": "Invalid Google credential.",
+                },
+                response_only=True,
+                status_codes=["400"],
+            ),
+            OpenApiExample(
+                "Email not verified",
+                value={
+                    "code": "google_email_not_verified",
+                    "detail": "Google account email is not verified.",
+                },
+                response_only=True,
+                status_codes=["400"],
+            ),
+            OpenApiExample(
+                "Account disabled",
+                value={
+                    "code": "google_account_disabled",
+                    "detail": "This account is disabled.",
+                },
+                response_only=True,
+                status_codes=["401"],
+            ),
+            OpenApiExample(
+                "Feature disabled",
+                value={"code": "google_feature_disabled", "detail": "Not found."},
+                response_only=True,
+                status_codes=["404"],
+            ),
+            OpenApiExample(
+                "Sub conflict",
+                value={
+                    "code": "google_sub_conflict",
+                    "detail": "Google account is already linked.",
+                },
+                response_only=True,
+                status_codes=["409"],
+            ),
+            OpenApiExample(
+                "Verify unavailable",
+                value={
+                    "code": "google_verify_unavailable",
+                    "detail": (
+                        "Google sign-in is temporarily unavailable. Please try again."
+                    ),
+                },
+                response_only=True,
+                status_codes=["503"],
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(
+                response=GoogleAuthTokenResponseSerializer,
+                description="JWT token pair",
+            ),
+            400: OpenApiResponse(
+                response=GoogleAuthErrorSerializer, description="Invalid credential"
+            ),
+            401: OpenApiResponse(
+                response=GoogleAuthErrorSerializer, description="Account disabled"
+            ),
+            404: OpenApiResponse(
+                response=GoogleAuthErrorSerializer, description="Feature disabled"
+            ),
+            409: OpenApiResponse(
+                response=GoogleAuthErrorSerializer, description="Google sub conflict"
+            ),
+            503: OpenApiResponse(
+                response=GoogleAuthErrorSerializer,
+                description="Google verify unavailable",
+            ),
+        },
+    ),
+)
+class GoogleAuthView(APIView):
+    """POST /api/v1/auth/google/ — GIS ID token → SimpleJWT."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [AuthGoogleRateThrottle]
+
+    def post(self, request: Request) -> Response:
+        if not getattr(settings, "GOOGLE_OAUTH_ENABLED", False):
+            raise GoogleAuthError(GoogleAuthErrorCode.FEATURE_DISABLED)
+
+        serializer = GoogleAuthSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = authenticate_with_google(
+            credential=serializer.validated_data["credential"]
+        )
+        return Response(
+            {"access": result.access, "refresh": result.refresh},
+            status=status.HTTP_200_OK,
+        )

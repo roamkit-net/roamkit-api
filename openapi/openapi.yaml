@@ -49,6 +49,101 @@ paths:
       summary: Activate account
       tags:
       - Authentication
+  /api/v1/auth/google/:
+    post:
+      description: Verify a Google Identity Services ID token and return the same SimpleJWT access/refresh
+        pair as password login (ADR 015).
+      operationId: auth_google
+      requestBody:
+        content:
+          application/json:
+            examples:
+              Request:
+                value:
+                  credential: <google_id_token>
+            schema:
+              $ref: '#/components/schemas/GoogleAuthRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  value:
+                    access: eyJ...
+                    refresh: eyJ...
+              schema:
+                $ref: '#/components/schemas/GoogleAuthTokenResponse'
+          description: JWT token pair
+        '400':
+          content:
+            application/json:
+              examples:
+                EmailNotVerified:
+                  summary: Email not verified
+                  value:
+                    code: google_email_not_verified
+                    detail: Google account email is not verified.
+                InvalidToken:
+                  summary: Invalid token
+                  value:
+                    code: google_invalid_token
+                    detail: Invalid Google credential.
+              schema:
+                $ref: '#/components/schemas/GoogleAuthError'
+          description: Invalid credential
+        '401':
+          content:
+            application/json:
+              examples:
+                AccountDisabled:
+                  summary: Account disabled
+                  value:
+                    code: google_account_disabled
+                    detail: This account is disabled.
+              schema:
+                $ref: '#/components/schemas/GoogleAuthError'
+          description: Account disabled
+        '404':
+          content:
+            application/json:
+              examples:
+                FeatureDisabled:
+                  summary: Feature disabled
+                  value:
+                    code: google_feature_disabled
+                    detail: Not found.
+              schema:
+                $ref: '#/components/schemas/GoogleAuthError'
+          description: Feature disabled
+        '409':
+          content:
+            application/json:
+              examples:
+                SubConflict:
+                  summary: Sub conflict
+                  value:
+                    code: google_sub_conflict
+                    detail: Google account is already linked.
+              schema:
+                $ref: '#/components/schemas/GoogleAuthError'
+          description: Google sub conflict
+        '503':
+          content:
+            application/json:
+              examples:
+                VerifyUnavailable:
+                  summary: Verify unavailable
+                  value:
+                    code: google_verify_unavailable
+                    detail: Google sign-in is temporarily unavailable. Please try again.
+              schema:
+                $ref: '#/components/schemas/GoogleAuthError'
+          description: Google verify unavailable
+      summary: Sign in with Google (GIS ID token)
+      tags:
+      - Authentication
   /api/v1/auth/me/:
     get:
       description: Return the authenticated user's profile.
@@ -1211,6 +1306,39 @@ components:
       - expired
       - unknown
       type: string
+    GoogleAuthError:
+      description: Locked Google auth error body (ADR 015).
+      properties:
+        code:
+          type: string
+        detail:
+          type: string
+      required:
+      - code
+      - detail
+      type: object
+    GoogleAuthRequest:
+      description: GIS ID token credential from the browser.
+      properties:
+        credential:
+          maxLength: 8192
+          minLength: 1
+          type: string
+          writeOnly: true
+      required:
+      - credential
+      type: object
+    GoogleAuthTokenResponse:
+      description: Same JWT pair shape as password ``/auth/token/``.
+      properties:
+        access:
+          type: string
+        refresh:
+          type: string
+      required:
+      - access
+      - refresh
+      type: object
     InsufficientCredits:
       description: Structured 402 payload from ``InsufficientFundsError.to_api_dict()``.
       properties:
