@@ -1,6 +1,11 @@
 """My eSIM API views."""
 
 from django.conf import settings
+from drf_spectacular.utils import (
+    OpenApiResponse,
+    extend_schema,
+    extend_schema_view,
+)
 from rest_framework import status
 from rest_framework.exceptions import NotFound
 from rest_framework.generics import GenericAPIView, ListAPIView, RetrieveAPIView
@@ -24,6 +29,10 @@ from apps.esims.serializers import (
 from apps.esims.services.topup_service import TopupService
 from apps.esims.services.usage_service import UsageService
 from apps.orders.exceptions import IdempotencyKeyRequiredError, SpendInProgressError
+from core.openapi_serializers import (
+    ErrorDetailSerializer,
+    InsufficientCreditsSerializer,
+)
 from shared.providers.factory import get_topup_provider
 
 
@@ -34,20 +43,74 @@ class OwnedEsimMixin:
         return Esim.objects.filter(user=self.request.user)
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=["eSIM"],
+        operation_id="esim_list",
+        summary="List my eSIMs",
+        description="List eSIMs owned by the authenticated user.",
+        responses={
+            200: OpenApiResponse(
+                response=EsimSerializer(many=True), description="Paginated eSIMs"
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+        },
+    ),
+)
 class EsimListView(OwnedEsimMixin, ListAPIView):
     """List eSIMs owned by the authenticated user."""
 
     serializer_class = EsimSerializer
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=["eSIM"],
+        operation_id="esim_retrieve",
+        summary="Retrieve my eSIM",
+        description="Retrieve a single eSIM owned by the authenticated user.",
+        responses={
+            200: OpenApiResponse(response=EsimSerializer, description="eSIM"),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="eSIM not found"
+            ),
+        },
+    ),
+)
 class EsimDetailView(OwnedEsimMixin, RetrieveAPIView):
     """Retrieve a single owned eSIM."""
 
     serializer_class = EsimSerializer
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=["eSIM"],
+        operation_id="esim_usage",
+        summary="eSIM usage",
+        description="Fetch live usage for an owned eSIM and refresh the cache.",
+        responses={
+            200: OpenApiResponse(
+                response=UsageSerializer, description="Usage snapshot"
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="eSIM not found"
+            ),
+        },
+    ),
+)
 class EsimUsageView(OwnedEsimMixin, GenericAPIView):
     """Fetch live usage for an owned eSIM and refresh the cache."""
+
+    serializer_class = UsageSerializer
 
     def get(self, request: Request, *args, **kwargs) -> Response:
         esim = self.get_object()
@@ -55,8 +118,59 @@ class EsimUsageView(OwnedEsimMixin, GenericAPIView):
         return Response(UsageSerializer(usage).data)
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=["eSIM"],
+        operation_id="esim_topups_list",
+        summary="List top-up packages",
+        description="List available top-up packages for an owned eSIM.",
+        responses={
+            200: OpenApiResponse(description="Top-up package list"),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="eSIM not found"
+            ),
+        },
+    ),
+    post=extend_schema(
+        tags=["eSIM"],
+        operation_id="esim_topups_purchase",
+        summary="Purchase top-up",
+        description=(
+            "Purchase a top-up package using prepaid credits. "
+            "Idempotent on ``idempotency_key``."
+        ),
+        request=PurchaseTopupSerializer,
+        responses={
+            201: OpenApiResponse(
+                response=TopupSerializer, description="Top-up created"
+            ),
+            400: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Invalid request"
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            402: OpenApiResponse(
+                response=InsufficientCreditsSerializer,
+                description="Insufficient credits",
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="eSIM/package not found or billing disabled",
+            ),
+            409: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Spend already in progress"
+            ),
+        },
+    ),
+)
 class EsimTopupsView(OwnedEsimMixin, GenericAPIView):
     """List or purchase top-up packages for an owned eSIM."""
+
+    serializer_class = PurchaseTopupSerializer
 
     def get(self, request: Request, *args, **kwargs) -> Response:
         esim = self.get_object()

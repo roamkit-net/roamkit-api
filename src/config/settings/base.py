@@ -27,7 +27,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
     "drf_spectacular",
-    "core",
+    "core.apps.CoreConfig",
     "apps.accounts",
     "apps.billing",
     "apps.catalog",
@@ -186,15 +186,6 @@ SPECTACULAR_SETTINGS = {
         {"url": "https://api.staging.roamkit.net", "description": "Staging"},
         {"url": "https://api.roamkit.net", "description": "Production"},
     ],
-    "APPEND_COMPONENTS": {
-        "securitySchemes": {
-            "bearerAuth": {
-                "type": "http",
-                "scheme": "bearer",
-                "bearerFormat": "JWT",
-            }
-        }
-    },
     "SECURITY": [{"bearerAuth": []}],
 }
 

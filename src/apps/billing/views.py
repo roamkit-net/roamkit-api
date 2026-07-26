@@ -5,6 +5,7 @@ from __future__ import annotations
 from django.conf import settings
 from django.http import HttpResponse
 from django.utils.cache import get_conditional_response
+from drf_spectacular.utils import OpenApiResponse, extend_schema, extend_schema_view
 from rest_framework import status
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -36,6 +37,7 @@ from apps.billing.services.deposit_info import (
     get_deposit_info,
 )
 from apps.billing.services.deposit_verification import deposit_verification_service
+from core.openapi_serializers import ErrorDetailSerializer
 from shared.providers.blockchain import BlockchainRPCError
 
 
@@ -53,6 +55,24 @@ class BillingAPIView(APIView):
             raise PermissionDenied(detail="WalletConnect deposits are disabled.")
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Billing"],
+        operation_id="billing_config",
+        summary="Billing display config",
+        description=(
+            "Public currency / presentation config for catalog prices. Supports ETag / "
+            "If-None-Match (304). No secrets."
+        ),
+        auth=[],
+        responses={
+            200: OpenApiResponse(
+                response=BillingConfigSerializer, description="Display currency config"
+            ),
+            304: OpenApiResponse(description="Not modified (ETag match)"),
+        },
+    ),
+)
 class BillingConfigView(APIView):
     """GET /api/v1/billing/config/ — public display config (AllowAny; no secrets)."""
 
@@ -68,6 +88,23 @@ class BillingConfigView(APIView):
         return get_conditional_response(request, etag=etag, response=response)
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Billing"],
+        operation_id="billing_balance",
+        summary="Account credit balance",
+        description="Return the authenticated user's prepaid credit balance.",
+        responses={
+            200: OpenApiResponse(response=BalanceSerializer, description="Balance"),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Billing disabled"
+            ),
+        },
+    ),
+)
 class BalanceView(BillingAPIView):
     """GET /api/v1/billing/balance/"""
 
@@ -76,6 +113,28 @@ class BalanceView(BillingAPIView):
         return Response(BalanceSerializer({"balance": account.balance}).data)
 
 
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Billing"],
+        operation_id="billing_deposit_info",
+        summary="Deposit metadata",
+        description=(
+            "Polygon USDT deposit metadata including EIP-681 URI "
+            "for the platform wallet."
+        ),
+        responses={
+            200: OpenApiResponse(
+                response=DepositInfoSerializer, description="Deposit info"
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Billing disabled"
+            ),
+        },
+    ),
+)
 class DepositInfoView(BillingAPIView):
     """GET /api/v1/billing/deposit-info/ — full Polygon USDT meta + EIP-681 URI."""
 
@@ -83,6 +142,45 @@ class DepositInfoView(BillingAPIView):
         return Response(DepositInfoSerializer(get_deposit_info()).data)
 
 
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Billing"],
+        operation_id="billing_verify_wallet",
+        summary="Verify WalletConnect deposit",
+        description=(
+            "Verify an on-chain USDT transfer initiated via WalletConnect. "
+            "Requires ``WALLETCONNECT_ENABLED``."
+        ),
+        request=VerifyDepositSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=DepositRequestSerializer, description="Verified deposit"
+            ),
+            202: OpenApiResponse(
+                response=DepositRequestSerializer,
+                description="Accepted; waiting for confirmations",
+            ),
+            400: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Verification failed"
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer, description="WalletConnect disabled"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Billing disabled"
+            ),
+            409: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Duplicate transaction"
+            ),
+            502: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Blockchain RPC error"
+            ),
+        },
+    ),
+)
 class VerifyWalletDepositView(BillingAPIView):
     """POST /api/v1/billing/verify-wallet/"""
 
@@ -95,6 +193,41 @@ class VerifyWalletDepositView(BillingAPIView):
         )
 
 
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Billing"],
+        operation_id="billing_verify_cex",
+        summary="Verify CEX / manual deposit",
+        description=(
+            "Verify an on-chain USDT transfer credited from a CEX or manual send."
+        ),
+        request=VerifyDepositSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=DepositRequestSerializer, description="Verified deposit"
+            ),
+            202: OpenApiResponse(
+                response=DepositRequestSerializer,
+                description="Accepted; waiting for confirmations",
+            ),
+            400: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Verification failed"
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Billing disabled"
+            ),
+            409: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Duplicate transaction"
+            ),
+            502: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Blockchain RPC error"
+            ),
+        },
+    ),
+)
 class VerifyCexDepositView(BillingAPIView):
     """POST /api/v1/billing/verify-cex/"""
 

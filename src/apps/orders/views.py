@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from django.conf import settings
+from drf_spectacular.utils import OpenApiResponse, extend_schema, extend_schema_view
 from rest_framework import status
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
@@ -19,9 +20,45 @@ from apps.catalog.models import Package
 from apps.orders.exceptions import IdempotencyKeyRequiredError, SpendInProgressError
 from apps.orders.serializers import CreateOrderSerializer, OrderSerializer
 from apps.orders.services.order_service import OrderService
+from core.openapi_serializers import (
+    ErrorDetailSerializer,
+    InsufficientCreditsSerializer,
+)
 from shared.providers.factory import get_order_provider
 
 
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Orders"],
+        operation_id="orders_create",
+        summary="Create package order",
+        description=(
+            "Debit prepaid credits then fulfill via the order provider. "
+            "Idempotent on ``idempotency_key`` (replay returns 201 with the same body)."
+        ),
+        request=CreateOrderSerializer,
+        responses={
+            201: OpenApiResponse(response=OrderSerializer, description="Order created"),
+            400: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Invalid request"
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            402: OpenApiResponse(
+                response=InsufficientCreditsSerializer,
+                description="Insufficient credits",
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="Package not found or billing disabled",
+            ),
+            409: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Spend already in progress"
+            ),
+        },
+    ),
+)
 class OrderCreateView(APIView):
     """POST /api/v1/orders/ — debit prepaid credits then fulfill via provider."""
 
