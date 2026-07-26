@@ -25,70 +25,135 @@ tags:
 paths:
   /api/v1/auth/activate/:
     post:
-      description: Set password from confirmation link and activate the account.
-      operationId: auth_activate_create
+      description: Set password from the confirmation link and activate the account.
+      operationId: auth_activate
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivateRequest'
+        required: true
       responses:
         '200':
-          description: No response body
-      security:
-      - bearerAuth: []
-      - {}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: Activated user
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Invalid token or password
+      summary: Activate account
       tags:
-      - auth
+      - Authentication
   /api/v1/auth/me/:
     get:
       description: Return the authenticated user's profile.
-      operationId: auth_me_retrieve
+      operationId: users_me
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: User profile
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
       security:
-      - jwtAuth: []
       - bearerAuth: []
+      summary: Current user profile
       tags:
-      - auth
+      - Users
   /api/v1/auth/password-reset/:
     post:
-      description: Request a password reset email (always returns a generic success).
-      operationId: auth_password_reset_create
+      description: Request a password reset email. Always returns a generic success message.
+      operationId: auth_password_reset_request
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequestRequest'
+        required: true
       responses:
         '200':
-          description: No response body
-      security:
-      - bearerAuth: []
-      - {}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailMessage'
+          description: Generic password-reset acknowledgment
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Validation error
+      summary: Request password reset
       tags:
-      - auth
+      - Authentication
   /api/v1/auth/password-reset/confirm/:
     post:
       description: Confirm password reset with uid + token and set a new password.
-      operationId: auth_password_reset_confirm_create
+      operationId: auth_password_reset_confirm
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+        required: true
       responses:
         '200':
-          description: No response body
-      security:
-      - bearerAuth: []
-      - {}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailMessage'
+          description: Password updated
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Invalid token or password
+      summary: Confirm password reset
       tags:
-      - auth
+      - Authentication
   /api/v1/auth/register/:
     post:
-      description: Start registration with email only (sends confirmation link).
-      operationId: auth_register_create
+      description: Begin registration with email only. Always returns a generic success message (no account
+        enumeration).
+      operationId: auth_register
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+        required: true
       responses:
         '200':
-          description: No response body
-      security:
-      - bearerAuth: []
-      - {}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailMessage'
+          description: Generic registration acknowledgment
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Validation error
+      summary: Start registration
       tags:
-      - auth
+      - Authentication
   /api/v1/auth/token/:
     post:
-      description: 'Takes a set of user credentials and returns an access and refresh JSON web
-
-        token pair to prove the authentication of those credentials.'
-      operationId: auth_token_create
+      description: Exchange email and password for access and refresh JWT tokens.
+      operationId: auth_login
       requestBody:
         content:
           application/json:
@@ -101,17 +166,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenObtainPair'
-          description: ''
-      security:
-      - bearerAuth: []
+          description: JWT token pair
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Invalid credentials
+      summary: Obtain JWT tokens
       tags:
-      - auth
+      - Authentication
   /api/v1/auth/token/refresh/:
     post:
-      description: 'Takes a refresh type JSON web token and returns an access type JSON web
-
-        token if the refresh token is valid.'
-      operationId: auth_token_refresh_create
+      description: Exchange a refresh token for a new access token.
+      operationId: auth_refresh
       requestBody:
         content:
           application/json:
@@ -124,76 +192,215 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenRefresh'
-          description: ''
-      security:
-      - bearerAuth: []
+          description: New access token
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Invalid refresh token
+      summary: Refresh JWT access token
       tags:
-      - auth
+      - Authentication
   /api/v1/billing/balance/:
     get:
-      description: GET /api/v1/billing/balance/
-      operationId: billing_balance_retrieve
+      description: Return the authenticated user's prepaid credit balance.
+      operationId: billing_balance
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Balance'
+          description: Balance
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Billing disabled
       security:
-      - jwtAuth: []
       - bearerAuth: []
+      summary: Account credit balance
       tags:
-      - billing
+      - Billing
   /api/v1/billing/config/:
     get:
-      description: GET /api/v1/billing/config/ — public display config (AllowAny; no secrets).
-      operationId: billing_config_retrieve
+      description: Public currency / presentation config for catalog prices. Supports ETag / If-None-Match
+        (304). No secrets.
+      operationId: billing_config
       responses:
         '200':
-          description: No response body
-      security:
-      - jwtAuth: []
-      - bearerAuth: []
-      - {}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingConfig'
+          description: Display currency config
+        '304':
+          description: Not modified (ETag match)
+      summary: Billing display config
       tags:
-      - billing
+      - Billing
   /api/v1/billing/deposit-info/:
     get:
-      description: GET /api/v1/billing/deposit-info/ — full Polygon USDT meta + EIP-681 URI.
-      operationId: billing_deposit_info_retrieve
+      description: Polygon USDT deposit metadata including EIP-681 URI for the platform wallet.
+      operationId: billing_deposit_info
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepositInfo'
+          description: Deposit info
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Billing disabled
       security:
-      - jwtAuth: []
       - bearerAuth: []
+      summary: Deposit metadata
       tags:
-      - billing
+      - Billing
   /api/v1/billing/verify-cex/:
     post:
-      description: POST /api/v1/billing/verify-cex/
-      operationId: billing_verify_cex_create
+      description: Verify an on-chain USDT transfer credited from a CEX or manual send.
+      operationId: billing_verify_cex
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyDepositRequest'
+        required: true
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepositRequest'
+          description: Verified deposit
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepositRequest'
+          description: Accepted; waiting for confirmations
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Verification failed
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Billing disabled
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Duplicate transaction
+        '502':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Blockchain RPC error
       security:
-      - jwtAuth: []
       - bearerAuth: []
+      summary: Verify CEX / manual deposit
       tags:
-      - billing
+      - Billing
   /api/v1/billing/verify-wallet/:
     post:
-      description: POST /api/v1/billing/verify-wallet/
-      operationId: billing_verify_wallet_create
+      description: Verify an on-chain USDT transfer initiated via WalletConnect. Requires ``WALLETCONNECT_ENABLED``.
+      operationId: billing_verify_wallet
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyDepositRequest'
+        required: true
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepositRequest'
+          description: Verified deposit
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepositRequest'
+          description: Accepted; waiting for confirmations
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Verification failed
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: WalletConnect disabled
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Billing disabled
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Duplicate transaction
+        '502':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Blockchain RPC error
       security:
-      - jwtAuth: []
       - bearerAuth: []
+      summary: Verify WalletConnect deposit
       tags:
-      - billing
+      - Billing
   /api/v1/locations/:
     get:
-      description: List catalog locations with optional coverage-type filters.
-      operationId: locations_list
+      description: List catalog locations that have at least one active package.
+      operationId: catalog_locations_list
       parameters:
       - description: A page number within the paginated result set.
         in: query
@@ -201,23 +408,25 @@ paths:
         required: false
         schema:
           type: integer
+      - description: 'Filter: popular | local | regional | global'
+        in: query
+        name: type
+        schema:
+          type: string
       responses:
         '200':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PaginatedLocationListList'
-          description: ''
-      security:
-      - jwtAuth: []
-      - bearerAuth: []
-      - {}
+          description: Paginated locations
+      summary: List locations
       tags:
-      - locations
+      - Catalog
   /api/v1/locations/{slug}/:
     get:
-      description: Retrieve a single location by slug, with broader coverage options.
-      operationId: locations_retrieve
+      description: Retrieve a single location by slug, including broader coverage options.
+      operationId: catalog_locations_retrieve
       parameters:
       - in: path
         name: slug
@@ -230,17 +439,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Location'
-          description: ''
-      security:
-      - jwtAuth: []
-      - bearerAuth: []
-      - {}
+          description: Location
+        '404':
+          description: Location not found
+      summary: Retrieve location
       tags:
-      - locations
+      - Catalog
   /api/v1/me/esims/:
     get:
       description: List eSIMs owned by the authenticated user.
-      operationId: me_esims_list
+      operationId: esim_list
       parameters:
       - description: A page number within the paginated result set.
         in: query
@@ -254,16 +462,22 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PaginatedEsimList'
-          description: ''
+          description: Paginated eSIMs
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
       security:
-      - jwtAuth: []
       - bearerAuth: []
+      summary: List my eSIMs
       tags:
-      - me
+      - eSIM
   /api/v1/me/esims/{id}/:
     get:
-      description: Retrieve a single owned eSIM.
-      operationId: me_esims_retrieve
+      description: Retrieve a single eSIM owned by the authenticated user.
+      operationId: esim_retrieve
       parameters:
       - in: path
         name: id
@@ -276,16 +490,28 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Esim'
-          description: ''
+          description: eSIM
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: eSIM not found
       security:
-      - jwtAuth: []
       - bearerAuth: []
+      summary: Retrieve my eSIM
       tags:
-      - me
+      - eSIM
   /api/v1/me/esims/{id}/topups/:
     get:
-      description: List or purchase top-up packages for an owned eSIM.
-      operationId: me_esims_topups_retrieve
+      description: List available top-up packages for an owned eSIM.
+      operationId: esim_topups_list
       parameters:
       - in: path
         name: id
@@ -294,33 +520,85 @@ paths:
           type: integer
       responses:
         '200':
-          description: No response body
+          description: Top-up package list
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: eSIM not found
       security:
-      - jwtAuth: []
       - bearerAuth: []
+      summary: List top-up packages
       tags:
-      - me
+      - eSIM
     post:
-      description: List or purchase top-up packages for an owned eSIM.
-      operationId: me_esims_topups_create
+      description: Purchase a top-up package using prepaid credits. Idempotent on ``idempotency_key``.
+      operationId: esim_topups_purchase
       parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseTopupRequest'
+        required: true
       responses:
-        '200':
-          description: No response body
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Topup'
+          description: Top-up created
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Invalid request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '402':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsufficientCredits'
+          description: Insufficient credits
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: eSIM/package not found or billing disabled
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Spend already in progress
       security:
-      - jwtAuth: []
       - bearerAuth: []
+      summary: Purchase top-up
       tags:
-      - me
+      - eSIM
   /api/v1/me/esims/{id}/usage/:
     get:
       description: Fetch live usage for an owned eSIM and refresh the cache.
-      operationId: me_esims_usage_retrieve
+      operationId: esim_usage
       parameters:
       - in: path
         name: id
@@ -329,29 +607,96 @@ paths:
           type: integer
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Usage'
+          description: Usage snapshot
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: eSIM not found
       security:
-      - jwtAuth: []
       - bearerAuth: []
+      summary: eSIM usage
       tags:
-      - me
+      - eSIM
   /api/v1/orders/:
     post:
-      description: POST /api/v1/orders/ — debit prepaid credits then fulfill via provider.
+      description: Debit prepaid credits then fulfill via the order provider. Idempotent on ``idempotency_key``
+        (replay returns 201 with the same body).
       operationId: orders_create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+        required: true
       responses:
-        '200':
-          description: No response body
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+          description: Order created
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Invalid request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '402':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsufficientCredits'
+          description: Insufficient credits
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Package not found or billing disabled
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Spend already in progress
       security:
-      - jwtAuth: []
       - bearerAuth: []
+      summary: Create package order
       tags:
-      - orders
+      - Orders
   /api/v1/packages/:
     get:
       description: List active packages synced from external providers.
-      operationId: packages_list
+      operationId: catalog_packages_list
       parameters:
+      - description: Filter by ISO country code
+        in: query
+        name: country
+        schema:
+          type: string
+      - description: Filter by location slug
+        in: query
+        name: location
+        schema:
+          type: string
       - description: A page number within the paginated result set.
         in: query
         name: page
@@ -364,15 +709,68 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PaginatedPackageList'
-          description: ''
-      security:
-      - jwtAuth: []
-      - bearerAuth: []
-      - {}
+          description: Paginated packages
+      summary: List packages
       tags:
-      - packages
+      - Catalog
 components:
   schemas:
+    ActivateRequest:
+      properties:
+        password:
+          maxLength: 128
+          minLength: 8
+          type: string
+          writeOnly: true
+        password_confirm:
+          maxLength: 128
+          minLength: 8
+          type: string
+          writeOnly: true
+        token:
+          minLength: 1
+          type: string
+        uid:
+          minLength: 1
+          type: string
+      required:
+      - password
+      - password_confirm
+      - token
+      - uid
+      type: object
+    Balance:
+      properties:
+        balance:
+          format: decimal
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
+          type: string
+      required:
+      - balance
+      type: object
+    BillingConfig:
+      description: Public currency / presentation config (ADR-010 ``GET …/billing/config/``).
+      properties:
+        billing_enabled:
+          type: boolean
+        config_version:
+          type: integer
+        display_decimals:
+          type: integer
+        token_decimals:
+          type: integer
+        token_name:
+          type: string
+        token_symbol:
+          type: string
+      required:
+      - billing_enabled
+      - config_version
+      - display_decimals
+      - token_decimals
+      - token_name
+      - token_symbol
+      type: object
     CoverageTypeEnum:
       description: '* `local` - Local
 
@@ -384,6 +782,141 @@ components:
       - regional
       - global
       type: string
+    CreateOrderRequest:
+      description: Request body for POST /api/v1/orders/.
+      properties:
+        idempotency_key:
+          maxLength: 128
+          minLength: 1
+          type: string
+        package_id:
+          maxLength: 64
+          minLength: 1
+          type: string
+      required:
+      - idempotency_key
+      - package_id
+      type: object
+    DepositInfo:
+      description: Full Polygon USDT deposit metadata for clients (no hardcoded chain/token).
+      properties:
+        chain_id:
+          type: integer
+        contract:
+          type: string
+        eip681_uri:
+          type: string
+        min_confirmations:
+          type: integer
+        subscriptions_enabled:
+          type: boolean
+        token_decimals:
+          type: integer
+        token_symbol:
+          type: string
+        wallet:
+          type: string
+        walletconnect_enabled:
+          type: boolean
+      required:
+      - chain_id
+      - contract
+      - eip681_uri
+      - min_confirmations
+      - subscriptions_enabled
+      - token_decimals
+      - token_symbol
+      - wallet
+      - walletconnect_enabled
+      type: object
+    DepositRequest:
+      properties:
+        amount_credited:
+          format: decimal
+          nullable: true
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
+          readOnly: true
+          type: string
+        amount_requested:
+          format: decimal
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        failure_reason:
+          readOnly: true
+          type: string
+        id:
+          format: uuid
+          readOnly: true
+          type: string
+        idempotency_key:
+          readOnly: true
+          type: string
+        payment_method:
+          allOf:
+          - $ref: '#/components/schemas/PaymentMethodEnum'
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/DepositStatusEnum'
+          readOnly: true
+        tx_hash:
+          nullable: true
+          readOnly: true
+          type: string
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+        verified_at:
+          format: date-time
+          nullable: true
+          readOnly: true
+          type: string
+      required:
+      - amount_credited
+      - amount_requested
+      - created_at
+      - failure_reason
+      - id
+      - idempotency_key
+      - payment_method
+      - status
+      - tx_hash
+      - updated_at
+      - verified_at
+      type: object
+    DepositStatusEnum:
+      description: '* `pending` - Pending
+
+        * `completed` - Completed
+
+        * `failed` - Failed'
+      enum:
+      - pending
+      - completed
+      - failed
+      type: string
+    DetailMessage:
+      description: Generic success message with a ``detail`` string.
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+      type: object
+    ErrorDetail:
+      description: 'Standard DRF ``{"detail": "..."}`` error body.'
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
+      type: object
     Esim:
       description: Owned eSIM with ICCID and installation / QR fields.
       properties:
@@ -426,7 +959,7 @@ components:
           type: string
         status:
           allOf:
-          - $ref: '#/components/schemas/StatusEnum'
+          - $ref: '#/components/schemas/EsimStatusEnum'
           readOnly: true
         updated_at:
           format: date-time
@@ -477,6 +1010,40 @@ components:
       - usage_status
       - usage_synced_at
       - usage_total_mb
+      type: object
+    EsimStatusEnum:
+      description: '* `unused` - Unused
+
+        * `active` - Active
+
+        * `exhausted` - Exhausted
+
+        * `expired` - Expired
+
+        * `unknown` - Unknown'
+      enum:
+      - unused
+      - active
+      - exhausted
+      - expired
+      - unknown
+      type: string
+    InsufficientCredits:
+      description: Structured 402 payload from ``InsufficientFundsError.to_api_dict()``.
+      properties:
+        balance:
+          type: string
+        code:
+          type: string
+        detail:
+          type: string
+        missing:
+          type: string
+        required:
+          type: string
+      required:
+      - code
+      - detail
       type: object
     Location:
       description: Full location detail, optionally including broader coverage.
@@ -574,6 +1141,76 @@ components:
       - slug
       - title
       type: object
+    Order:
+      description: Order response including provisioned eSIMs when fulfilled.
+      properties:
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        customer_ref:
+          readOnly: true
+          type: string
+        esims:
+          items:
+            $ref: '#/components/schemas/Esim'
+          readOnly: true
+          type: array
+        external_order_id:
+          readOnly: true
+          type: string
+        id:
+          readOnly: true
+          type: integer
+        idempotency_key:
+          nullable: true
+          readOnly: true
+          type: string
+        package_id:
+          readOnly: true
+          type: string
+        status:
+          allOf:
+          - $ref: '#/components/schemas/OrderStatusEnum'
+          readOnly: true
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+      required:
+      - created_at
+      - customer_ref
+      - esims
+      - external_order_id
+      - id
+      - idempotency_key
+      - package_id
+      - status
+      - updated_at
+      type: object
+    OrderStatusEnum:
+      description: '* `draft` - Draft
+
+        * `pending_payment` - Pending payment
+
+        * `paid` - Paid
+
+        * `fulfilling` - Fulfilling
+
+        * `fulfilled` - Fulfilled
+
+        * `failed` - Failed
+
+        * `cancelled` - Cancelled'
+      enum:
+      - draft
+      - pending_payment
+      - paid
+      - fulfilling
+      - fulfilled
+      - failed
+      - cancelled
+      type: string
     Package:
       description: Public package representation for the catalog API.
       properties:
@@ -696,23 +1333,71 @@ components:
       - count
       - results
       type: object
-    StatusEnum:
-      description: '* `unused` - Unused
+    PasswordResetConfirmRequest:
+      properties:
+        password:
+          maxLength: 128
+          minLength: 8
+          type: string
+          writeOnly: true
+        password_confirm:
+          maxLength: 128
+          minLength: 8
+          type: string
+          writeOnly: true
+        token:
+          minLength: 1
+          type: string
+        uid:
+          minLength: 1
+          type: string
+      required:
+      - password
+      - password_confirm
+      - token
+      - uid
+      type: object
+    PasswordResetRequestRequest:
+      properties:
+        email:
+          format: email
+          minLength: 1
+          type: string
+      required:
+      - email
+      type: object
+    PaymentMethodEnum:
+      description: '* `wallet_connect` - WalletConnect
 
-        * `active` - Active
-
-        * `exhausted` - Exhausted
-
-        * `expired` - Expired
-
-        * `unknown` - Unknown'
+        * `cex_manual` - CEX manual'
       enum:
-      - unused
-      - active
-      - exhausted
-      - expired
-      - unknown
+      - wallet_connect
+      - cex_manual
       type: string
+    PurchaseTopupRequest:
+      description: Request body for POST /api/v1/me/esims/{id}/topups/.
+      properties:
+        idempotency_key:
+          maxLength: 128
+          minLength: 1
+          type: string
+        package_id:
+          maxLength: 64
+          minLength: 1
+          type: string
+      required:
+      - idempotency_key
+      - package_id
+      type: object
+    RegisterRequest:
+      properties:
+        email:
+          format: email
+          minLength: 1
+          type: string
+      required:
+      - email
+      type: object
     TokenObtainPair:
       properties:
         access:
@@ -756,12 +1441,139 @@ components:
       required:
       - refresh
       type: object
+    Topup:
+      description: Persisted top-up purchase response.
+      properties:
+        amount:
+          format: decimal
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        external_order_id:
+          readOnly: true
+          type: string
+        id:
+          format: uuid
+          readOnly: true
+          type: string
+        idempotency_key:
+          nullable: true
+          readOnly: true
+          type: string
+        package_external_id:
+          readOnly: true
+          type: string
+        status:
+          allOf:
+          - $ref: '#/components/schemas/TopupStatusEnum'
+          readOnly: true
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+      required:
+      - amount
+      - created_at
+      - external_order_id
+      - id
+      - idempotency_key
+      - package_external_id
+      - status
+      - updated_at
+      type: object
+    TopupStatusEnum:
+      description: '* `fulfilling` - Fulfilling
+
+        * `fulfilled` - Fulfilled
+
+        * `failed` - Failed'
+      enum:
+      - fulfilling
+      - fulfilled
+      - failed
+      type: string
+    Usage:
+      description: Live usage snapshot from the provider.
+      properties:
+        expired_at:
+          nullable: true
+          type: string
+        is_unlimited:
+          nullable: true
+          type: boolean
+        remaining_mb:
+          type: integer
+        remaining_text:
+          type: integer
+        remaining_voice:
+          type: integer
+        status:
+          type: string
+        total_mb:
+          type: integer
+        total_text:
+          type: integer
+        total_voice:
+          type: integer
+      required:
+      - expired_at
+      - is_unlimited
+      - remaining_mb
+      - remaining_text
+      - remaining_voice
+      - status
+      - total_mb
+      - total_text
+      - total_voice
+      type: object
+    User:
+      properties:
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        email:
+          format: email
+          readOnly: true
+          type: string
+        id:
+          readOnly: true
+          type: integer
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+      required:
+      - created_at
+      - email
+      - id
+      - updated_at
+      type: object
+    VerifyDepositRequest:
+      properties:
+        amount_requested:
+          format: decimal
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
+          type: string
+        idempotency_key:
+          maxLength: 128
+          minLength: 1
+          type: string
+        tx_hash:
+          maxLength: 128
+          minLength: 1
+          type: string
+      required:
+      - amount_requested
+      - idempotency_key
+      - tx_hash
+      type: object
   securitySchemes:
     bearerAuth:
-      bearerFormat: JWT
-      scheme: bearer
-      type: http
-    jwtAuth:
       bearerFormat: JWT
       scheme: bearer
       type: http
