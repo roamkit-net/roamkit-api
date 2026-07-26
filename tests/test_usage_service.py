@@ -50,7 +50,7 @@ def esim(db) -> Esim:
         user=user,
         order=order,
         iccid="891000000000001111",
-        status=Esim.Status.UNUSED,
+        status=Esim.Status.PURCHASED,
     )
 
 

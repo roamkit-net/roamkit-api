@@ -57,7 +57,7 @@ def esim(user: User, account) -> Esim:
         user=user,
         order=order,
         iccid="891000000000009999",
-        status=Esim.Status.ACTIVE,
+        status=Esim.Status.ACTIVATED,
     )
 
 

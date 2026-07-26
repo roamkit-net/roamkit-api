@@ -126,7 +126,7 @@ def test_order_service_fulfills_and_persists_esim(
     assert esim.qrcode == "LPA:1$lpa.airalo.com$TEST"
     assert esim.manual_installation == "<p>Manual</p>"
     assert esim.qrcode_installation == "<p>QR</p>"
-    assert esim.status == Esim.Status.UNUSED
+    assert esim.status == Esim.Status.PURCHASED
 
 
 @pytest.mark.django_db

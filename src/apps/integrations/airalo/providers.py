@@ -160,6 +160,9 @@ class AiraloPackageProvider:
         resolved_title = location_title or operator_title or resolved_slug
 
         mapped: list[PackageDTO] = []
+        activation_policy = self._normalize_activation_policy(
+            operator.get("activation_policy")
+        )
         for package in operator.get("packages", []):
             dto = self._map_package(
                 package,
@@ -173,6 +176,7 @@ class AiraloPackageProvider:
                 coverage_type=coverage_type,
                 covered_country_codes=covered_codes,
                 coverages=coverages,
+                activation_policy=activation_policy,
             )
             if dto is not None:
                 mapped.append(dto)
@@ -192,6 +196,7 @@ class AiraloPackageProvider:
         coverage_type: str,
         covered_country_codes: tuple[str, ...],
         coverages: tuple[dict[str, Any], ...],
+        activation_policy: str = "unknown",
     ) -> PackageDTO | None:
         external_id = str(package.get("id", "")).strip()
         if not external_id:
@@ -230,7 +235,17 @@ class AiraloPackageProvider:
             coverage_type=coverage_type,
             covered_country_codes=covered_country_codes,
             coverages=coverages,
+            activation_policy=activation_policy,
         )
+
+    @staticmethod
+    def _normalize_activation_policy(raw: Any) -> str:
+        value = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if value in {"first_usage", "firstusage"}:
+            return "first_usage"
+        if value in {"installation", "install"}:
+            return "installation"
+        return "unknown"
 
     @staticmethod
     def _map_coverages(raw: list[Any]) -> tuple[dict[str, Any], ...]:

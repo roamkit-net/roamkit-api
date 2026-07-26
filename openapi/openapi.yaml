@@ -523,6 +523,91 @@ paths:
       summary: Retrieve my eSIM
       tags:
       - eSIM
+  /api/v1/me/esims/{id}/events/:
+    get:
+      description: Chronological install / lifecycle trail for an owned eSIM.
+      operationId: esim_events_list
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedLifecycleEventList'
+          description: Lifecycle events
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: eSIM not found
+      security:
+      - bearerAuth: []
+      summary: List eSIM lifecycle events
+      tags:
+      - eSIM
+    post:
+      description: Record a client install/telemetry event. Idempotent on ``idempotency_key`` per eSIM.
+      operationId: esim_events_create
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LifecycleEventCreateRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LifecycleEvent'
+          description: Existing event (idempotent replay)
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LifecycleEvent'
+          description: Event created
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Invalid request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: eSIM not found
+      security:
+      - bearerAuth: []
+      summary: Record eSIM lifecycle event
+      tags:
+      - eSIM
   /api/v1/me/esims/{id}/topups/:
     get:
       description: List available top-up packages for an owned eSIM.
@@ -769,6 +854,17 @@ components:
       - token
       - uid
       type: object
+    ActivationPolicyEnum:
+      description: '* `first_usage` - First usage
+
+        * `installation` - Installation
+
+        * `unknown` - Unknown'
+      enum:
+      - first_usage
+      - installation
+      - unknown
+      type: string
     Balance:
       properties:
         balance:
@@ -970,8 +1066,12 @@ components:
       - detail
       type: object
     Esim:
-      description: Owned eSIM with ICCID and installation / QR fields.
+      description: Owned eSIM with ICCID, install, setup, and lifecycle fields.
       properties:
+        activation_policy:
+          allOf:
+          - $ref: '#/components/schemas/ActivationPolicyEnum'
+          readOnly: true
         created_at:
           format: date-time
           readOnly: true
@@ -1009,6 +1109,23 @@ components:
           format: uri
           readOnly: true
           type: string
+        setup_completed_at:
+          format: date-time
+          nullable: true
+          readOnly: true
+          type: string
+        setup_resume_step:
+          nullable: true
+          readOnly: true
+          type: integer
+        setup_skipped_at:
+          format: date-time
+          nullable: true
+          readOnly: true
+          type: string
+        setup_version:
+          readOnly: true
+          type: string
         status:
           allOf:
           - $ref: '#/components/schemas/EsimStatusEnum'
@@ -1043,6 +1160,7 @@ components:
           readOnly: true
           type: integer
       required:
+      - activation_policy
       - created_at
       - direct_apple_installation_url
       - iccid
@@ -1054,6 +1172,10 @@ components:
       - qrcode
       - qrcode_installation
       - qrcode_url
+      - setup_completed_at
+      - setup_resume_step
+      - setup_skipped_at
+      - setup_version
       - status
       - updated_at
       - usage_expired_at
@@ -1064,9 +1186,15 @@ components:
       - usage_total_mb
       type: object
     EsimStatusEnum:
-      description: '* `unused` - Unused
+      description: '* `purchased` - Purchased
 
-        * `active` - Active
+        * `installation_started` - Installation started
+
+        * `installed` - Installed
+
+        * `activated` - Activated
+
+        * `in_use` - In use
 
         * `exhausted` - Exhausted
 
@@ -1074,8 +1202,11 @@ components:
 
         * `unknown` - Unknown'
       enum:
-      - unused
-      - active
+      - purchased
+      - installation_started
+      - installed
+      - activated
+      - in_use
       - exhausted
       - expired
       - unknown
@@ -1096,6 +1227,78 @@ components:
       required:
       - code
       - detail
+      type: object
+    LifecycleEvent:
+      description: Persisted lifecycle / install telemetry event.
+      properties:
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        event_type:
+          readOnly: true
+          type: string
+        id:
+          format: uuid
+          readOnly: true
+          type: string
+        idempotency_key:
+          readOnly: true
+          type: string
+        payload:
+          readOnly: true
+        schema_version:
+          readOnly: true
+          type: integer
+        setup_session_id:
+          format: uuid
+          nullable: true
+          readOnly: true
+          type: string
+        source:
+          allOf:
+          - $ref: '#/components/schemas/SourceEnum'
+          readOnly: true
+      required:
+      - created_at
+      - event_type
+      - id
+      - idempotency_key
+      - payload
+      - schema_version
+      - setup_session_id
+      - source
+      type: object
+    LifecycleEventCreateRequest:
+      description: Request body for POST /api/v1/me/esims/{id}/events/.
+      properties:
+        event_type:
+          maxLength: 64
+          minLength: 1
+          type: string
+        idempotency_key:
+          maxLength: 128
+          minLength: 1
+          type: string
+        payload:
+          additionalProperties: {}
+          type: object
+        resume_step:
+          maximum: 4
+          minimum: 1
+          nullable: true
+          type: integer
+        schema_version:
+          default: 1
+          minimum: 1
+          type: integer
+        setup_session_id:
+          format: uuid
+          nullable: true
+          type: string
+      required:
+      - event_type
+      - idempotency_key
       type: object
     Location:
       description: Full location detail, optionally including broader coverage.
@@ -1282,6 +1485,10 @@ components:
     Package:
       description: Public package representation for the catalog API.
       properties:
+        activation_policy:
+          description: first_usage | installation | unknown (synced from provider).
+          readOnly: true
+          type: string
         country_code:
           readOnly: true
           type: string
@@ -1320,6 +1527,7 @@ components:
           readOnly: true
           type: integer
       required:
+      - activation_policy
       - country_code
       - data_allowance
       - id
@@ -1350,6 +1558,29 @@ components:
         results:
           items:
             $ref: '#/components/schemas/Esim'
+          type: array
+      required:
+      - count
+      - results
+      type: object
+    PaginatedLifecycleEventList:
+      properties:
+        count:
+          example: 123
+          type: integer
+        next:
+          example: http://api.example.org/accounts/?page=4
+          format: uri
+          nullable: true
+          type: string
+        previous:
+          example: http://api.example.org/accounts/?page=2
+          format: uri
+          nullable: true
+          type: string
+        results:
+          items:
+            $ref: '#/components/schemas/LifecycleEvent'
           type: array
       required:
       - count
@@ -1458,6 +1689,17 @@ components:
       required:
       - email
       type: object
+    SourceEnum:
+      description: '* `client` - Client
+
+        * `system` - System
+
+        * `provider` - Provider'
+      enum:
+      - client
+      - system
+      - provider
+      type: string
     TokenObtainPair:
       properties:
         access:

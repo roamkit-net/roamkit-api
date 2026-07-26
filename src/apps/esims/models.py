@@ -6,12 +6,23 @@ from django.conf import settings
 from django.db import models
 
 
+class ActivationPolicy(models.TextChoices):
+    """When a data package starts counting (Airalo operator.activation_policy)."""
+
+    FIRST_USAGE = "first_usage", "First usage"
+    INSTALLATION = "installation", "Installation"
+    UNKNOWN = "unknown", "Unknown"
+
+
 class Esim(models.Model):
     """A provisioned eSIM owned by a user."""
 
     class Status(models.TextChoices):
-        UNUSED = "unused", "Unused"
-        ACTIVE = "active", "Active"
+        PURCHASED = "purchased", "Purchased"
+        INSTALLATION_STARTED = "installation_started", "Installation started"
+        INSTALLED = "installed", "Installed"
+        ACTIVATED = "activated", "Activated"
+        IN_USE = "in_use", "In use"
         EXHAUSTED = "exhausted", "Exhausted"
         EXPIRED = "expired", "Expired"
         UNKNOWN = "unknown", "Unknown"
@@ -38,9 +49,19 @@ class Esim(models.Model):
     status = models.CharField(
         max_length=32,
         choices=Status.choices,
-        default=Status.UNUSED,
+        default=Status.PURCHASED,
         db_index=True,
     )
+    # Purchase-time snapshot — never re-read from live Package after fulfill.
+    activation_policy = models.CharField(
+        max_length=32,
+        choices=ActivationPolicy.choices,
+        default=ActivationPolicy.UNKNOWN,
+    )
+    setup_version = models.CharField(max_length=32, blank=True, default="")
+    setup_resume_step = models.PositiveSmallIntegerField(null=True, blank=True)
+    setup_completed_at = models.DateTimeField(null=True, blank=True)
+    setup_skipped_at = models.DateTimeField(null=True, blank=True)
     # Usage cache — populated by UsageService on usage fetch.
     usage_remaining_mb = models.IntegerField(null=True, blank=True)
     usage_total_mb = models.IntegerField(null=True, blank=True)
@@ -59,6 +80,55 @@ class Esim(models.Model):
 
     def __str__(self) -> str:
         return f"eSIM {self.iccid}"
+
+
+class EsimLifecycleEvent(models.Model):
+    """Append-only install / lifecycle telemetry (ADR 014)."""
+
+    class Source(models.TextChoices):
+        CLIENT = "client", "Client"
+        SYSTEM = "system", "System"
+        PROVIDER = "provider", "Provider"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    esim = models.ForeignKey(
+        Esim,
+        on_delete=models.CASCADE,
+        related_name="lifecycle_events",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="esim_lifecycle_events",
+    )
+    event_type = models.CharField(max_length=64, db_index=True)
+    source = models.CharField(
+        max_length=16,
+        choices=Source.choices,
+        default=Source.CLIENT,
+    )
+    schema_version = models.PositiveSmallIntegerField(default=1)
+    idempotency_key = models.CharField(max_length=128)
+    setup_session_id = models.UUIDField(null=True, blank=True, db_index=True)
+    payload = models.JSONField(default=dict, blank=True)
+    user_agent = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["esim", "idempotency_key"],
+                name="esims_lifecycle_event_esim_idem_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["esim", "created_at"]),
+            models.Index(fields=["event_type", "created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.event_type} ({self.esim_id})"
 
 
 class Topup(models.Model):

@@ -36,6 +36,7 @@ class PackageDTO:
     covered_country_codes: tuple[str, ...] = ()
     # [{code, name, networks: [{name, types}]}]
     coverages: tuple[dict[str, Any], ...] = ()
+    activation_policy: str = "unknown"
 
 
 @dataclass(frozen=True)

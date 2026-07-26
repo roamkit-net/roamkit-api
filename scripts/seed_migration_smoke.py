@@ -79,7 +79,7 @@ with connection.cursor() as cur:
           (1, '891000000000009125', 'lpa.airalo.com', 'TEST',
            'LPA:1$lpa.airalo.com$TEST', '',
            '', '', '',
-           '', 'unused', NULL, NULL,
+           '', 'purchased', NULL, NULL,
            '', NULL, NULL, NULL,
            %s, %s, 5, 2)
         """,

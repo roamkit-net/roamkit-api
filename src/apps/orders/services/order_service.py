@@ -12,6 +12,7 @@ from apps.billing.exceptions import BillingDisabledError
 from apps.billing.models import LedgerReferenceType
 from apps.billing.services import credit_service, ensure_billing_account
 from apps.esims.models import Esim
+from apps.esims.services.lifecycle_service import lifecycle_service
 from apps.orders.exceptions import IdempotencyKeyRequiredError, SpendInProgressError
 from apps.orders.models import Order
 from shared.events.billing_events import (
@@ -225,9 +226,10 @@ class OrderService:
             order.save(update_fields=["external_order_id", "status", "updated_at"])
 
             esims: list[Esim] = []
+            policy = getattr(order.package, "activation_policy", "unknown") or "unknown"
             for sim in result.sims:
                 esims.append(
-                    Esim.objects.create(
+                    lifecycle_service.create_purchased(
                         user=order.account.user,
                         order=order,
                         iccid=sim.iccid,
@@ -241,7 +243,7 @@ class OrderService:
                         manual_installation=result.manual_installation,
                         qrcode_installation=result.qrcode_installation,
                         installation_guide_url=result.installation_guide_url,
-                        status=Esim.Status.UNUSED,
+                        activation_policy=policy,
                     )
                 )
         return esims

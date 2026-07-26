@@ -17,15 +17,21 @@ from apps.billing.exceptions import (
     InsufficientFundsError,
     InvalidAmountError,
 )
-from apps.esims.exceptions import TopupPackageNotFoundError
+from apps.esims.exceptions import (
+    TopupPackageNotFoundError,
+    UnknownLifecycleEventTypeError,
+)
 from apps.esims.models import Esim
 from apps.esims.serializers import (
     EsimSerializer,
+    LifecycleEventCreateSerializer,
+    LifecycleEventSerializer,
     PurchaseTopupSerializer,
     TopupPackageSerializer,
     TopupSerializer,
     UsageSerializer,
 )
+from apps.esims.services.lifecycle_service import lifecycle_service
 from apps.esims.services.topup_service import TopupService
 from apps.esims.services.usage_service import UsageService
 from apps.orders.exceptions import IdempotencyKeyRequiredError, SpendInProgressError
@@ -116,6 +122,89 @@ class EsimUsageView(OwnedEsimMixin, GenericAPIView):
         esim = self.get_object()
         usage = UsageService(get_topup_provider()).get_usage(esim)
         return Response(UsageSerializer(usage).data)
+
+
+@extend_schema_view(
+    get=extend_schema(
+        tags=["eSIM"],
+        operation_id="esim_events_list",
+        summary="List eSIM lifecycle events",
+        description="Chronological install / lifecycle trail for an owned eSIM.",
+        responses={
+            200: OpenApiResponse(
+                response=LifecycleEventSerializer(many=True),
+                description="Lifecycle events",
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="eSIM not found"
+            ),
+        },
+    ),
+    post=extend_schema(
+        tags=["eSIM"],
+        operation_id="esim_events_create",
+        summary="Record eSIM lifecycle event",
+        description=(
+            "Record a client install/telemetry event. Idempotent on "
+            "``idempotency_key`` per eSIM."
+        ),
+        request=LifecycleEventCreateSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=LifecycleEventSerializer,
+                description="Existing event (idempotent replay)",
+            ),
+            201: OpenApiResponse(
+                response=LifecycleEventSerializer, description="Event created"
+            ),
+            400: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Invalid request"
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="eSIM not found"
+            ),
+        },
+    ),
+)
+class EsimEventsView(OwnedEsimMixin, GenericAPIView):
+    """List or record lifecycle events for an owned eSIM."""
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        esim = self.get_object()
+        events = esim.lifecycle_events.all()
+        return Response(LifecycleEventSerializer(events, many=True).data)
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        esim = self.get_object()
+        serializer = LifecycleEventCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            event, created = lifecycle_service.record_client_event(
+                esim,
+                event_type=data["event_type"],
+                idempotency_key=data["idempotency_key"],
+                schema_version=data.get("schema_version", 1),
+                setup_session_id=data.get("setup_session_id"),
+                payload=data.get("payload") or {},
+                user_agent=request.META.get("HTTP_USER_AGENT", ""),
+                resume_step=data.get("resume_step"),
+            )
+        except UnknownLifecycleEventTypeError as exc:
+            return Response(
+                {"detail": f"Unknown event_type: {exc}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            LifecycleEventSerializer(event).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
 
 
 @extend_schema_view(
