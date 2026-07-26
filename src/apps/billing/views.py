@@ -5,7 +5,12 @@ from __future__ import annotations
 from django.conf import settings
 from django.http import HttpResponse
 from django.utils.cache import get_conditional_response
-from drf_spectacular.utils import OpenApiResponse, extend_schema, extend_schema_view
+from drf_spectacular.utils import (
+    OpenApiExample,
+    OpenApiResponse,
+    extend_schema,
+    extend_schema_view,
+)
 from rest_framework import status
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -67,7 +72,21 @@ class BillingAPIView(APIView):
         auth=[],
         responses={
             200: OpenApiResponse(
-                response=BillingConfigSerializer, description="Display currency config"
+                response=BillingConfigSerializer,
+                description="Display currency config",
+                examples=[
+                    OpenApiExample(
+                        "USDT display config",
+                        value={
+                            "config_version": 1,
+                            "token_symbol": "USDT",
+                            "token_name": "Tether USD",
+                            "token_decimals": 6,
+                            "display_decimals": 2,
+                            "billing_enabled": True,
+                        },
+                    )
+                ],
             ),
             304: OpenApiResponse(description="Not modified (ETag match)"),
         },
@@ -95,7 +114,13 @@ class BillingConfigView(APIView):
         summary="Account credit balance",
         description="Return the authenticated user's prepaid credit balance.",
         responses={
-            200: OpenApiResponse(response=BalanceSerializer, description="Balance"),
+            200: OpenApiResponse(
+                response=BalanceSerializer,
+                description="Balance",
+                examples=[
+                    OpenApiExample("Sample balance", value={"balance": "42.500000"})
+                ],
+            ),
             401: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Authentication required"
             ),
