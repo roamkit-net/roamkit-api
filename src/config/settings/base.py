@@ -148,6 +148,7 @@ AUTH_ACTIVATE_RATE = os.environ.get("AUTH_ACTIVATE_RATE", "20/hour")
 AUTH_PASSWORD_RESET_CONFIRM_RATE = os.environ.get(
     "AUTH_PASSWORD_RESET_CONFIRM_RATE", "20/hour"
 )
+AUTH_GOOGLE_RATE = os.environ.get("AUTH_GOOGLE_RATE", "10/min")
 AUTH_TURNSTILE_DEGRADED_RATE = os.environ.get("AUTH_TURNSTILE_DEGRADED_RATE", "5/hour")
 
 REST_FRAMEWORK = {
@@ -172,6 +173,7 @@ REST_FRAMEWORK = {
         "auth_password_reset": AUTH_PASSWORD_RESET_RATE,
         "auth_activate": AUTH_ACTIVATE_RATE,
         "auth_password_reset_confirm": AUTH_PASSWORD_RESET_CONFIRM_RATE,
+        "auth_google": AUTH_GOOGLE_RATE,
     },
 }
 
@@ -255,6 +257,16 @@ TURNSTILE_VERIFY_URL = os.environ.get(
 )
 TURNSTILE_TOKEN_SEEN_TTL = int(os.environ.get("TURNSTILE_TOKEN_SEEN_TTL", "180"))
 TURNSTILE_BYPASS_SECRET = os.environ.get("TURNSTILE_BYPASS_SECRET", "")
+
+# Google OAuth GIS ID token (ADR 015). Default off for local/dark deploy.
+GOOGLE_OAUTH_ENABLED = os.environ.get("GOOGLE_OAUTH_ENABLED", "false").lower() == "true"
+GOOGLE_OAUTH_CLIENT_ID = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_VERIFY_TIMEOUT = float(
+    os.environ.get("GOOGLE_OAUTH_VERIFY_TIMEOUT", "2.5")
+)
+GOOGLE_OAUTH_CLOCK_SKEW_SECONDS = int(
+    os.environ.get("GOOGLE_OAUTH_CLOCK_SKEW_SECONDS", "60")
+)
 
 # Polygon USDT deposits (ADR-010). Defaults match mainnet; set wallet in env.
 POLYGON_RPC_URL = os.environ.get("POLYGON_RPC_URL", "")

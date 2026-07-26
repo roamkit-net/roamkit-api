@@ -25,6 +25,7 @@ PUBLIC_OPERATION_IDS = frozenset(
         "auth_password_reset_confirm",
         "auth_login",
         "auth_refresh",
+        "auth_google",
         "billing_config",
         "catalog_packages_list",
         "catalog_locations_list",

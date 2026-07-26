@@ -6,6 +6,7 @@ from apps.accounts.views import (
     ActivateView,
     AuthTokenObtainView,
     AuthTokenRefreshView,
+    GoogleAuthView,
     MeView,
     PasswordResetConfirmView,
     PasswordResetRequestView,
@@ -27,5 +28,6 @@ urlpatterns = [
     ),
     path("token/", AuthTokenObtainView.as_view(), name="auth-token"),
     path("token/refresh/", AuthTokenRefreshView.as_view(), name="auth-token-refresh"),
+    path("google/", GoogleAuthView.as_view(), name="auth-google"),
     path("me/", MeView.as_view(), name="auth-me"),
 ]
