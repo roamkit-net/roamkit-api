@@ -66,6 +66,22 @@ jobs:
           diff -u /tmp/openapi-first.yaml openapi/openapi.yaml
           # Committed artifact must match generated output.
           git diff --exit-code -- openapi/openapi.yaml
+      - name: Setup Node (Spectral)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Spectral lint (errors fail; warnings report-only)
+        run: |
+          npm exec --yes --package=@stoplight/spectral-cli@6.16.2 -- \
+            spectral lint openapi/openapi.yaml \
+            --ruleset .spectral.yaml \
+            --fail-severity error
+      - name: Upload OpenAPI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-yaml
+          path: openapi/openapi.yaml
+          if-no-files-found: error
 
   migration-smoke:
     runs-on:

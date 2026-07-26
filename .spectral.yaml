@@ -1,0 +1,17 @@
+# Spectral lint for committed OpenAPI (C10).
+# Errors fail CI; warnings are reported but do not fail the job
+# (see ci-python.yml --fail-severity error).
+extends:
+  - spectral:oas
+rules:
+  # Softened / off rules that are noisy for internal DRF schemas.
+  info-contact: off
+  info-license: off
+  # Django APPEND_SLASH / DRF routes use trailing slashes by design.
+  path-keys-no-trailing-slash: off
+  operation-tag-defined: error
+  operation-operationId: error
+  operation-operationId-unique: error
+  oas3-api-servers: warn
+  operation-description: warn
+  operation-tags: error

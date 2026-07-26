@@ -88,6 +88,7 @@ class DepositRequest(models.Model):
     payment_method = models.CharField(
         max_length=32,
         choices=PaymentMethod.choices,
+        help_text="How the USDT transfer was initiated (WalletConnect or CEX/manual).",
     )
     tx_hash = models.CharField(
         max_length=128,
@@ -102,6 +103,7 @@ class DepositRequest(models.Model):
         choices=Status.choices,
         default=Status.PENDING,
         db_index=True,
+        help_text="Deposit verification status (pending / completed / failed).",
     )
     failure_reason = models.TextField(blank=True)
     verified_at = models.DateTimeField(null=True, blank=True)
@@ -149,6 +151,7 @@ class CreditLedgerEntry(models.Model):
         max_length=32,
         choices=LedgerReferenceType.choices,
         db_index=True,
+        help_text="Domain object that caused this ledger entry (deposit, order, …).",
     )
     reference_id = models.CharField(max_length=64, db_index=True)
     idempotency_key = models.CharField(max_length=128, unique=True, db_index=True)

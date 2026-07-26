@@ -30,6 +30,7 @@ class Order(models.Model):
         choices=Status.choices,
         default=Status.DRAFT,
         db_index=True,
+        help_text="Order lifecycle status (draft → fulfilled / failed / cancelled).",
     )
     external_order_id = models.CharField(max_length=64, blank=True, db_index=True)
     customer_ref = models.CharField(max_length=255, blank=True)

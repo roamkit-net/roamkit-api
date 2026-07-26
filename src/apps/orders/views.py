@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from django.conf import settings
-from drf_spectacular.utils import OpenApiResponse, extend_schema, extend_schema_view
+from drf_spectacular.utils import (
+    OpenApiExample,
+    OpenApiResponse,
+    extend_schema,
+    extend_schema_view,
+)
 from rest_framework import status
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
@@ -37,6 +42,16 @@ from shared.providers.factory import get_order_provider
             "Idempotent on ``idempotency_key`` (replay returns 201 with the same body)."
         ),
         request=CreateOrderSerializer,
+        examples=[
+            OpenApiExample(
+                "Create order",
+                value={
+                    "package_id": "airalo-pkg-123",
+                    "idempotency_key": "client-order-uuid-1",
+                },
+                request_only=True,
+            )
+        ],
         responses={
             201: OpenApiResponse(response=OrderSerializer, description="Order created"),
             400: OpenApiResponse(
@@ -48,6 +63,18 @@ from shared.providers.factory import get_order_provider
             402: OpenApiResponse(
                 response=InsufficientCreditsSerializer,
                 description="Insufficient credits",
+                examples=[
+                    OpenApiExample(
+                        "Insufficient credits",
+                        value={
+                            "code": "INSUFFICIENT_CREDITS",
+                            "detail": "Insufficient funds",
+                            "required": "19.500000",
+                            "balance": "5.000000",
+                            "missing": "14.500000",
+                        },
+                    )
+                ],
             ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer,
