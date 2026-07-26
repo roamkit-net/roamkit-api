@@ -31,3 +31,11 @@ so the YAML stays identical.
 | `/api/redoc/` | ReDoc |
 
 Staging: `https://api.staging.roamkit.net/api/schema/`
+
+## Wave 2 backlog (not C10)
+
+Frontend type generation is intentionally deferred:
+
+- Generate types with `openapi-typescript` from this YAML.
+- Emit into `roamkit-web/src/api/generated/` as **read-only** output (no hand edits).
+- Add web CI so generated clients stay in sync with this artifact.
