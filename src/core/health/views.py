@@ -1,5 +1,10 @@
 """Health check endpoints for load balancers and deploy scripts."""
 
+from __future__ import annotations
+
+import socket
+from urllib.parse import urlparse
+
 from django.conf import settings
 from django.db import connection
 from django.db.utils import DatabaseError, OperationalError
@@ -7,6 +12,8 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from redis import Redis
 from redis.exceptions import RedisError
+
+TURNSTILE_HOSTNAME = "challenges.cloudflare.com"
 
 
 def _check_database() -> tuple[bool, str]:
@@ -26,6 +33,24 @@ def _check_redis() -> tuple[bool, str]:
     except RedisError as exc:
         return False, str(exc)
     return True, "ok"
+
+
+def _turnstile_hostname() -> str:
+    url = getattr(
+        settings,
+        "TURNSTILE_VERIFY_URL",
+        f"https://{TURNSTILE_HOSTNAME}/turnstile/v0/siteverify",
+    )
+    host = urlparse(url).hostname
+    return host or TURNSTILE_HOSTNAME
+
+
+def _hostname_resolvable(hostname: str) -> bool:
+    try:
+        socket.getaddrinfo(hostname, 443)
+    except OSError:
+        return False
+    return True
 
 
 @require_GET
@@ -49,3 +74,33 @@ def ready(_request):
     status_code = 200 if all_ok else 503
     payload = {"status": "ok" if all_ok else "degraded", "checks": checks}
     return JsonResponse(payload, status=status_code)
+
+
+@require_GET
+def turnstile(_request):
+    """
+    Turnstile config diagnostic — not used by Docker/Traefik probes.
+
+    Does not call siteverify; only checks flag, secret presence, and DNS.
+    """
+    enabled = bool(getattr(settings, "TURNSTILE_ENABLED", False))
+    secret_configured = bool(
+        (getattr(settings, "TURNSTILE_SECRET_KEY", "") or "").strip()
+    )
+    hostname = _turnstile_hostname()
+    resolvable = _hostname_resolvable(hostname)
+
+    payload = {
+        "enabled": enabled,
+        "secret_configured": secret_configured,
+        "hostname": hostname,
+        "hostname_resolvable": resolvable,
+    }
+
+    if not enabled:
+        payload["status"] = "ok"
+        return JsonResponse(payload, status=200)
+
+    ok = secret_configured and resolvable
+    payload["status"] = "ok" if ok else "misconfigured"
+    return JsonResponse(payload, status=200 if ok else 503)

@@ -46,6 +46,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "core.middleware.request_id.RequestIdMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -110,6 +111,15 @@ CORS_ALLOWED_ORIGINS = [
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
+# LocMem by default (local/tests). Staging/production override to Redis so
+# DRF throttles and Turnstile replay keys are shared across workers.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "roamkit-default",
+    }
+}
+
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_ACCEPT_CONTENT = ["json"]
@@ -131,6 +141,15 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
+AUTH_TOKEN_RATE = os.environ.get("AUTH_TOKEN_RATE", "10/min")
+AUTH_REGISTER_RATE = os.environ.get("AUTH_REGISTER_RATE", "5/hour")
+AUTH_PASSWORD_RESET_RATE = os.environ.get("AUTH_PASSWORD_RESET_RATE", "5/hour")
+AUTH_ACTIVATE_RATE = os.environ.get("AUTH_ACTIVATE_RATE", "20/hour")
+AUTH_PASSWORD_RESET_CONFIRM_RATE = os.environ.get(
+    "AUTH_PASSWORD_RESET_CONFIRM_RATE", "20/hour"
+)
+AUTH_TURNSTILE_DEGRADED_RATE = os.environ.get("AUTH_TURNSTILE_DEGRADED_RATE", "5/hour")
+
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
@@ -147,6 +166,13 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 50,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_THROTTLE_RATES": {
+        "auth_token": AUTH_TOKEN_RATE,
+        "auth_register": AUTH_REGISTER_RATE,
+        "auth_password_reset": AUTH_PASSWORD_RESET_RATE,
+        "auth_activate": AUTH_ACTIVATE_RATE,
+        "auth_password_reset_confirm": AUTH_PASSWORD_RESET_CONFIRM_RATE,
+    },
 }
 
 SIMPLE_JWT = {
@@ -217,6 +243,18 @@ SUBSCRIPTIONS_ENABLED = (
 WALLETCONNECT_ENABLED = (
     os.environ.get("WALLETCONNECT_ENABLED", "false").lower() == "true"
 )
+
+# Cloudflare Turnstile (human verification on auth POSTs). Default off for local.
+TURNSTILE_ENABLED = os.environ.get("TURNSTILE_ENABLED", "false").lower() == "true"
+TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
+TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")
+TURNSTILE_VERIFY_TIMEOUT = float(os.environ.get("TURNSTILE_VERIFY_TIMEOUT", "2.5"))
+TURNSTILE_VERIFY_URL = os.environ.get(
+    "TURNSTILE_VERIFY_URL",
+    "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+)
+TURNSTILE_TOKEN_SEEN_TTL = int(os.environ.get("TURNSTILE_TOKEN_SEEN_TTL", "180"))
+TURNSTILE_BYPASS_SECRET = os.environ.get("TURNSTILE_BYPASS_SECRET", "")
 
 # Polygon USDT deposits (ADR-010). Defaults match mainnet; set wallet in env.
 POLYGON_RPC_URL = os.environ.get("POLYGON_RPC_URL", "")

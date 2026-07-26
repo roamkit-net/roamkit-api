@@ -23,6 +23,13 @@ SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 SECURE_SSL_REDIRECT = False
 
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL,  # noqa: F405
+    }
+}
+
 SECURE_HSTS_SECONDS = int(os.environ.get("DJANGO_SECURE_HSTS_SECONDS", "31536000"))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
@@ -40,5 +47,15 @@ CSRF_TRUSTED_ORIGINS = [
 # Prefer explicit production label when unset.
 if not ROAMKIT_ENVIRONMENT:  # noqa: F405
     ROAMKIT_ENVIRONMENT = "production"
+
+if TURNSTILE_ENABLED:  # noqa: F405
+    _turnstile_secret = (TURNSTILE_SECRET_KEY or "").strip()  # noqa: F405
+    if not _turnstile_secret:
+        from django.core.exceptions import ImproperlyConfigured
+
+        raise ImproperlyConfigured(
+            "TURNSTILE_SECRET_KEY must be set when TURNSTILE_ENABLED=true "
+            "in production."
+        )
 
 init_sentry(environment=ROAMKIT_ENVIRONMENT)
