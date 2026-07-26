@@ -11,7 +11,11 @@ from django.test import Client, override_settings
 
 from tests.test_billing_api import _POLYGON
 
-SCHEMA_PATH = Path(__file__).resolve().parent / "contracts" / "billing-config.response.schema.json"
+SCHEMA_PATH = (
+    Path(__file__).resolve().parent
+    / "contracts"
+    / "billing-config.response.schema.json"
+)
 
 
 def _load_schema() -> dict[str, Any]:
