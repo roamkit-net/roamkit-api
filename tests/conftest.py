@@ -21,6 +21,7 @@ def _auth_throttle_headroom(settings) -> None:
         "auth_activate": "1000/hour",
         "auth_password_reset_confirm": "1000/hour",
         "auth_google": "1000/min",
+        "billing_voucher_redeem": "1000/min",
     }
     settings.REST_FRAMEWORK = {
         **settings.REST_FRAMEWORK,

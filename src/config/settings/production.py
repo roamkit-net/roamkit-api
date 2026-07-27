@@ -4,6 +4,7 @@ import os
 
 from config.sentry import init_sentry
 
+from .airalo_guards import validate_production_airalo
 from .base import *  # noqa: F403
 from .secrets import require_production_secret
 
@@ -67,5 +68,12 @@ if GOOGLE_OAUTH_ENABLED:  # noqa: F405
             "GOOGLE_OAUTH_CLIENT_ID must be set when GOOGLE_OAUTH_ENABLED=true "
             "in production."
         )
+
+validate_production_airalo(
+    airalo_sandbox=AIRALO_SANDBOX,  # noqa: F405
+    airalo_enabled=AIRALO_ENABLED,  # noqa: F405
+    client_id=AIRALO_CLIENT_ID,  # noqa: F405
+    client_secret=AIRALO_CLIENT_SECRET,  # noqa: F405
+)
 
 init_sentry(environment=ROAMKIT_ENVIRONMENT)

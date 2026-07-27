@@ -4,6 +4,8 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from corsheaders.defaults import default_headers
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "change-me-local-dev-only")
@@ -39,6 +41,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -98,6 +101,14 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+    },
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -108,6 +119,13 @@ CORS_ALLOWED_ORIGINS = [
     "https://staging.roamkit.net",
     "https://roamkit.net",
 ]
+
+# Browser clients send X-Request-ID on voucher redeem (and future tracing).
+# django-cors-headers defaults omit it → preflight fails → "Failed to fetch".
+CORS_ALLOW_HEADERS = (
+    *default_headers,
+    "x-request-id",
+)
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
@@ -150,6 +168,7 @@ AUTH_PASSWORD_RESET_CONFIRM_RATE = os.environ.get(
 )
 AUTH_GOOGLE_RATE = os.environ.get("AUTH_GOOGLE_RATE", "10/min")
 AUTH_TURNSTILE_DEGRADED_RATE = os.environ.get("AUTH_TURNSTILE_DEGRADED_RATE", "5/hour")
+BILLING_VOUCHER_REDEEM_RATE = os.environ.get("BILLING_VOUCHER_REDEEM_RATE", "10/5min")
 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
@@ -174,6 +193,7 @@ REST_FRAMEWORK = {
         "auth_activate": AUTH_ACTIVATE_RATE,
         "auth_password_reset_confirm": AUTH_PASSWORD_RESET_CONFIRM_RATE,
         "auth_google": AUTH_GOOGLE_RATE,
+        "billing_voucher_redeem": BILLING_VOUCHER_REDEEM_RATE,
     },
 }
 
@@ -205,6 +225,10 @@ SPECTACULAR_SETTINGS = {
             "name": "Billing",
             "description": "Prepaid credits, deposits, and wallet balance",
         },
+        {
+            "name": "Vouchers",
+            "description": "Credit voucher and gift-code redeem (ADR 011)",
+        },
         {"name": "Orders", "description": "Package purchase orders"},
         {"name": "Catalog", "description": "Packages and locations"},
         {"name": "eSIM", "description": "User eSIM inventory, usage, and top-ups"},
@@ -235,6 +259,10 @@ AIRALO_CLIENT_ID = os.environ.get("AIRALO_CLIENT_ID", "")
 AIRALO_CLIENT_SECRET = os.environ.get("AIRALO_CLIENT_SECRET", "")
 AIRALO_SANDBOX = os.environ.get("AIRALO_SANDBOX", "true").lower() == "true"
 AIRALO_BASE_URL = os.environ.get("AIRALO_BASE_URL", "https://partners-api.airalo.com")
+# Default true for local/dev convenience; staging/production enforce via guards.
+AIRALO_ENABLED = os.environ.get("AIRALO_ENABLED", "true").lower() == "true"
+# Comma-separated denylist (staging). Never commit Fine Star live client_id.
+AIRALO_BLOCKED_CLIENT_IDS = os.environ.get("AIRALO_BLOCKED_CLIENT_IDS", "")
 
 # Billing feature flags (ADR-010). Money endpoints under /api/v1/billing/*
 # return 404 when BILLING_ENABLED is false; GET …/billing/config/ stays public.
@@ -242,6 +270,7 @@ BILLING_ENABLED = os.environ.get("BILLING_ENABLED", "true").lower() == "true"
 SUBSCRIPTIONS_ENABLED = (
     os.environ.get("SUBSCRIPTIONS_ENABLED", "false").lower() == "true"
 )
+VOUCHERS_ENABLED = os.environ.get("VOUCHERS_ENABLED", "false").lower() == "true"
 WALLETCONNECT_ENABLED = (
     os.environ.get("WALLETCONNECT_ENABLED", "false").lower() == "true"
 )

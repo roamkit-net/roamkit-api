@@ -37,6 +37,15 @@ _NON_BILLING_ROOTS = (
     SRC_ROOT / "config",
 )
 
+_VOUCHER_MODEL_NAMES = frozenset(
+    {
+        "Voucher",
+        "VoucherCampaign",
+        "VoucherBatch",
+        "VoucherRedemption",
+    }
+)
+
 
 def _iter_python_files(root: Path) -> list[Path]:
     return sorted(p for p in root.rglob("*.py") if "migrations" not in p.parts)
@@ -231,3 +240,60 @@ def test_orders_and_esims_do_not_bypass_credit_service_for_balance() -> None:
     assert (
         offenders == []
     ), "orders/esims must debit/credit only via CreditService (no .balance writes)"
+
+
+def test_non_billing_apps_do_not_import_voucher_models() -> None:
+    """Voucher* models stay inside apps.billing (ADR 011 / 012)."""
+    offenders: list[str] = []
+    for root in _NON_BILLING_ROOTS:
+        if not root.exists():
+            continue
+        for path in _iter_python_files(root):
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    if module.startswith("apps.billing"):
+                        for alias in node.names:
+                            if alias.name in _VOUCHER_MODEL_NAMES or (
+                                alias.name and alias.name.startswith("Voucher")
+                            ):
+                                offenders.append(
+                                    f"{path}:{node.lineno} from {module} "
+                                    f"import {alias.name}"
+                                )
+    assert offenders == [], "Non-billing modules must not import Voucher* models"
+
+
+def test_only_voucher_redeem_service_uses_voucher_reference_type() -> None:
+    """LedgerReferenceType.VOUCHER credits must originate from voucher_redeem."""
+    allowed = frozenset(
+        {
+            "src/apps/billing/services/voucher_redeem.py",
+            "src/apps/billing/models.py",
+        }
+    )
+    offenders: list[str] = []
+    for path in _iter_python_files(SRC_ROOT):
+        rel = str(path.relative_to(SRC_ROOT.parent))
+        if "migrations" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if (
+            "LedgerReferenceType.VOUCHER" not in text
+            and 'VOUCHER = "voucher"' not in text
+        ):
+            if '"voucher"' not in text and "'voucher'" not in text:
+                continue
+        if "LedgerReferenceType.VOUCHER" in text and rel not in allowed:
+            # Allow tests and REFERENCE_MODELS registration in models.
+            if rel.startswith("tests/"):
+                continue
+            if rel.endswith("models.py") and "REFERENCE_MODELS" in text:
+                continue
+            offenders.append(rel)
+    assert offenders == [], (
+        "Only voucher_redeem service may use LedgerReferenceType.VOUCHER "
+        f"for money path: {offenders}"
+    )

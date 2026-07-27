@@ -91,3 +91,71 @@ class SubscriptionError(Exception):
 
 class SubscriptionNotActiveError(SubscriptionError):
     """Raised when renewing a non-active subscription."""
+
+
+class VoucherError(Exception):
+    """Base error for voucher redeem operations."""
+
+    code: str = "voucher_error"
+
+    def __init__(self, detail: str | None = None) -> None:
+        self.detail = detail or self.code.replace("_", " ").capitalize()
+        super().__init__(self.detail)
+
+    def to_api_dict(self) -> dict[str, str]:
+        return {"code": self.code, "detail": self.detail}
+
+
+class VouchersDisabledError(VoucherError):
+    """Raised when VOUCHERS_ENABLED is false."""
+
+    code = "vouchers_disabled"
+
+
+class VoucherInvalidError(VoucherError):
+    code = "voucher_invalid"
+
+
+class VoucherExpiredError(VoucherError):
+    code = "voucher_expired"
+
+
+class VoucherRevokedError(VoucherError):
+    code = "voucher_revoked"
+
+
+class VoucherReservedError(VoucherError):
+    code = "voucher_reserved"
+
+
+class VoucherLimitError(VoucherError):
+    code = "voucher_limit"
+
+
+class UnsupportedRewardType(VoucherError):
+    code = "voucher_unsupported_reward"
+
+
+class VoucherAdminError(Exception):
+    """Base error for voucher admin (issuance / revoke / export) operations."""
+
+
+class VoucherAdminConflictError(VoucherAdminError):
+    """Optimistic concurrency conflict — reload and retry."""
+
+    def __init__(
+        self,
+        detail: str = "Reload and retry — the record was changed.",
+    ) -> None:
+        super().__init__(detail)
+
+
+class VoucherBatchBusyError(VoucherAdminError):
+    """Another batch generation is already in progress for this campaign."""
+
+    def __init__(self, detail: str = "Batch generation already in progress.") -> None:
+        super().__init__(detail)
+
+
+class VoucherAdminValidationError(VoucherAdminError):
+    """Invalid admin operation (bad status transition, missing reason, etc.)."""

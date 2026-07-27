@@ -21,6 +21,57 @@ class LedgerReferenceType(models.TextChoices):
     SUBSCRIPTION = "subscription", "Subscription"
     REFUND = "refund", "Refund"
     ADMIN_ADJUSTMENT = "admin_adjustment", "Admin adjustment"
+    VOUCHER = "voucher", "Voucher"
+
+
+class RewardType(models.TextChoices):
+    FIXED_CREDIT = "fixed_credit", "Fixed credit"
+    PERCENT_BONUS = "percent_bonus", "Percent bonus"  # reserved
+    FREE_SUBSCRIPTION = "free_subscription", "Free subscription"  # reserved
+    FREE_TOPUP = "free_topup", "Free top-up"  # reserved
+
+
+class VoucherType(models.TextChoices):
+    PROMO = "promo", "Promo"
+    GIFT = "gift", "Gift"
+    ADMIN = "admin", "Admin"
+    PARTNER = "partner", "Partner"
+
+
+class RedemptionMode(models.TextChoices):
+    SHARED = "shared", "Shared"
+    UNIQUE = "unique", "Unique"
+
+
+class VoucherIssuerType(models.TextChoices):
+    SYSTEM = "system", "System"
+    ADMIN = "admin", "Admin"
+    PARTNER = "partner", "Partner"
+    API = "api", "API"
+
+
+class VoucherRevokeReason(models.TextChoices):
+    FRAUD = "fraud", "Fraud"
+    EXPIRED_CAMPAIGN = "expired_campaign", "Expired campaign"
+    MANUAL_REVOKE = "manual_revoke", "Manual revoke"
+    DUPLICATE_ISSUE = "duplicate_issue", "Duplicate issue"
+
+
+class SoftDeleteViolation(Exception):
+    """Raised when a soft-delete-only voucher entity is hard-deleted."""
+
+
+class SoftDeleteQuerySet(models.QuerySet):
+    """Block QuerySet.delete() so admin bulk-delete cannot hard-delete rows."""
+
+    def delete(self) -> tuple[int, dict[str, int]]:
+        raise SoftDeleteViolation(
+            f"{self.model.__name__} must not be hard-deleted; use status transitions"
+        )
+
+
+class SoftDeleteManager(models.Manager.from_queryset(SoftDeleteQuerySet)):
+    """Default manager for soft-delete-only voucher entities."""
 
 
 class Account(models.Model):
@@ -237,6 +288,364 @@ class Subscription(models.Model):
         return f"Subscription {self.pk} ({self.status})"
 
 
+class VoucherCampaign(models.Model):
+    """Campaign rules + optional shared redeem code (ADR 011)."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        ACTIVE = "active", "Active"
+        EXPIRED = "expired", "Expired"
+        REVOKED = "revoked", "Revoked"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    code = models.CharField(
+        max_length=64,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Shared code when redemption_mode=shared (normalized uppercase).",
+    )
+    redemption_mode = models.CharField(
+        max_length=16,
+        choices=RedemptionMode.choices,
+        default=RedemptionMode.SHARED,
+    )
+    voucher_type = models.CharField(
+        max_length=16,
+        choices=VoucherType.choices,
+        default=VoucherType.PROMO,
+    )
+    reward_type = models.CharField(
+        max_length=32,
+        choices=RewardType.choices,
+        default=RewardType.FIXED_CREDIT,
+    )
+    credit_amount = models.DecimalField(max_digits=20, decimal_places=6)
+    max_redemptions_total = models.PositiveIntegerField(null=True, blank=True)
+    max_redemptions_per_account = models.PositiveIntegerField(null=True, blank=True)
+    starts_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.DRAFT,
+        db_index=True,
+    )
+    revoke_reason = models.CharField(
+        max_length=32,
+        choices=VoucherRevokeReason.choices,
+        blank=True,
+        default="",
+    )
+    issued_by_type = models.CharField(
+        max_length=16,
+        choices=VoucherIssuerType.choices,
+        default=VoucherIssuerType.SYSTEM,
+    )
+    issued_by_id = models.CharField(max_length=64, blank=True, default="")
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by_id = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = SoftDeleteManager()
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "voucher campaign"
+        verbose_name_plural = "voucher campaigns"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(credit_amount__gt=0),
+                name="billing_voucher_campaign_credit_amount_gt_0",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(max_redemptions_total__isnull=True)
+                    | models.Q(max_redemptions_total__gt=0)
+                ),
+                name="billing_voucher_campaign_max_total_null_or_gt_0",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(max_redemptions_per_account__isnull=True)
+                    | models.Q(max_redemptions_per_account__gt=0)
+                ),
+                name="billing_voucher_campaign_max_per_account_null_or_gt_0",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Campaign {self.code or self.pk} ({self.status})"
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise SoftDeleteViolation(
+            "VoucherCampaign must not be hard-deleted; use status transitions"
+        )
+
+
+class VoucherBatch(models.Model):
+    """Generation unit for N unique voucher codes (ADR 011)."""
+
+    class Status(models.TextChoices):
+        CREATED = "created", "Created"
+        ACTIVE = "active", "Active"
+        REVOKED = "revoked", "Revoked"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    campaign = models.ForeignKey(
+        VoucherCampaign,
+        on_delete=models.PROTECT,
+        related_name="batches",
+        null=True,
+        blank=True,
+    )
+    size = models.PositiveIntegerField()
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.CREATED,
+        db_index=True,
+    )
+    issued_by_type = models.CharField(
+        max_length=16,
+        choices=VoucherIssuerType.choices,
+        default=VoucherIssuerType.SYSTEM,
+    )
+    issued_by_id = models.CharField(max_length=64, blank=True, default="")
+    generated_at = models.DateTimeField(null=True, blank=True)
+    generation_duration_ms = models.PositiveIntegerField(null=True, blank=True)
+    generated_by_version = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = SoftDeleteManager()
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "voucher batch"
+        verbose_name_plural = "voucher batches"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(size__gt=0),
+                name="billing_voucher_batch_size_gt_0",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Batch {self.pk} (size={self.size})"
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise SoftDeleteViolation(
+            "VoucherBatch must not be hard-deleted; use status transitions"
+        )
+
+
+class Voucher(models.Model):
+    """Unique redeemable voucher code (ADR 011)."""
+
+    class Status(models.TextChoices):
+        CREATED = "created", "Created"
+        ACTIVE = "active", "Active"
+        REDEEMED = "redeemed", "Redeemed"
+        EXPIRED = "expired", "Expired"
+        REVOKED = "revoked", "Revoked"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    code = models.CharField(max_length=64, unique=True, db_index=True)
+    redemption_mode = models.CharField(
+        max_length=16,
+        choices=RedemptionMode.choices,
+        default=RedemptionMode.UNIQUE,
+    )
+    voucher_type = models.CharField(
+        max_length=16,
+        choices=VoucherType.choices,
+        default=VoucherType.GIFT,
+    )
+    reward_type = models.CharField(
+        max_length=32,
+        choices=RewardType.choices,
+        default=RewardType.FIXED_CREDIT,
+    )
+    credit_amount = models.DecimalField(max_digits=20, decimal_places=6)
+    campaign = models.ForeignKey(
+        VoucherCampaign,
+        on_delete=models.PROTECT,
+        related_name="vouchers",
+        null=True,
+        blank=True,
+    )
+    batch = models.ForeignKey(
+        VoucherBatch,
+        on_delete=models.PROTECT,
+        related_name="vouchers",
+        null=True,
+        blank=True,
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.CREATED,
+        db_index=True,
+    )
+    revoke_reason = models.CharField(
+        max_length=32,
+        choices=VoucherRevokeReason.choices,
+        blank=True,
+        default="",
+    )
+    issued_by_type = models.CharField(
+        max_length=16,
+        choices=VoucherIssuerType.choices,
+        default=VoucherIssuerType.SYSTEM,
+    )
+    issued_by_id = models.CharField(max_length=64, blank=True, default="")
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by_id = models.CharField(max_length=64, blank=True, default="")
+    expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = SoftDeleteManager()
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "voucher"
+        verbose_name_plural = "vouchers"
+        permissions = [
+            ("issue_voucher", "Can issue vouchers"),
+            ("revoke_voucher", "Can revoke vouchers"),
+            ("export_voucher", "Can export vouchers"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(credit_amount__gt=0),
+                name="billing_voucher_credit_amount_gt_0",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Voucher {self.code} ({self.status})"
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise SoftDeleteViolation(
+            "Voucher must not be hard-deleted; use status transitions"
+        )
+
+
+class VoucherRedemption(models.Model):
+    """Successful redeem audit row; ledger reference_id anchor (ADR 011)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(
+        Account,
+        on_delete=models.CASCADE,
+        related_name="voucher_redemptions",
+    )
+    voucher = models.ForeignKey(
+        Voucher,
+        on_delete=models.PROTECT,
+        related_name="redemptions",
+        null=True,
+        blank=True,
+    )
+    campaign = models.ForeignKey(
+        VoucherCampaign,
+        on_delete=models.PROTECT,
+        related_name="redemptions",
+        null=True,
+        blank=True,
+    )
+    amount = models.DecimalField(max_digits=20, decimal_places=6)
+    ledger_entry_id = models.UUIDField(null=True, blank=True)
+    request_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    redeemed_at = models.DateTimeField()
+    redeemed_ip = models.CharField(max_length=64, blank=True, default="")
+    redeemed_user_agent = models.CharField(max_length=512, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = SoftDeleteManager()
+
+    class Meta:
+        ordering = ["-redeemed_at"]
+        verbose_name = "voucher redemption"
+        verbose_name_plural = "voucher redemptions"
+        indexes = [
+            models.Index(fields=["account", "campaign"]),
+            models.Index(fields=["account", "voucher"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name="billing_voucher_redemption_amount_gt_0",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(voucher__isnull=False, campaign__isnull=True)
+                    | models.Q(voucher__isnull=True, campaign__isnull=False)
+                ),
+                name="billing_voucher_redemption_exactly_one_source",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Redemption {self.pk}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if not self._state.adding:
+            update_fields = kwargs.get("update_fields")
+            allowed = {"ledger_entry_id"}
+            if update_fields is None or set(update_fields) - allowed:
+                raise AppendOnlyViolation(
+                    "VoucherRedemption is append-only; only ledger_entry_id "
+                    "may be set after create"
+                )
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise SoftDeleteViolation("VoucherRedemption must not be hard-deleted")
+
+
+class VoucherExportFormat(models.TextChoices):
+    CSV = "csv", "CSV"
+    PDF = "pdf", "PDF"
+
+
+class VoucherExportAudit(models.Model):
+    """Append-only evidence that a batch export was downloaded (no file payload)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    batch = models.ForeignKey(
+        VoucherBatch,
+        on_delete=models.PROTECT,
+        related_name="export_audits",
+    )
+    format = models.CharField(max_length=8, choices=VoucherExportFormat.choices)
+    exported_by_id = models.CharField(max_length=64)
+    exported_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = SoftDeleteManager()
+
+    class Meta:
+        ordering = ["-exported_at"]
+        verbose_name = "voucher export audit"
+        verbose_name_plural = "voucher export audits"
+
+    def __str__(self) -> str:
+        return f"Export {self.format} batch={self.batch_id} by={self.exported_by_id}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if not self._state.adding:
+            raise AppendOnlyViolation("VoucherExportAudit is append-only")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise SoftDeleteViolation("VoucherExportAudit must not be hard-deleted")
+
+
 # Admin deep-link registry (ORDER / TOPUP filled in AppConfig.ready).
 REFERENCE_MODELS: dict[str, type[models.Model] | None] = {
     LedgerReferenceType.DEPOSIT: DepositRequest,
@@ -245,4 +654,5 @@ REFERENCE_MODELS: dict[str, type[models.Model] | None] = {
     LedgerReferenceType.SUBSCRIPTION: Subscription,
     LedgerReferenceType.REFUND: None,
     LedgerReferenceType.ADMIN_ADJUSTMENT: None,
+    LedgerReferenceType.VOUCHER: VoucherRedemption,
 }

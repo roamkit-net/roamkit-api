@@ -44,6 +44,15 @@ class AiraloClient:
         self.base_url = (base_url or settings.AIRALO_BASE_URL).rstrip("/")
         self.timeout = timeout
 
+    def _ensure_ready(self) -> None:
+        """Fail closed before any HTTP when disabled or credentials missing."""
+        if not getattr(settings, "AIRALO_ENABLED", True):
+            raise AiraloClientError(
+                "Airalo integration is disabled (AIRALO_ENABLED=false)"
+            )
+        if not (self.client_id or "").strip() or not (self.client_secret or "").strip():
+            raise AiraloClientError("Airalo credentials are not configured")
+
     def list_packages(
         self,
         *,
@@ -163,6 +172,7 @@ class AiraloClient:
         data: dict[str, str] | None = None,
         authenticated: bool = True,
     ) -> dict[str, Any]:
+        self._ensure_ready()
         url = f"{self.base_url}{path}"
         # Cloudflare bans the default Python-urllib User-Agent (error 1010).
         headers = {

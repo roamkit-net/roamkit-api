@@ -34,6 +34,7 @@ class DepositInfoSerializer(serializers.Serializer):
     eip681_uri = serializers.CharField()
     walletconnect_enabled = serializers.BooleanField()
     subscriptions_enabled = serializers.BooleanField()
+    vouchers_enabled = serializers.BooleanField()
 
 
 class VerifyDepositSerializer(serializers.Serializer):
@@ -59,3 +60,17 @@ class DepositRequestSerializer(serializers.ModelSerializer):
             "updated_at",
         )
         read_only_fields = fields
+
+
+class VoucherRedeemRequestSerializer(serializers.Serializer):
+    code = serializers.CharField(max_length=64, trim_whitespace=False)
+
+
+class VoucherRedeemResponseSerializer(serializers.Serializer):
+    credited = serializers.DecimalField(max_digits=20, decimal_places=6)
+    balance = serializers.DecimalField(max_digits=20, decimal_places=6)
+
+
+class VoucherErrorSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    detail = serializers.CharField()
