@@ -272,13 +272,9 @@ def test_account_backfill_migration() -> None:
     assert account.balance == Decimal("0")
     assert account.version == 0
 
-    # Restore to HEAD for subsequent tests in this process.
-    executor.migrate(
-        [
-            ("billing", "0001_billing_schema"),
-            ("orders", "0002_billing_schema"),
-        ]
-    )
+    # Restore to HEAD for subsequent transactional tests in this process.
+    executor.loader.build_graph()
+    executor.migrate(executor.loader.graph.leaf_nodes())
 
 
 @pytest.mark.django_db(transaction=True)
@@ -355,3 +351,7 @@ def test_order_account_backfill_migration() -> None:
     field_names = {f.name for f in OrderAfter._meta.fields}
     assert "account" in field_names
     assert "user" not in field_names
+
+    # Restore to HEAD for subsequent transactional tests in this process.
+    executor.loader.build_graph()
+    executor.migrate(executor.loader.graph.leaf_nodes())
