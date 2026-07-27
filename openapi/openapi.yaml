@@ -526,13 +526,19 @@ paths:
           content:
             application/json:
               examples:
+                IdempotentReplay:
+                  value:
+                    balance: '120.500000'
+                    credited: '25.000000'
+                    replay: true
                 Success:
                   value:
                     balance: '120.500000'
                     credited: '25.000000'
+                    replay: false
               schema:
                 $ref: '#/components/schemas/VoucherRedeemResponse'
-          description: Credits applied
+          description: Credits applied (replay=true when already redeemed by this account)
         '400':
           content:
             application/json:
@@ -2107,6 +2113,9 @@ components:
           format: decimal
           pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
           type: string
+        replay:
+          default: false
+          type: boolean
       required:
       - balance
       - credited
