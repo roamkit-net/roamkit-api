@@ -295,10 +295,7 @@ class VoucherRedeemService:
                 campaign=campaign, account=account
             ).count()
             if used >= campaign.max_redemptions_per_account:
-                if (
-                    campaign.max_redemptions_per_account == 1
-                    and prior is not None
-                ):
+                if campaign.max_redemptions_per_account == 1 and prior is not None:
                     account.refresh_from_db(fields=["balance"])
                     return RedeemResult(
                         credited=prior.amount,

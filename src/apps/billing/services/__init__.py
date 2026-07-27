@@ -29,8 +29,8 @@ from apps.billing.services.subscription import (
 )
 from apps.billing.services.voucher_redeem import (
     RedeemResult,
-    VoucherRedeemService,
     VoucherRedeemer,
+    VoucherRedeemService,
     issue_shared_campaign,
     issue_unique_voucher,
     voucher_redeem_service,

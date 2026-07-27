@@ -40,7 +40,9 @@ def is_reserved_voucher_code(code: str) -> bool:
     return False
 
 
-def assert_code_available(code: str, *, exclude_voucher_id=None, exclude_campaign_id=None) -> str:
+def assert_code_available(
+    code: str, *, exclude_voucher_id=None, exclude_campaign_id=None
+) -> str:
     """Normalize ``code``, reject reserved/empty, and ensure cross-table uniqueness.
 
     Returns the normalized code. Import models lazily to avoid circular imports.

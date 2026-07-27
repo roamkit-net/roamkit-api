@@ -507,6 +507,77 @@ paths:
       summary: Verify WalletConnect deposit
       tags:
       - Billing
+  /api/v1/billing/vouchers/redeem/:
+    post:
+      description: 'Credit the authenticated billing account from a UNIQUE voucher or SHARED campaign
+        code. Money path: VoucherRedeemService → CreditService (ADR 011). Requires ``BILLING_ENABLED``
+        and ``VOUCHERS_ENABLED``.'
+      operationId: billing_vouchers_redeem
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoucherRedeemRequestRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Success:
+                  value:
+                    balance: '120.500000'
+                    credited: '25.000000'
+              schema:
+                $ref: '#/components/schemas/VoucherRedeemResponse'
+          description: Credits applied
+        '400':
+          content:
+            application/json:
+              examples:
+                Expired:
+                  value:
+                    code: voucher_expired
+                    detail: Voucher expired
+                Invalid:
+                  value:
+                    code: voucher_invalid
+                    detail: Invalid voucher code
+                Revoked:
+                  value:
+                    code: voucher_revoked
+                    detail: Voucher revoked
+              schema:
+                $ref: '#/components/schemas/VoucherError'
+          description: Invalid / expired / revoked / reserved / limit
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              examples:
+                Disabled:
+                  value:
+                    detail: Not found.
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Billing or vouchers disabled
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Rate limited (10 attempts / 5 minutes per user)
+      security:
+      - bearerAuth: []
+      summary: Redeem voucher or campaign code
+      tags:
+      - Billing
+      - Vouchers
   /api/v1/locations/:
     get:
       description: List catalog locations that have at least one active package.
@@ -2001,6 +2072,39 @@ components:
       - amount_requested
       - idempotency_key
       - tx_hash
+      type: object
+    VoucherError:
+      properties:
+        code:
+          type: string
+        detail:
+          type: string
+      required:
+      - code
+      - detail
+      type: object
+    VoucherRedeemRequestRequest:
+      properties:
+        code:
+          maxLength: 64
+          minLength: 1
+          type: string
+      required:
+      - code
+      type: object
+    VoucherRedeemResponse:
+      properties:
+        balance:
+          format: decimal
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
+          type: string
+        credited:
+          format: decimal
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
+          type: string
+      required:
+      - balance
+      - credited
       type: object
   securitySchemes:
     bearerAuth:

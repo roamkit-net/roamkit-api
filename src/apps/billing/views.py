@@ -54,6 +54,7 @@ from core.http.request_id import get_or_create_request_id
 from core.openapi_serializers import ErrorDetailSerializer
 from shared.providers.blockchain import BlockchainRPCError
 
+
 class BillingAPIView(APIView):
     """JWT-authenticated billing endpoint; ``BILLING_ENABLED=false`` → 404."""
 

@@ -572,9 +572,7 @@ class VoucherRedemption(models.Model):
         super().save(*args, **kwargs)
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
-        raise SoftDeleteViolation(
-            "VoucherRedemption must not be hard-deleted"
-        )
+        raise SoftDeleteViolation("VoucherRedemption must not be hard-deleted")
 
 
 # Admin deep-link registry (ORDER / TOPUP filled in AppConfig.ready).
