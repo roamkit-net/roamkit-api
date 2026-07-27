@@ -61,6 +61,19 @@ class SoftDeleteViolation(Exception):
     """Raised when a soft-delete-only voucher entity is hard-deleted."""
 
 
+class SoftDeleteQuerySet(models.QuerySet):
+    """Block QuerySet.delete() so admin bulk-delete cannot hard-delete rows."""
+
+    def delete(self) -> tuple[int, dict[str, int]]:
+        raise SoftDeleteViolation(
+            f"{self.model.__name__} must not be hard-deleted; use status transitions"
+        )
+
+
+class SoftDeleteManager(models.Manager.from_queryset(SoftDeleteQuerySet)):
+    """Default manager for soft-delete-only voucher entities."""
+
+
 class Account(models.Model):
     """Billing account 1:1 with User. ``balance`` is a cache of the ledger."""
 
@@ -331,8 +344,12 @@ class VoucherCampaign(models.Model):
         default=VoucherIssuerType.SYSTEM,
     )
     issued_by_id = models.CharField(max_length=64, blank=True, default="")
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by_id = models.CharField(max_length=64, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = SoftDeleteManager()
 
     class Meta:
         ordering = ["-created_at"]
@@ -397,8 +414,13 @@ class VoucherBatch(models.Model):
         default=VoucherIssuerType.SYSTEM,
     )
     issued_by_id = models.CharField(max_length=64, blank=True, default="")
+    generated_at = models.DateTimeField(null=True, blank=True)
+    generation_duration_ms = models.PositiveIntegerField(null=True, blank=True)
+    generated_by_version = models.CharField(max_length=64, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = SoftDeleteManager()
 
     class Meta:
         ordering = ["-created_at"]
@@ -480,14 +502,23 @@ class Voucher(models.Model):
         default=VoucherIssuerType.SYSTEM,
     )
     issued_by_id = models.CharField(max_length=64, blank=True, default="")
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by_id = models.CharField(max_length=64, blank=True, default="")
     expires_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = SoftDeleteManager()
 
     class Meta:
         ordering = ["-created_at"]
         verbose_name = "voucher"
         verbose_name_plural = "vouchers"
+        permissions = [
+            ("issue_voucher", "Can issue vouchers"),
+            ("revoke_voucher", "Can revoke vouchers"),
+            ("export_voucher", "Can export vouchers"),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(credit_amount__gt=0),
@@ -535,6 +566,8 @@ class VoucherRedemption(models.Model):
     redeemed_user_agent = models.CharField(max_length=512, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects = SoftDeleteManager()
+
     class Meta:
         ordering = ["-redeemed_at"]
         verbose_name = "voucher redemption"
@@ -573,6 +606,44 @@ class VoucherRedemption(models.Model):
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
         raise SoftDeleteViolation("VoucherRedemption must not be hard-deleted")
+
+
+class VoucherExportFormat(models.TextChoices):
+    CSV = "csv", "CSV"
+    PDF = "pdf", "PDF"
+
+
+class VoucherExportAudit(models.Model):
+    """Append-only evidence that a batch export was downloaded (no file payload)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    batch = models.ForeignKey(
+        VoucherBatch,
+        on_delete=models.PROTECT,
+        related_name="export_audits",
+    )
+    format = models.CharField(max_length=8, choices=VoucherExportFormat.choices)
+    exported_by_id = models.CharField(max_length=64)
+    exported_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = SoftDeleteManager()
+
+    class Meta:
+        ordering = ["-exported_at"]
+        verbose_name = "voucher export audit"
+        verbose_name_plural = "voucher export audits"
+
+    def __str__(self) -> str:
+        return f"Export {self.format} batch={self.batch_id} by={self.exported_by_id}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if not self._state.adding:
+            raise AppendOnlyViolation("VoucherExportAudit is append-only")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise SoftDeleteViolation("VoucherExportAudit must not be hard-deleted")
 
 
 # Admin deep-link registry (ORDER / TOPUP filled in AppConfig.ready).
