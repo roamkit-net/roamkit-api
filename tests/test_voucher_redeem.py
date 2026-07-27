@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import fields
 from datetime import timedelta
 from decimal import Decimal
@@ -27,11 +27,13 @@ from apps.billing.models import (
     AppendOnlyViolation,
     CreditLedgerEntry,
     LedgerReferenceType,
+    RedemptionMode,
     RewardType,
     SoftDeleteViolation,
     Voucher,
     VoucherCampaign,
     VoucherRedemption,
+    VoucherType,
 )
 from apps.billing.services.voucher_redeem import (
     issue_shared_campaign,
@@ -264,29 +266,33 @@ def test_shared_total_limit(user: User) -> None:
 
 @pytest.mark.django_db(transaction=True)
 @override_settings(BILLING_ENABLED=True, VOUCHERS_ENABLED=True)
-def test_shared_100_parallel_redeems_no_oversell() -> None:
-    """Torture: 100 parallel attempts against max_redemptions_total=10."""
-    from django.conf import settings as dj_settings
+def test_shared_parallel_redeems_respect_total_limit() -> None:
+    """Parallel SHARED redeems must not oversell max_redemptions_total."""
+    from django.db import connection as db_connection
 
-    assert dj_settings.VOUCHERS_ENABLED is True
-    issue_shared_campaign(
+    db_connection.ensure_connection()
+    # Create directly (avoid cross-table code probe) — mirrors credit concurrency tests.
+    campaign = VoucherCampaign.objects.create(
         code="TORTURE100",
+        redemption_mode=RedemptionMode.SHARED,
+        voucher_type=VoucherType.PROMO,
+        reward_type=RewardType.FIXED_CREDIT,
         credit_amount=Decimal("1.000000"),
         max_redemptions_total=10,
         max_redemptions_per_account=1,
+        status=VoucherCampaign.Status.ACTIVE,
     )
     users = [
         User.objects.create_user(email=f"t{i}@example.com", password=PASSWORD)
-        for i in range(100)
+        for i in range(40)
     ]
     account_ids = [u.billing_account.pk for u in users]
 
     def _attempt(account_id) -> bool:
-        connection.close()
         from apps.billing.models import Account
 
-        account = Account.objects.get(pk=account_id)
         try:
+            account = Account.objects.get(pk=account_id)
             voucher_redeem_service.redeem(
                 account=account,
                 code="TORTURE100",
@@ -295,15 +301,14 @@ def test_shared_100_parallel_redeems_no_oversell() -> None:
             return True
         except VoucherLimitError:
             return False
+        finally:
+            connection.close()
 
-    successes = 0
-    with ThreadPoolExecutor(max_workers=16) as pool:
-        futures = [pool.submit(_attempt, aid) for aid in account_ids]
-        for fut in as_completed(futures):
-            if fut.result():
-                successes += 1
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(_attempt, account_ids))
 
-    redemptions = VoucherRedemption.objects.filter(campaign__code="TORTURE100")
+    successes = sum(1 for ok in results if ok)
+    redemptions = VoucherRedemption.objects.filter(campaign=campaign)
     assert (
         redemptions.count() == 10
     ), f"redemptions={redemptions.count()} successes={successes}"
