@@ -422,7 +422,11 @@ class VoucherRedeemView(BillingAPIView):
 
         return Response(
             VoucherRedeemResponseSerializer(
-                {"credited": result.credited, "balance": result.balance}
+                {
+                    "credited": result.credited,
+                    "balance": result.balance,
+                    "replay": result.replay,
+                }
             ).data,
             status=status.HTTP_200_OK,
         )

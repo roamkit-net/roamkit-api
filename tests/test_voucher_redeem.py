@@ -190,17 +190,28 @@ def test_redeem_shared_campaign(user: User) -> None:
 
 @pytest.mark.django_db
 @override_settings(BILLING_ENABLED=True, VOUCHERS_ENABLED=True)
-def test_redeem_unique_http_idempotent_replay(user: User) -> None:
+def test_redeem_unique_http_idempotent_replay(client: Client, user: User) -> None:
     issue_unique_voucher(code="RK-IDEMP-1", credit_amount=Decimal("7"))
-    first = voucher_redeem_service.redeem(
-        account=user.billing_account, code="RK-IDEMP-1", request_id="a"
+    headers = _auth_headers(user)
+    first = client.post(
+        "/api/v1/billing/vouchers/redeem/",
+        data=json.dumps({"code": "RK-IDEMP-1"}),
+        content_type="application/json",
+        **headers,
     )
-    second = voucher_redeem_service.redeem(
-        account=user.billing_account, code="RK-IDEMP-1", request_id="b"
+    second = client.post(
+        "/api/v1/billing/vouchers/redeem/",
+        data=json.dumps({"code": "RK-IDEMP-1"}),
+        content_type="application/json",
+        **headers,
     )
-    assert second.replay is True
-    assert second.credited == first.credited
-    assert second.redemption_id == first.redemption_id
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["replay"] is False
+    assert second.json()["replay"] is True
+    assert second.json()["credited"] == first.json()["credited"]
+    assert second.json()["balance"] == first.json()["balance"]
+    assert VoucherRedemption.objects.count() == 1
 
 
 @pytest.mark.django_db
@@ -341,6 +352,7 @@ def test_api_redeem_success(client: Client, user: User) -> None:
     assert response.json() == {
         "credited": "12.000000",
         "balance": "12.000000",
+        "replay": False,
     }
     redemption = VoucherRedemption.objects.get()
     assert redemption.request_id == "http-req-1"
@@ -365,6 +377,8 @@ def test_api_redeem_double_post_idempotent(client: Client, user: User) -> None:
     )
     assert r1.status_code == 200
     assert r2.status_code == 200
+    assert r1.json()["replay"] is False
+    assert r2.json()["replay"] is True
     assert r1.json()["credited"] == r2.json()["credited"]
     assert VoucherRedemption.objects.count() == 1
     assert (
