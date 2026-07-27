@@ -9,63 +9,92 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('billing', '0002_vouchers'),
+        ("billing", "0002_vouchers"),
     ]
 
     operations = [
         migrations.AlterModelOptions(
-            name='voucher',
-            options={'ordering': ['-created_at'], 'permissions': [('issue_voucher', 'Can issue vouchers'), ('revoke_voucher', 'Can revoke vouchers'), ('export_voucher', 'Can export vouchers')], 'verbose_name': 'voucher', 'verbose_name_plural': 'vouchers'},
+            name="voucher",
+            options={
+                "ordering": ["-created_at"],
+                "permissions": [
+                    ("issue_voucher", "Can issue vouchers"),
+                    ("revoke_voucher", "Can revoke vouchers"),
+                    ("export_voucher", "Can export vouchers"),
+                ],
+                "verbose_name": "voucher",
+                "verbose_name_plural": "vouchers",
+            },
         ),
         migrations.AddField(
-            model_name='voucher',
-            name='revoked_at',
+            model_name="voucher",
+            name="revoked_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.AddField(
-            model_name='voucher',
-            name='revoked_by_id',
-            field=models.CharField(blank=True, default='', max_length=64),
+            model_name="voucher",
+            name="revoked_by_id",
+            field=models.CharField(blank=True, default="", max_length=64),
         ),
         migrations.AddField(
-            model_name='voucherbatch',
-            name='generated_at',
+            model_name="voucherbatch",
+            name="generated_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.AddField(
-            model_name='voucherbatch',
-            name='generated_by_version',
-            field=models.CharField(blank=True, default='', max_length=64),
+            model_name="voucherbatch",
+            name="generated_by_version",
+            field=models.CharField(blank=True, default="", max_length=64),
         ),
         migrations.AddField(
-            model_name='voucherbatch',
-            name='generation_duration_ms',
+            model_name="voucherbatch",
+            name="generation_duration_ms",
             field=models.PositiveIntegerField(blank=True, null=True),
         ),
         migrations.AddField(
-            model_name='vouchercampaign',
-            name='revoked_at',
+            model_name="vouchercampaign",
+            name="revoked_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
         migrations.AddField(
-            model_name='vouchercampaign',
-            name='revoked_by_id',
-            field=models.CharField(blank=True, default='', max_length=64),
+            model_name="vouchercampaign",
+            name="revoked_by_id",
+            field=models.CharField(blank=True, default="", max_length=64),
         ),
         migrations.CreateModel(
-            name='VoucherExportAudit',
+            name="VoucherExportAudit",
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('format', models.CharField(choices=[('csv', 'CSV'), ('pdf', 'PDF')], max_length=8)),
-                ('exported_by_id', models.CharField(max_length=64)),
-                ('exported_at', models.DateTimeField()),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('batch', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='export_audits', to='billing.voucherbatch')),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                (
+                    "format",
+                    models.CharField(
+                        choices=[("csv", "CSV"), ("pdf", "PDF")], max_length=8
+                    ),
+                ),
+                ("exported_by_id", models.CharField(max_length=64)),
+                ("exported_at", models.DateTimeField()),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "batch",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="export_audits",
+                        to="billing.voucherbatch",
+                    ),
+                ),
             ],
             options={
-                'verbose_name': 'voucher export audit',
-                'verbose_name_plural': 'voucher export audits',
-                'ordering': ['-exported_at'],
+                "verbose_name": "voucher export audit",
+                "verbose_name_plural": "voucher export audits",
+                "ordering": ["-exported_at"],
             },
         ),
     ]
