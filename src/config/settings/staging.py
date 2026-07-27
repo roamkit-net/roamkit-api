@@ -1,5 +1,6 @@
 """Staging settings — Traefik proxy headers and hardened defaults."""
 
+from .airalo_guards import parse_blocked_client_ids, validate_staging_airalo
 from .base import *  # noqa: F403
 
 DEBUG = False
@@ -22,3 +23,13 @@ CACHES = {
         "LOCATION": REDIS_URL,  # noqa: F405
     }
 }
+
+validate_staging_airalo(
+    airalo_sandbox=AIRALO_SANDBOX,  # noqa: F405
+    airalo_enabled=AIRALO_ENABLED,  # noqa: F405
+    client_id=AIRALO_CLIENT_ID,  # noqa: F405
+    client_secret=AIRALO_CLIENT_SECRET,  # noqa: F405
+    blocked_client_ids=parse_blocked_client_ids(
+        AIRALO_BLOCKED_CLIENT_IDS  # noqa: F405
+    ),
+)
