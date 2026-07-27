@@ -4,6 +4,8 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from corsheaders.defaults import default_headers
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "change-me-local-dev-only")
@@ -117,6 +119,13 @@ CORS_ALLOWED_ORIGINS = [
     "https://staging.roamkit.net",
     "https://roamkit.net",
 ]
+
+# Browser clients send X-Request-ID on voucher redeem (and future tracing).
+# django-cors-headers defaults omit it → preflight fails → "Failed to fetch".
+CORS_ALLOW_HEADERS = (
+    *default_headers,
+    "x-request-id",
+)
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
