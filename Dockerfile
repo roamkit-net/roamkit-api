@@ -42,6 +42,12 @@ ENV PYTHONPATH=/app/src \
     ROAMKIT_IMAGE_TAG=${ROAMKIT_IMAGE_TAG} \
     ROAMKIT_ENVIRONMENT=${ROAMKIT_ENVIRONMENT}
 
+# Collect admin/DRF static assets into STATIC_ROOT for WhiteNoise (DEBUG=False).
+RUN DJANGO_SETTINGS_MODULE=config.settings.dev \
+    DJANGO_SECRET_KEY=build-collectstatic \
+    DJANGO_DEBUG=false \
+    python manage.py collectstatic --noinput
+
 USER roamkit
 
 EXPOSE 8000
