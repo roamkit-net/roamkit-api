@@ -207,6 +207,10 @@ SPECTACULAR_SETTINGS = {
             "name": "Billing",
             "description": "Prepaid credits, deposits, and wallet balance",
         },
+        {
+            "name": "Vouchers",
+            "description": "Credit voucher and gift-code redeem (ADR 011)",
+        },
         {"name": "Orders", "description": "Package purchase orders"},
         {"name": "Catalog", "description": "Packages and locations"},
         {"name": "eSIM", "description": "User eSIM inventory, usage, and top-ups"},
