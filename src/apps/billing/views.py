@@ -337,12 +337,27 @@ def _verify_deposit(request: Request, *, payment_method: str) -> Response:
         responses={
             200: OpenApiResponse(
                 response=VoucherRedeemResponseSerializer,
-                description="Credits applied",
+                description=(
+                    "Credits applied (replay=true when already redeemed "
+                    "by this account)"
+                ),
                 examples=[
                     OpenApiExample(
                         "Success",
-                        value={"credited": "25.000000", "balance": "120.500000"},
-                    )
+                        value={
+                            "credited": "25.000000",
+                            "balance": "120.500000",
+                            "replay": False,
+                        },
+                    ),
+                    OpenApiExample(
+                        "IdempotentReplay",
+                        value={
+                            "credited": "25.000000",
+                            "balance": "120.500000",
+                            "replay": True,
+                        },
+                    ),
                 ],
             ),
             400: OpenApiResponse(
