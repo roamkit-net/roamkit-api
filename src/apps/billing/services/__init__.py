@@ -27,6 +27,14 @@ from apps.billing.services.subscription import (
     SubscriptionService,
     subscription_service,
 )
+from apps.billing.services.voucher_redeem import (
+    RedeemResult,
+    VoucherRedeemService,
+    VoucherRedeemer,
+    issue_shared_campaign,
+    issue_unique_voucher,
+    voucher_redeem_service,
+)
 
 __all__ = [
     "BillingMetrics",
@@ -34,7 +42,10 @@ __all__ = [
     "DepositVerificationService",
     "RebuildService",
     "ReconcileService",
+    "RedeemResult",
     "SubscriptionService",
+    "VoucherRedeemService",
+    "VoucherRedeemer",
     "billing_config_etag",
     "build_eip681_uri",
     "collect_billing_metrics",
@@ -43,8 +54,11 @@ __all__ = [
     "ensure_billing_account",
     "get_billing_config",
     "get_deposit_info",
+    "issue_shared_campaign",
+    "issue_unique_voucher",
     "rebuild_service",
     "reconcile_service",
     "resolve_reference",
     "subscription_service",
+    "voucher_redeem_service",
 ]

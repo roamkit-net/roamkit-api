@@ -562,9 +562,13 @@ class VoucherRedemption(models.Model):
 
     def save(self, *args: Any, **kwargs: Any) -> None:
         if not self._state.adding:
-            raise AppendOnlyViolation(
-                "VoucherRedemption is append-only; updates are forbidden"
-            )
+            update_fields = kwargs.get("update_fields")
+            allowed = {"ledger_entry_id"}
+            if update_fields is None or set(update_fields) - allowed:
+                raise AppendOnlyViolation(
+                    "VoucherRedemption is append-only; only ledger_entry_id "
+                    "may be set after create"
+                )
         super().save(*args, **kwargs)
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
