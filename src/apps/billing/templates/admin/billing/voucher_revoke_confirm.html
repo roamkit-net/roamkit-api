@@ -1,0 +1,21 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+{% if campaign %}<p>Campaign: <strong>{{ campaign }}</strong></p>{% endif %}
+{% if batch %}<p>Batch: <strong>{{ batch }}</strong></p>{% endif %}
+{% if impact %}
+  <div class="module" style="padding: 1em; margin-bottom: 1em;">
+    <h2>Impact preview</h2>
+    <ul>
+      <li>Affected vouchers: {{ impact.affected }}</li>
+      <li>Already redeemed: {{ impact.already_redeemed }}</li>
+      <li>Will be revoked: {{ impact.revoked_now }}</li>
+    </ul>
+  </div>
+{% endif %}
+<form method="post">
+  {% csrf_token %}
+  {{ form.as_p }}
+  <input type="submit" value="Confirm revoke" class="default">
+</form>
+{% endblock %}

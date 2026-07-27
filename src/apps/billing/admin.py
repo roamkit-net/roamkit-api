@@ -12,6 +12,7 @@ from django.shortcuts import get_object_or_404, render
 from django.urls import path, reverse
 from django.utils.html import format_html
 
+import apps.billing.admin_vouchers as _admin_vouchers  # noqa: F401
 from apps.billing.exceptions import (
     CreditServiceError,
     DepositVerificationError,

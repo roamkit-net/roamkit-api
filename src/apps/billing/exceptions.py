@@ -134,3 +134,28 @@ class VoucherLimitError(VoucherError):
 
 class UnsupportedRewardType(VoucherError):
     code = "voucher_unsupported_reward"
+
+
+class VoucherAdminError(Exception):
+    """Base error for voucher admin (issuance / revoke / export) operations."""
+
+
+class VoucherAdminConflictError(VoucherAdminError):
+    """Optimistic concurrency conflict — reload and retry."""
+
+    def __init__(
+        self,
+        detail: str = "Reload and retry — the record was changed.",
+    ) -> None:
+        super().__init__(detail)
+
+
+class VoucherBatchBusyError(VoucherAdminError):
+    """Another batch generation is already in progress for this campaign."""
+
+    def __init__(self, detail: str = "Batch generation already in progress.") -> None:
+        super().__init__(detail)
+
+
+class VoucherAdminValidationError(VoucherAdminError):
+    """Invalid admin operation (bad status transition, missing reason, etc.)."""
