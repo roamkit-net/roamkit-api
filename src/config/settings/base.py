@@ -259,6 +259,10 @@ AIRALO_CLIENT_ID = os.environ.get("AIRALO_CLIENT_ID", "")
 AIRALO_CLIENT_SECRET = os.environ.get("AIRALO_CLIENT_SECRET", "")
 AIRALO_SANDBOX = os.environ.get("AIRALO_SANDBOX", "true").lower() == "true"
 AIRALO_BASE_URL = os.environ.get("AIRALO_BASE_URL", "https://partners-api.airalo.com")
+# Default true for local/dev convenience; staging/production enforce via guards.
+AIRALO_ENABLED = os.environ.get("AIRALO_ENABLED", "true").lower() == "true"
+# Comma-separated denylist (staging). Never commit Fine Star live client_id.
+AIRALO_BLOCKED_CLIENT_IDS = os.environ.get("AIRALO_BLOCKED_CLIENT_IDS", "")
 
 # Billing feature flags (ADR-010). Money endpoints under /api/v1/billing/*
 # return 404 when BILLING_ENABLED is false; GET …/billing/config/ stays public.
