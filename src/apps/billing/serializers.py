@@ -34,6 +34,7 @@ class DepositInfoSerializer(serializers.Serializer):
     eip681_uri = serializers.CharField()
     walletconnect_enabled = serializers.BooleanField()
     subscriptions_enabled = serializers.BooleanField()
+    vouchers_enabled = serializers.BooleanField()
 
 
 class VerifyDepositSerializer(serializers.Serializer):

@@ -228,6 +228,7 @@ def test_billing_config_etag_changes_when_config_changes(client: Client) -> None
     BILLING_ENABLED=True,
     WALLETCONNECT_ENABLED=True,
     SUBSCRIPTIONS_ENABLED=False,
+    VOUCHERS_ENABLED=True,
     **_POLYGON,
 )
 def test_deposit_info_full_meta(client: Client, user: User) -> None:
@@ -246,6 +247,7 @@ def test_deposit_info_full_meta(client: Client, user: User) -> None:
     assert payload["min_confirmations"] == 20
     assert payload["walletconnect_enabled"] is True
     assert payload["subscriptions_enabled"] is False
+    assert payload["vouchers_enabled"] is True
     assert payload["eip681_uri"] == build_eip681_uri(
         wallet=PLATFORM_WALLET,
         contract=USDT_CONTRACT,

@@ -1108,6 +1108,8 @@ components:
           type: integer
         token_symbol:
           type: string
+        vouchers_enabled:
+          type: boolean
         wallet:
           type: string
         walletconnect_enabled:
@@ -1120,6 +1122,7 @@ components:
       - subscriptions_enabled
       - token_decimals
       - token_symbol
+      - vouchers_enabled
       - wallet
       - walletconnect_enabled
       type: object
