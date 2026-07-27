@@ -69,6 +69,7 @@ class VoucherRedeemRequestSerializer(serializers.Serializer):
 class VoucherRedeemResponseSerializer(serializers.Serializer):
     credited = serializers.DecimalField(max_digits=20, decimal_places=6)
     balance = serializers.DecimalField(max_digits=20, decimal_places=6)
+    replay = serializers.BooleanField(default=False)
 
 
 class VoucherErrorSerializer(serializers.Serializer):
