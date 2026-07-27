@@ -1,0 +1,33 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+{% if voucher_warnings %}
+  <ul class="messagelist">
+    {% for warning in voucher_warnings %}
+      <li class="warning">{{ warning }}</li>
+    {% endfor %}
+  </ul>
+{% endif %}
+<h1>{{ title }}</h1>
+{% if campaign %}<p>Campaign: <strong>{{ campaign }}</strong></p>{% endif %}
+{% if preview %}
+  <div class="module" style="padding: 1em; margin-bottom: 1em;">
+    <h2>Preview</h2>
+    <ul>
+      <li>Number of vouchers: {{ preview.size }}</li>
+      <li>Reward type: {{ preview.reward_type }}</li>
+      <li>Credit amount: {{ preview.credit_amount }}</li>
+      <li>Expiry: {{ preview.expires_at|default:"(none)" }}</li>
+      <li>Code prefix: {{ preview.code_prefix }}</li>
+    </ul>
+    <p><strong>{{ preview.irreversible_warning }}</strong></p>
+  </div>
+{% endif %}
+<form method="post">
+  {% csrf_token %}
+  {{ form.as_p }}
+  <input type="submit" name="preview" value="Preview / continue" class="default">
+  {% if form.confirm %}
+  <p>Check the confirmation box above, then submit again to generate.</p>
+  {% endif %}
+</form>
+{% endblock %}

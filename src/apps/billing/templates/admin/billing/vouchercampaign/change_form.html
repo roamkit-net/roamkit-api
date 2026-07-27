@@ -1,0 +1,13 @@
+{% extends "admin/change_form.html" %}
+{% block form_top %}
+{% if voucher_warnings %}
+  <ul class="messagelist">
+    {% for warning in voucher_warnings %}
+      <li class="warning">{{ warning }}</li>
+    {% endfor %}
+  </ul>
+{% endif %}
+{% if expected_updated_at %}
+  <input type="hidden" name="expected_updated_at" value="{{ expected_updated_at }}">
+{% endif %}
+{% endblock %}

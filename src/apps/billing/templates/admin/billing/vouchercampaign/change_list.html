@@ -1,0 +1,22 @@
+{% extends "admin/change_list.html" %}
+{% block content %}
+{% if voucher_warnings %}
+  <ul class="messagelist">
+    {% for warning in voucher_warnings %}
+      <li class="warning">{{ warning }}</li>
+    {% endfor %}
+  </ul>
+{% endif %}
+{% if voucher_health %}
+  <div class="module" style="margin-bottom: 1em; padding: 0.75em 1em;">
+    <h2>Voucher campaigns</h2>
+    <p>
+      Active: {{ voucher_health.active }} &nbsp;|&nbsp;
+      Expired: {{ voucher_health.expired }} &nbsp;|&nbsp;
+      Revoked: {{ voucher_health.revoked }} &nbsp;|&nbsp;
+      Redeemed today: {{ voucher_health.redeemed_today }}
+    </p>
+  </div>
+{% endif %}
+{{ block.super }}
+{% endblock %}
