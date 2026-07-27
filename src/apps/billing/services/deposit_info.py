@@ -73,4 +73,5 @@ def get_deposit_info() -> dict[str, Any]:
         ),
         "walletconnect_enabled": bool(settings.WALLETCONNECT_ENABLED),
         "subscriptions_enabled": bool(settings.SUBSCRIPTIONS_ENABLED),
+        "vouchers_enabled": bool(settings.VOUCHERS_ENABLED),
     }
