@@ -8,6 +8,7 @@ from apps.billing.views import (
     DepositInfoView,
     VerifyCexDepositView,
     VerifyWalletDepositView,
+    VoucherRedeemView,
 )
 
 urlpatterns = [
@@ -23,5 +24,10 @@ urlpatterns = [
         "verify-cex/",
         VerifyCexDepositView.as_view(),
         name="billing-verify-cex",
+    ),
+    path(
+        "vouchers/redeem/",
+        VoucherRedeemView.as_view(),
+        name="billing-vouchers-redeem",
     ),
 ]

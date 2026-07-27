@@ -25,6 +25,8 @@ from apps.billing.exceptions import (
     DuplicateTransactionError,
     InsufficientConfirmationsError,
     InvalidAmountError,
+    VoucherError,
+    VouchersDisabledError,
 )
 from apps.billing.models import DepositRequest
 from apps.billing.serializers import (
@@ -33,6 +35,9 @@ from apps.billing.serializers import (
     DepositInfoSerializer,
     DepositRequestSerializer,
     VerifyDepositSerializer,
+    VoucherErrorSerializer,
+    VoucherRedeemRequestSerializer,
+    VoucherRedeemResponseSerializer,
 )
 from apps.billing.services.account import ensure_billing_account
 from apps.billing.services.deposit_info import (
@@ -42,6 +47,10 @@ from apps.billing.services.deposit_info import (
     get_deposit_info,
 )
 from apps.billing.services.deposit_verification import deposit_verification_service
+from apps.billing.services.voucher_redeem import voucher_redeem_service
+from apps.billing.throttles import BillingVoucherRedeemRateThrottle
+from core.http.client_ip import get_client_ip
+from core.http.request_id import get_or_create_request_id
 from core.openapi_serializers import ErrorDetailSerializer
 from shared.providers.blockchain import BlockchainRPCError
 
@@ -312,3 +321,108 @@ def _verify_deposit(request: Request, *, payment_method: str) -> Response:
         return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
     return Response(DepositRequestSerializer(deposit).data, status=status.HTTP_200_OK)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Billing", "Vouchers"],
+        operation_id="billing_vouchers_redeem",
+        summary="Redeem voucher or campaign code",
+        description=(
+            "Credit the authenticated billing account from a UNIQUE voucher or "
+            "SHARED campaign code. Money path: VoucherRedeemService → CreditService "
+            "(ADR 011). Requires ``BILLING_ENABLED`` and ``VOUCHERS_ENABLED``."
+        ),
+        request=VoucherRedeemRequestSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=VoucherRedeemResponseSerializer,
+                description="Credits applied",
+                examples=[
+                    OpenApiExample(
+                        "Success",
+                        value={"credited": "25.000000", "balance": "120.500000"},
+                    )
+                ],
+            ),
+            400: OpenApiResponse(
+                response=VoucherErrorSerializer,
+                description="Invalid / expired / revoked / reserved / limit",
+                examples=[
+                    OpenApiExample(
+                        "Invalid",
+                        value={
+                            "code": "voucher_invalid",
+                            "detail": "Invalid voucher code",
+                        },
+                    ),
+                    OpenApiExample(
+                        "Expired",
+                        value={
+                            "code": "voucher_expired",
+                            "detail": "Voucher expired",
+                        },
+                    ),
+                    OpenApiExample(
+                        "Revoked",
+                        value={
+                            "code": "voucher_revoked",
+                            "detail": "Voucher revoked",
+                        },
+                    ),
+                ],
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="Billing or vouchers disabled",
+                examples=[
+                    OpenApiExample(
+                        "Disabled",
+                        value={"detail": "Not found."},
+                    )
+                ],
+            ),
+            429: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="Rate limited (10 attempts / 5 minutes per user)",
+            ),
+        },
+    ),
+)
+class VoucherRedeemView(BillingAPIView):
+    """POST /api/v1/billing/vouchers/redeem/"""
+
+    throttle_classes = [BillingVoucherRedeemRateThrottle]
+
+    def initial(self, request: Request, *args, **kwargs) -> None:
+        super().initial(request, *args, **kwargs)
+        if not settings.VOUCHERS_ENABLED:
+            raise NotFound(detail="Not found.")
+
+    def post(self, request: Request) -> Response:
+        serializer = VoucherRedeemRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        account = ensure_billing_account(request.user)
+        request_id = get_or_create_request_id(request)
+        try:
+            result = voucher_redeem_service.redeem(
+                account=account,
+                code=serializer.validated_data["code"],
+                request_id=request_id,
+                client_ip=get_client_ip(request),
+                user_agent=request.META.get("HTTP_USER_AGENT", "")[:512],
+            )
+        except VouchersDisabledError as exc:
+            raise NotFound(detail="Not found.") from exc
+        except VoucherError as exc:
+            return Response(exc.to_api_dict(), status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            VoucherRedeemResponseSerializer(
+                {"credited": result.credited, "balance": result.balance}
+            ).data,
+            status=status.HTTP_200_OK,
+        )

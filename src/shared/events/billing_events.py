@@ -119,3 +119,23 @@ class BalanceDriftDetected(DomainEvent):
     ledger_sum: Decimal
     drift: Decimal
     detected_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class VoucherRedeemed(DomainEvent):
+    """Published after a voucher or shared campaign code credits an account.
+
+    Snapshot fields cover happy-path handlers — no redemption re-fetch.
+    ``request_id`` correlates HTTP → redemption → ledger → logs (ADR 011).
+    """
+
+    event_version: int = 1
+    voucher_id: str | None
+    campaign_id: str | None
+    redemption_id: str
+    account_id: str
+    amount: Decimal
+    balance_after: Decimal
+    ledger_entry_id: str
+    request_id: str
+    redeemed_at: datetime

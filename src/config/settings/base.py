@@ -150,6 +150,7 @@ AUTH_PASSWORD_RESET_CONFIRM_RATE = os.environ.get(
 )
 AUTH_GOOGLE_RATE = os.environ.get("AUTH_GOOGLE_RATE", "10/min")
 AUTH_TURNSTILE_DEGRADED_RATE = os.environ.get("AUTH_TURNSTILE_DEGRADED_RATE", "5/hour")
+BILLING_VOUCHER_REDEEM_RATE = os.environ.get("BILLING_VOUCHER_REDEEM_RATE", "10/5min")
 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
@@ -174,6 +175,7 @@ REST_FRAMEWORK = {
         "auth_activate": AUTH_ACTIVATE_RATE,
         "auth_password_reset_confirm": AUTH_PASSWORD_RESET_CONFIRM_RATE,
         "auth_google": AUTH_GOOGLE_RATE,
+        "billing_voucher_redeem": BILLING_VOUCHER_REDEEM_RATE,
     },
 }
 
@@ -204,6 +206,10 @@ SPECTACULAR_SETTINGS = {
         {
             "name": "Billing",
             "description": "Prepaid credits, deposits, and wallet balance",
+        },
+        {
+            "name": "Vouchers",
+            "description": "Credit voucher and gift-code redeem (ADR 011)",
         },
         {"name": "Orders", "description": "Package purchase orders"},
         {"name": "Catalog", "description": "Packages and locations"},
@@ -242,6 +248,7 @@ BILLING_ENABLED = os.environ.get("BILLING_ENABLED", "true").lower() == "true"
 SUBSCRIPTIONS_ENABLED = (
     os.environ.get("SUBSCRIPTIONS_ENABLED", "false").lower() == "true"
 )
+VOUCHERS_ENABLED = os.environ.get("VOUCHERS_ENABLED", "false").lower() == "true"
 WALLETCONNECT_ENABLED = (
     os.environ.get("WALLETCONNECT_ENABLED", "false").lower() == "true"
 )
