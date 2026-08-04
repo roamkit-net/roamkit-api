@@ -143,20 +143,6 @@ class EsimSerializer(serializers.ModelSerializer):
         )
         return event
 
-    @extend_schema_field(OpenApiTypes.DATETIME)
-    def get_activated_at(self, obj: Esim) -> datetime | None:
-        """First ``system.status.activated`` event time, or null."""
-        prefetched = getattr(obj, "_activated_events", None)
-        if prefetched is not None:
-            return prefetched[0].created_at if prefetched else None
-        event = (
-            obj.lifecycle_events.filter(event_type=ACTIVATED_EVENT_TYPE)
-            .order_by("created_at")
-            .values_list("created_at", flat=True)
-            .first()
-        )
-        return event
-
 
 class UsageSerializer(serializers.Serializer):
     """Live usage snapshot from the provider."""
