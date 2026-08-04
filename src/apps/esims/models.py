@@ -69,6 +69,8 @@ class Esim(models.Model):
     usage_is_unlimited = models.BooleanField(null=True, blank=True)
     usage_expired_at = models.DateTimeField(null=True, blank=True)
     usage_synced_at = models.DateTimeField(null=True, blank=True)
+    # User-local metadata — never synchronized to Airalo (or other providers).
+    note = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
