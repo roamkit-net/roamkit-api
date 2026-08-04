@@ -13,7 +13,12 @@ ACTIVATED_EVENT_TYPE = "system.status.activated"
 
 
 class EsimSerializer(serializers.ModelSerializer):
-    """Owned eSIM with ICCID, install, setup, lifecycle, and order snapshot."""
+    """Owned eSIM with ICCID, install, setup, lifecycle, and order snapshot.
+
+    ``note`` is the only writable field (PATCH). It is user-local metadata and
+    is never synchronized to Airalo. Future RoamKit-only user metadata belongs
+    on the same model with the same non-sync rule.
+    """
 
     package_title = serializers.CharField(source="order.package_title", read_only=True)
     location_title = serializers.CharField(
@@ -36,10 +41,56 @@ class EsimSerializer(serializers.ModelSerializer):
     currency = serializers.CharField(source="order.currency", read_only=True)
     issued_at = serializers.DateTimeField(source="created_at", read_only=True)
     activated_at = serializers.SerializerMethodField()
+    note = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=255,
+        help_text=(
+            "User-local note on this eSIM. Never synchronized to Airalo. "
+            "Future user metadata (label, favorite, archived, …) belongs on "
+            "the same model without provider sync."
+        ),
+    )
 
     class Meta:
         model = Esim
         fields = [
+            "id",
+            "iccid",
+            "lpa",
+            "matching_id",
+            "qrcode",
+            "qrcode_url",
+            "direct_apple_installation_url",
+            "manual_installation",
+            "qrcode_installation",
+            "installation_guide_url",
+            "status",
+            "activation_policy",
+            "setup_version",
+            "setup_resume_step",
+            "setup_completed_at",
+            "setup_skipped_at",
+            "usage_remaining_mb",
+            "usage_total_mb",
+            "usage_status",
+            "usage_is_unlimited",
+            "usage_expired_at",
+            "usage_synced_at",
+            "note",
+            "package_title",
+            "location_title",
+            "country_code",
+            "data_allowance",
+            "validity_days",
+            "paid_usd",
+            "currency",
+            "issued_at",
+            "activated_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
             "id",
             "iccid",
             "lpa",
@@ -74,7 +125,9 @@ class EsimSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = fields
+
+    def validate_note(self, value: str) -> str:
+        return value.strip()
 
     @extend_schema_field(OpenApiTypes.DATETIME)
     def get_activated_at(self, obj: Esim) -> datetime | None:

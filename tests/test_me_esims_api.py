@@ -412,3 +412,186 @@ def test_events_idempotent_and_owned(
         HTTP_AUTHORIZATION=f"Bearer {access}",
     )
     assert other.status_code == 404
+
+
+def _patch_note(
+    client: Client, *, access: str, esim_id: int, body: dict[str, Any]
+) -> Any:
+    return client.patch(
+        f"/api/v1/me/esims/{esim_id}/",
+        data=json.dumps(body),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+
+
+@pytest.mark.django_db
+def test_patch_note_owner_round_trip(
+    client: Client, user: User, alice_esim: Esim
+) -> None:
+    access = _access_token(client, user.email)
+    response = _patch_note(
+        client, access=access, esim_id=alice_esim.pk, body={"note": "Japan trip"}
+    )
+    assert response.status_code == 200
+    assert response.json()["note"] == "Japan trip"
+
+    detail = client.get(
+        f"/api/v1/me/esims/{alice_esim.pk}/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert detail.status_code == 200
+    assert detail.json()["note"] == "Japan trip"
+
+    alice_esim.refresh_from_db()
+    assert alice_esim.note == "Japan trip"
+
+
+@pytest.mark.django_db
+def test_patch_note_hides_other_users_esim(
+    client: Client, user: User, bob_esim: Esim
+) -> None:
+    access = _access_token(client, user.email)
+    response = _patch_note(
+        client, access=access, esim_id=bob_esim.pk, body={"note": "stolen"}
+    )
+    assert response.status_code == 404
+    bob_esim.refresh_from_db()
+    assert bob_esim.note == ""
+
+
+@pytest.mark.django_db
+def test_patch_note_strips_whitespace(
+    client: Client, user: User, alice_esim: Esim
+) -> None:
+    access = _access_token(client, user.email)
+    response = _patch_note(
+        client, access=access, esim_id=alice_esim.pk, body={"note": "   "}
+    )
+    assert response.status_code == 200
+    assert response.json()["note"] == ""
+    alice_esim.refresh_from_db()
+    assert alice_esim.note == ""
+
+
+@pytest.mark.django_db
+def test_patch_note_rejects_too_long(
+    client: Client, user: User, alice_esim: Esim
+) -> None:
+    access = _access_token(client, user.email)
+    response = _patch_note(
+        client,
+        access=access,
+        esim_id=alice_esim.pk,
+        body={"note": "x" * 256},
+    )
+    assert response.status_code == 400
+    alice_esim.refresh_from_db()
+    assert alice_esim.note == ""
+
+
+@pytest.mark.django_db
+def test_put_note_not_allowed(client: Client, user: User, alice_esim: Esim) -> None:
+    access = _access_token(client, user.email)
+    response = client.put(
+        f"/api/v1/me/esims/{alice_esim.pk}/",
+        data=json.dumps({"note": "via put"}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert response.status_code == 405
+    alice_esim.refresh_from_db()
+    assert alice_esim.note == ""
+
+
+@pytest.mark.django_db
+def test_patch_note_unicode_emoji_round_trip(
+    client: Client, user: User, alice_esim: Esim
+) -> None:
+    access = _access_token(client, user.email)
+    note = "eSIM za mamu ❤️"
+    response = _patch_note(
+        client, access=access, esim_id=alice_esim.pk, body={"note": note}
+    )
+    assert response.status_code == 200
+    assert response.json()["note"] == note
+    alice_esim.refresh_from_db()
+    assert alice_esim.note == note
+
+
+@pytest.mark.django_db
+def test_patch_note_xss_plain_text_round_trip(
+    client: Client, user: User, alice_esim: Esim
+) -> None:
+    access = _access_token(client, user.email)
+    note = "<script>alert(1)</script>"
+    response = _patch_note(
+        client, access=access, esim_id=alice_esim.pk, body={"note": note}
+    )
+    assert response.status_code == 200
+    assert response.json()["note"] == note
+    alice_esim.refresh_from_db()
+    assert alice_esim.note == note
+
+
+@pytest.mark.django_db
+def test_patch_note_does_not_mutate_other_fields(
+    client: Client, user: User, alice_esim: Esim
+) -> None:
+    access = _access_token(client, user.email)
+    before = client.get(
+        f"/api/v1/me/esims/{alice_esim.pk}/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    ).json()
+
+    response = _patch_note(
+        client,
+        access=access,
+        esim_id=alice_esim.pk,
+        body={
+            "note": "Japan trip",
+            "iccid": "891999999999999999",
+            "status": Esim.Status.ACTIVATED,
+            "package_title": "hijacked",
+            "activation_policy": "installation",
+        },
+    )
+    assert response.status_code == 200
+    after = response.json()
+    assert after["note"] == "Japan trip"
+    for key in (
+        "iccid",
+        "status",
+        "package_title",
+        "activation_policy",
+        "lpa",
+        "matching_id",
+        "qrcode",
+    ):
+        assert after[key] == before[key], key
+
+    alice_esim.refresh_from_db()
+    assert alice_esim.iccid == before["iccid"]
+    assert alice_esim.status == before["status"]
+    assert alice_esim.activation_policy == before["activation_policy"]
+
+
+@pytest.mark.django_db
+def test_patch_empty_body_is_noop(client: Client, user: User, alice_esim: Esim) -> None:
+    access = _access_token(client, user.email)
+    alice_esim.note = "keep me"
+    alice_esim.save(update_fields=["note"])
+
+    before = client.get(
+        f"/api/v1/me/esims/{alice_esim.pk}/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    ).json()
+
+    response = _patch_note(client, access=access, esim_id=alice_esim.pk, body={})
+    assert response.status_code == 200
+    after = response.json()
+    assert after["note"] == "keep me"
+    for key, value in before.items():
+        if key == "updated_at":
+            continue
+        assert after[key] == value, key
