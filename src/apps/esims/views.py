@@ -1,6 +1,7 @@
 """My eSIM API views."""
 
 from django.conf import settings
+from django.db.models import Prefetch
 from drf_spectacular.utils import (
     OpenApiResponse,
     extend_schema,
@@ -21,8 +22,9 @@ from apps.esims.exceptions import (
     TopupPackageNotFoundError,
     UnknownLifecycleEventTypeError,
 )
-from apps.esims.models import Esim
+from apps.esims.models import Esim, EsimLifecycleEvent
 from apps.esims.serializers import (
+    ACTIVATED_EVENT_TYPE,
     EsimSerializer,
     LifecycleEventCreateSerializer,
     LifecycleEventSerializer,
@@ -50,7 +52,19 @@ class OwnedEsimMixin:
     """Scopes eSIM lookups to the authenticated owner (404 for others)."""
 
     def get_queryset(self):
-        return Esim.objects.filter(user=self.request.user)
+        return (
+            Esim.objects.filter(user=self.request.user)
+            .select_related("order")
+            .prefetch_related(
+                Prefetch(
+                    "lifecycle_events",
+                    queryset=EsimLifecycleEvent.objects.filter(
+                        event_type=ACTIVATED_EVENT_TYPE
+                    ).order_by("created_at"),
+                    to_attr="_activated_events",
+                )
+            )
+        )
 
 
 @extend_schema_view(

@@ -1,34 +1,17 @@
 openapi: 3.0.3
 info:
-  description: Self-service eSIM API. Public REST under `/api/v1/`. Authenticate with JWT Bearer tokens
-    from `/api/v1/auth/token/`.
   title: RoamKit API
   version: 1.0.0
-servers:
-- description: Staging
-  url: https://api.staging.roamkit.net
-- description: Production
-  url: https://api.roamkit.net
-tags:
-- description: Registration, login, and password reset
-  name: Authentication
-- description: Prepaid credits, deposits, and wallet balance
-  name: Billing
-- description: Credit voucher and gift-code redeem (ADR 011)
-  name: Vouchers
-- description: Package purchase orders
-  name: Orders
-- description: Packages and locations
-  name: Catalog
-- description: User eSIM inventory, usage, and top-ups
-  name: eSIM
-- description: Authenticated user profile
-  name: Users
+  description: Self-service eSIM API. Public REST under `/api/v1/`. Authenticate with
+    JWT Bearer tokens from `/api/v1/auth/token/`.
 paths:
   /api/v1/auth/activate/:
     post:
-      description: Set password from the confirmation link and activate the account.
       operationId: auth_activate
+      description: Set password from the confirmation link and activate the account.
+      summary: Activate account
+      tags:
+      - Authentication
       requestBody:
         content:
           application/json:
@@ -48,108 +31,112 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Invalid token or password
-      summary: Activate account
-      tags:
-      - Authentication
   /api/v1/auth/google/:
     post:
-      description: Verify a Google Identity Services ID token and return the same SimpleJWT access/refresh
-        pair as password login (ADR 015).
       operationId: auth_google
+      description: Verify a Google Identity Services ID token and return the same
+        SimpleJWT access/refresh pair as password login (ADR 015).
+      summary: Sign in with Google (GIS ID token)
+      tags:
+      - Authentication
       requestBody:
         content:
           application/json:
+            schema:
+              $ref: '#/components/schemas/GoogleAuthRequest'
             examples:
               Request:
                 value:
                   credential: <google_id_token>
-            schema:
-              $ref: '#/components/schemas/GoogleAuthRequest'
         required: true
       responses:
         '200':
           content:
             application/json:
+              schema:
+                $ref: '#/components/schemas/GoogleAuthTokenResponse'
               examples:
                 Success:
                   value:
                     access: eyJ...
                     refresh: eyJ...
-              schema:
-                $ref: '#/components/schemas/GoogleAuthTokenResponse'
           description: JWT token pair
         '400':
           content:
             application/json:
+              schema:
+                $ref: '#/components/schemas/GoogleAuthError'
               examples:
-                EmailNotVerified:
-                  summary: Email not verified
-                  value:
-                    code: google_email_not_verified
-                    detail: Google account email is not verified.
                 InvalidToken:
-                  summary: Invalid token
                   value:
                     code: google_invalid_token
                     detail: Invalid Google credential.
-              schema:
-                $ref: '#/components/schemas/GoogleAuthError'
+                  summary: Invalid token
+                EmailNotVerified:
+                  value:
+                    code: google_email_not_verified
+                    detail: Google account email is not verified.
+                  summary: Email not verified
           description: Invalid credential
         '401':
           content:
             application/json:
+              schema:
+                $ref: '#/components/schemas/GoogleAuthError'
               examples:
                 AccountDisabled:
-                  summary: Account disabled
                   value:
                     code: google_account_disabled
                     detail: This account is disabled.
-              schema:
-                $ref: '#/components/schemas/GoogleAuthError'
+                  summary: Account disabled
           description: Account disabled
         '404':
           content:
             application/json:
+              schema:
+                $ref: '#/components/schemas/GoogleAuthError'
               examples:
                 FeatureDisabled:
-                  summary: Feature disabled
                   value:
                     code: google_feature_disabled
                     detail: Not found.
-              schema:
-                $ref: '#/components/schemas/GoogleAuthError'
+                  summary: Feature disabled
           description: Feature disabled
         '409':
           content:
             application/json:
+              schema:
+                $ref: '#/components/schemas/GoogleAuthError'
               examples:
                 SubConflict:
-                  summary: Sub conflict
                   value:
                     code: google_sub_conflict
                     detail: Google account is already linked.
-              schema:
-                $ref: '#/components/schemas/GoogleAuthError'
+                  summary: Sub conflict
           description: Google sub conflict
         '503':
           content:
             application/json:
-              examples:
-                VerifyUnavailable:
-                  summary: Verify unavailable
-                  value:
-                    code: google_verify_unavailable
-                    detail: Google sign-in is temporarily unavailable. Please try again.
               schema:
                 $ref: '#/components/schemas/GoogleAuthError'
+              examples:
+                VerifyUnavailable:
+                  value:
+                    code: google_verify_unavailable
+                    detail: Google sign-in is temporarily unavailable. Please try
+                      again.
+                  summary: Verify unavailable
           description: Google verify unavailable
-      summary: Sign in with Google (GIS ID token)
-      tags:
-      - Authentication
   /api/v1/auth/me/:
     get:
-      description: Return the authenticated user's profile.
       operationId: users_me
+      description: Return the authenticated user's profile.
+      summary: Current user profile
+      tags:
+      - Users
+      security:
+      - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           content:
@@ -163,15 +150,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
-      security:
-      - bearerAuth: []
-      summary: Current user profile
-      tags:
-      - Users
   /api/v1/auth/password-reset/:
     post:
-      description: Request a password reset email. Always returns a generic success message.
       operationId: auth_password_reset_request
+      description: Request a password reset email. Always returns a generic success
+        message.
+      summary: Request password reset
+      tags:
+      - Authentication
       requestBody:
         content:
           application/json:
@@ -191,13 +177,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Validation error
-      summary: Request password reset
-      tags:
-      - Authentication
   /api/v1/auth/password-reset/confirm/:
     post:
-      description: Confirm password reset with uid + token and set a new password.
       operationId: auth_password_reset_confirm
+      description: Confirm password reset with uid + token and set a new password.
+      summary: Confirm password reset
+      tags:
+      - Authentication
       requestBody:
         content:
           application/json:
@@ -217,14 +203,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Invalid token or password
-      summary: Confirm password reset
-      tags:
-      - Authentication
   /api/v1/auth/register/:
     post:
-      description: Begin registration with email only. Always returns a generic success message (no account
-        enumeration).
       operationId: auth_register
+      description: Begin registration with email only. Always returns a generic success
+        message (no account enumeration).
+      summary: Start registration
+      tags:
+      - Authentication
       requestBody:
         content:
           application/json:
@@ -244,13 +230,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Validation error
-      summary: Start registration
-      tags:
-      - Authentication
   /api/v1/auth/token/:
     post:
-      description: Exchange email and password for access and refresh JWT tokens.
       operationId: auth_login
+      description: Exchange email and password for access and refresh JWT tokens.
+      summary: Obtain JWT tokens
+      tags:
+      - Authentication
       requestBody:
         content:
           application/json:
@@ -270,13 +256,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Invalid credentials
-      summary: Obtain JWT tokens
-      tags:
-      - Authentication
   /api/v1/auth/token/refresh/:
     post:
-      description: Exchange a refresh token for a new access token.
       operationId: auth_refresh
+      description: Exchange a refresh token for a new access token.
+      summary: Refresh JWT access token
+      tags:
+      - Authentication
       requestBody:
         content:
           application/json:
@@ -296,24 +282,27 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Invalid refresh token
-      summary: Refresh JWT access token
-      tags:
-      - Authentication
   /api/v1/billing/balance/:
     get:
-      description: Return the authenticated user's prepaid credit balance.
       operationId: billing_balance
+      description: Return the authenticated user's prepaid credit balance.
+      summary: Account credit balance
+      tags:
+      - Billing
+      security:
+      - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           content:
             application/json:
-              examples:
-                SampleBalance:
-                  summary: Sample balance
-                  value:
-                    balance: '42.500000'
               schema:
                 $ref: '#/components/schemas/Balance'
+              examples:
+                SampleBalance:
+                  value:
+                    balance: '42.500000'
+                  summary: Sample balance
           description: Balance
         '401':
           content:
@@ -327,42 +316,44 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Billing disabled
-      security:
-      - bearerAuth: []
-      summary: Account credit balance
-      tags:
-      - Billing
   /api/v1/billing/config/:
     get:
-      description: Public currency / presentation config for catalog prices. Supports ETag / If-None-Match
-        (304). No secrets.
       operationId: billing_config
+      description: Public currency / presentation config for catalog prices. Supports
+        ETag / If-None-Match (304). No secrets.
+      summary: Billing display config
+      tags:
+      - Billing
       responses:
         '200':
           content:
             application/json:
-              examples:
-                USDTDisplayConfig:
-                  summary: USDT display config
-                  value:
-                    billing_enabled: true
-                    config_version: 1
-                    display_decimals: 2
-                    token_decimals: 6
-                    token_name: Tether USD
-                    token_symbol: USDT
               schema:
                 $ref: '#/components/schemas/BillingConfig'
+              examples:
+                USDTDisplayConfig:
+                  value:
+                    config_version: 1
+                    token_symbol: USDT
+                    token_name: Tether USD
+                    token_decimals: 6
+                    display_decimals: 2
+                    billing_enabled: true
+                  summary: USDT display config
           description: Display currency config
         '304':
           description: Not modified (ETag match)
-      summary: Billing display config
-      tags:
-      - Billing
   /api/v1/billing/deposit-info/:
     get:
-      description: Polygon USDT deposit metadata including EIP-681 URI for the platform wallet.
       operationId: billing_deposit_info
+      description: Polygon USDT deposit metadata including EIP-681 URI for the platform
+        wallet.
+      summary: Deposit metadata
+      tags:
+      - Billing
+      security:
+      - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           content:
@@ -382,21 +373,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Billing disabled
-      security:
-      - bearerAuth: []
-      summary: Deposit metadata
-      tags:
-      - Billing
   /api/v1/billing/verify-cex/:
     post:
-      description: Verify an on-chain USDT transfer credited from a CEX or manual send.
       operationId: billing_verify_cex
+      description: Verify an on-chain USDT transfer credited from a CEX or manual
+        send.
+      summary: Verify CEX / manual deposit
+      tags:
+      - Billing
       requestBody:
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/VerifyDepositRequest'
         required: true
+      security:
+      - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           content:
@@ -440,21 +433,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Blockchain RPC error
-      security:
-      - bearerAuth: []
-      summary: Verify CEX / manual deposit
-      tags:
-      - Billing
   /api/v1/billing/verify-wallet/:
     post:
-      description: Verify an on-chain USDT transfer initiated via WalletConnect. Requires ``WALLETCONNECT_ENABLED``.
       operationId: billing_verify_wallet
+      description: Verify an on-chain USDT transfer initiated via WalletConnect. Requires
+        ``WALLETCONNECT_ENABLED``.
+      summary: Verify WalletConnect deposit
+      tags:
+      - Billing
       requestBody:
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/VerifyDepositRequest'
         required: true
+      security:
+      - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           content:
@@ -504,59 +499,62 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Blockchain RPC error
-      security:
-      - bearerAuth: []
-      summary: Verify WalletConnect deposit
-      tags:
-      - Billing
   /api/v1/billing/vouchers/redeem/:
     post:
-      description: 'Credit the authenticated billing account from a UNIQUE voucher or SHARED campaign
-        code. Money path: VoucherRedeemService → CreditService (ADR 011). Requires ``BILLING_ENABLED``
-        and ``VOUCHERS_ENABLED``.'
       operationId: billing_vouchers_redeem
+      description: 'Credit the authenticated billing account from a UNIQUE voucher
+        or SHARED campaign code. Money path: VoucherRedeemService → CreditService
+        (ADR 011). Requires ``BILLING_ENABLED`` and ``VOUCHERS_ENABLED``.'
+      summary: Redeem voucher or campaign code
+      tags:
+      - Billing
+      - Vouchers
       requestBody:
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/VoucherRedeemRequestRequest'
         required: true
+      security:
+      - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           content:
             application/json:
-              examples:
-                IdempotentReplay:
-                  value:
-                    balance: '120.500000'
-                    credited: '25.000000'
-                    replay: true
-                Success:
-                  value:
-                    balance: '120.500000'
-                    credited: '25.000000'
-                    replay: false
               schema:
                 $ref: '#/components/schemas/VoucherRedeemResponse'
-          description: Credits applied (replay=true when already redeemed by this account)
+              examples:
+                Success:
+                  value:
+                    credited: '25.000000'
+                    balance: '120.500000'
+                    replay: false
+                IdempotentReplay:
+                  value:
+                    credited: '25.000000'
+                    balance: '120.500000'
+                    replay: true
+          description: Credits applied (replay=true when already redeemed by this
+            account)
         '400':
           content:
             application/json:
+              schema:
+                $ref: '#/components/schemas/VoucherError'
               examples:
-                Expired:
-                  value:
-                    code: voucher_expired
-                    detail: Voucher expired
                 Invalid:
                   value:
                     code: voucher_invalid
                     detail: Invalid voucher code
+                Expired:
+                  value:
+                    code: voucher_expired
+                    detail: Voucher expired
                 Revoked:
                   value:
                     code: voucher_revoked
                     detail: Voucher revoked
-              schema:
-                $ref: '#/components/schemas/VoucherError'
           description: Invalid / expired / revoked / reserved / limit
         '401':
           content:
@@ -567,12 +565,12 @@ paths:
         '404':
           content:
             application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
               examples:
                 Disabled:
                   value:
                     detail: Not found.
-              schema:
-                $ref: '#/components/schemas/ErrorDetail'
           description: Billing or vouchers disabled
         '429':
           content:
@@ -580,28 +578,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Rate limited (10 attempts / 5 minutes per user)
-      security:
-      - bearerAuth: []
-      summary: Redeem voucher or campaign code
-      tags:
-      - Billing
-      - Vouchers
   /api/v1/locations/:
     get:
-      description: List catalog locations that have at least one active package.
       operationId: catalog_locations_list
+      description: List catalog locations that have at least one active package.
+      summary: List locations
       parameters:
-      - description: A page number within the paginated result set.
-        in: query
-        name: page
+      - name: page
         required: false
+        in: query
+        description: A page number within the paginated result set.
         schema:
           type: integer
-      - description: 'Filter: popular | local | regional | global'
-        in: query
+      - in: query
         name: type
         schema:
           type: string
+        description: 'Filter: popular | local | regional | global'
+      tags:
+      - Catalog
       responses:
         '200':
           content:
@@ -609,19 +604,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/PaginatedLocationListList'
           description: Paginated locations
-      summary: List locations
-      tags:
-      - Catalog
   /api/v1/locations/{slug}/:
     get:
-      description: Retrieve a single location by slug, including broader coverage options.
       operationId: catalog_locations_retrieve
+      description: Retrieve a single location by slug, including broader coverage
+        options.
+      summary: Retrieve location
       parameters:
       - in: path
         name: slug
-        required: true
         schema:
           type: string
+        required: true
+      tags:
+      - Catalog
       responses:
         '200':
           content:
@@ -631,20 +627,23 @@ paths:
           description: Location
         '404':
           description: Location not found
-      summary: Retrieve location
-      tags:
-      - Catalog
   /api/v1/me/esims/:
     get:
-      description: List eSIMs owned by the authenticated user.
       operationId: esim_list
+      description: List eSIMs owned by the authenticated user.
+      summary: List my eSIMs
       parameters:
-      - description: A page number within the paginated result set.
-        in: query
-        name: page
+      - name: page
         required: false
+        in: query
+        description: A page number within the paginated result set.
         schema:
           type: integer
+      tags:
+      - eSIM
+      security:
+      - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           content:
@@ -658,21 +657,22 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
-      security:
-      - bearerAuth: []
-      summary: List my eSIMs
-      tags:
-      - eSIM
   /api/v1/me/esims/{id}/:
     get:
-      description: Retrieve a single eSIM owned by the authenticated user.
       operationId: esim_retrieve
+      description: Retrieve a single eSIM owned by the authenticated user.
+      summary: Retrieve my eSIM
       parameters:
       - in: path
         name: id
-        required: true
         schema:
           type: integer
+        required: true
+      tags:
+      - eSIM
+      security:
+      - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           content:
@@ -692,21 +692,22 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: eSIM not found
-      security:
-      - bearerAuth: []
-      summary: Retrieve my eSIM
-      tags:
-      - eSIM
   /api/v1/me/esims/{id}/events/:
     get:
-      description: Chronological install / lifecycle trail for an owned eSIM.
       operationId: esim_events_list
+      description: Chronological install / lifecycle trail for an owned eSIM.
+      summary: List eSIM lifecycle events
       parameters:
       - in: path
         name: id
-        required: true
         schema:
           type: integer
+        required: true
+      tags:
+      - eSIM
+      security:
+      - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           content:
@@ -726,26 +727,28 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: eSIM not found
-      security:
-      - bearerAuth: []
-      summary: List eSIM lifecycle events
-      tags:
-      - eSIM
     post:
-      description: Record a client install/telemetry event. Idempotent on ``idempotency_key`` per eSIM.
       operationId: esim_events_create
+      description: Record a client install/telemetry event. Idempotent on ``idempotency_key``
+        per eSIM.
+      summary: Record eSIM lifecycle event
       parameters:
       - in: path
         name: id
-        required: true
         schema:
           type: integer
+        required: true
+      tags:
+      - eSIM
       requestBody:
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/LifecycleEventCreateRequest'
         required: true
+      security:
+      - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           content:
@@ -777,21 +780,22 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: eSIM not found
-      security:
-      - bearerAuth: []
-      summary: Record eSIM lifecycle event
-      tags:
-      - eSIM
   /api/v1/me/esims/{id}/topups/:
     get:
-      description: List available top-up packages for an owned eSIM.
       operationId: esim_topups_list
+      description: List available top-up packages for an owned eSIM.
+      summary: List top-up packages
       parameters:
       - in: path
         name: id
-        required: true
         schema:
           type: integer
+        required: true
+      tags:
+      - eSIM
+      security:
+      - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           description: Top-up package list
@@ -807,26 +811,28 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: eSIM not found
-      security:
-      - bearerAuth: []
-      summary: List top-up packages
-      tags:
-      - eSIM
     post:
-      description: Purchase a top-up package using prepaid credits. Idempotent on ``idempotency_key``.
       operationId: esim_topups_purchase
+      description: Purchase a top-up package using prepaid credits. Idempotent on
+        ``idempotency_key``.
+      summary: Purchase top-up
       parameters:
       - in: path
         name: id
-        required: true
         schema:
           type: integer
+        required: true
+      tags:
+      - eSIM
       requestBody:
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/PurchaseTopupRequest'
         required: true
+      security:
+      - bearerAuth: []
+      - bearerAuth: []
       responses:
         '201':
           content:
@@ -864,21 +870,22 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Spend already in progress
-      security:
-      - bearerAuth: []
-      summary: Purchase top-up
-      tags:
-      - eSIM
   /api/v1/me/esims/{id}/usage/:
     get:
-      description: Fetch live usage for an owned eSIM and refresh the cache.
       operationId: esim_usage
+      description: Fetch live usage for an owned eSIM and refresh the cache.
+      summary: eSIM usage
       parameters:
       - in: path
         name: id
-        required: true
         schema:
           type: integer
+        required: true
+      tags:
+      - eSIM
+      security:
+      - bearerAuth: []
+      - bearerAuth: []
       responses:
         '200':
           content:
@@ -898,28 +905,29 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: eSIM not found
-      security:
-      - bearerAuth: []
-      summary: eSIM usage
-      tags:
-      - eSIM
   /api/v1/orders/:
     post:
-      description: Debit prepaid credits then fulfill via the order provider. Idempotent on ``idempotency_key``
-        (replay returns 201 with the same body).
       operationId: orders_create
+      description: Debit prepaid credits then fulfill via the order provider. Idempotent
+        on ``idempotency_key`` (replay returns 201 with the same body).
+      summary: Create package order
+      tags:
+      - Orders
       requestBody:
         content:
           application/json:
-            examples:
-              CreateOrder:
-                summary: Create order
-                value:
-                  idempotency_key: client-order-uuid-1
-                  package_id: airalo-pkg-123
             schema:
               $ref: '#/components/schemas/CreateOrderRequest'
+            examples:
+              CreateOrder:
+                value:
+                  package_id: airalo-pkg-123
+                  idempotency_key: client-order-uuid-1
+                summary: Create order
         required: true
+      security:
+      - bearerAuth: []
+      - bearerAuth: []
       responses:
         '201':
           content:
@@ -942,17 +950,17 @@ paths:
         '402':
           content:
             application/json:
-              examples:
-                InsufficientCredits:
-                  summary: Insufficient credits
-                  value:
-                    balance: '5.000000'
-                    code: INSUFFICIENT_CREDITS
-                    detail: Insufficient funds
-                    missing: '14.500000'
-                    required: '19.500000'
               schema:
                 $ref: '#/components/schemas/InsufficientCredits'
+              examples:
+                InsufficientCredits:
+                  value:
+                    code: INSUFFICIENT_CREDITS
+                    detail: Insufficient funds
+                    required: '19.500000'
+                    balance: '5.000000'
+                    missing: '14.500000'
+                  summary: Insufficient credits
           description: Insufficient credits
         '404':
           content:
@@ -966,32 +974,30 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Spend already in progress
-      security:
-      - bearerAuth: []
-      summary: Create package order
-      tags:
-      - Orders
   /api/v1/packages/:
     get:
-      description: List active packages synced from external providers.
       operationId: catalog_packages_list
+      description: List active packages synced from external providers.
+      summary: List packages
       parameters:
-      - description: Filter by ISO country code
-        in: query
+      - in: query
         name: country
         schema:
           type: string
-      - description: Filter by location slug
-        in: query
+        description: Filter by ISO country code
+      - in: query
         name: location
         schema:
           type: string
-      - description: A page number within the paginated result set.
-        in: query
-        name: page
+        description: Filter by location slug
+      - name: page
         required: false
+        in: query
+        description: A page number within the paginated result set.
         schema:
           type: integer
+      tags:
+      - Catalog
       responses:
         '200':
           content:
@@ -999,70 +1005,67 @@ paths:
               schema:
                 $ref: '#/components/schemas/PaginatedPackageList'
           description: Paginated packages
-      summary: List packages
-      tags:
-      - Catalog
 components:
   schemas:
     ActivateRequest:
+      type: object
       properties:
-        password:
-          maxLength: 128
-          minLength: 8
-          type: string
-          writeOnly: true
-        password_confirm:
-          maxLength: 128
-          minLength: 8
-          type: string
-          writeOnly: true
-        token:
-          minLength: 1
-          type: string
         uid:
-          minLength: 1
           type: string
+          minLength: 1
+        token:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          writeOnly: true
+          minLength: 8
+          maxLength: 128
+        password_confirm:
+          type: string
+          writeOnly: true
+          minLength: 8
+          maxLength: 128
       required:
       - password
       - password_confirm
       - token
       - uid
-      type: object
     ActivationPolicyEnum:
-      description: '* `first_usage` - First usage
-
-        * `installation` - Installation
-
-        * `unknown` - Unknown'
       enum:
       - first_usage
       - installation
       - unknown
       type: string
+      description: |-
+        * `first_usage` - First usage
+        * `installation` - Installation
+        * `unknown` - Unknown
     Balance:
+      type: object
       properties:
         balance:
+          type: string
           format: decimal
           pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
-          type: string
       required:
       - balance
-      type: object
     BillingConfig:
+      type: object
       description: Public currency / presentation config (ADR-010 ``GET …/billing/config/``).
       properties:
-        billing_enabled:
-          type: boolean
         config_version:
+          type: integer
+        token_symbol:
+          type: string
+        token_name:
+          type: string
+        token_decimals:
           type: integer
         display_decimals:
           type: integer
-        token_decimals:
-          type: integer
-        token_name:
-          type: string
-        token_symbol:
-          type: string
+        billing_enabled:
+          type: boolean
       required:
       - billing_enabled
       - config_version
@@ -1070,55 +1073,54 @@ components:
       - token_decimals
       - token_name
       - token_symbol
-      type: object
     CoverageTypeEnum:
-      description: '* `local` - Local
-
-        * `regional` - Regional
-
-        * `global` - Global'
       enum:
       - local
       - regional
       - global
       type: string
+      description: |-
+        * `local` - Local
+        * `regional` - Regional
+        * `global` - Global
     CreateOrderRequest:
+      type: object
       description: Request body for POST /api/v1/orders/.
       properties:
-        idempotency_key:
-          maxLength: 128
-          minLength: 1
-          type: string
         package_id:
-          maxLength: 64
-          minLength: 1
           type: string
+          minLength: 1
+          maxLength: 64
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 128
       required:
       - idempotency_key
       - package_id
-      type: object
     DepositInfo:
+      type: object
       description: Full Polygon USDT deposit metadata for clients (no hardcoded chain/token).
       properties:
+        wallet:
+          type: string
         chain_id:
-          type: integer
-        contract:
-          type: string
-        eip681_uri:
-          type: string
-        min_confirmations:
-          type: integer
-        subscriptions_enabled:
-          type: boolean
-        token_decimals:
           type: integer
         token_symbol:
           type: string
-        vouchers_enabled:
-          type: boolean
-        wallet:
+        token_decimals:
+          type: integer
+        contract:
+          type: string
+        min_confirmations:
+          type: integer
+        eip681_uri:
           type: string
         walletconnect_enabled:
+          type: boolean
+        subscriptions_enabled:
+          type: boolean
+        vouchers_enabled:
           type: boolean
       required:
       - chain_id
@@ -1131,77 +1133,74 @@ components:
       - vouchers_enabled
       - wallet
       - walletconnect_enabled
-      type: object
     DepositPaymentMethodEnum:
-      description: '* `wallet_connect` - WalletConnect
-
-        * `cex_manual` - CEX manual'
       enum:
       - wallet_connect
       - cex_manual
       type: string
+      description: |-
+        * `wallet_connect` - WalletConnect
+        * `cex_manual` - CEX manual
     DepositRequest:
+      type: object
       properties:
-        amount_credited:
-          format: decimal
-          nullable: true
-          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
-          readOnly: true
-          type: string
-        amount_requested:
-          format: decimal
-          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
-          readOnly: true
-          type: string
-        created_at:
-          format: date-time
-          readOnly: true
-          type: string
-        failure_reason:
-          readOnly: true
-          type: string
         id:
+          type: string
           format: uuid
           readOnly: true
+        amount_requested:
           type: string
-        idempotency_key:
+          format: decimal
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
           readOnly: true
+        amount_credited:
           type: string
+          format: decimal
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
+          readOnly: true
+          nullable: true
         payment_method:
           allOf:
           - $ref: '#/components/schemas/DepositPaymentMethodEnum'
-          description: 'How the USDT transfer was initiated (WalletConnect or CEX/manual).
-
+          readOnly: true
+          description: |-
+            How the USDT transfer was initiated (WalletConnect or CEX/manual).
 
             * `wallet_connect` - WalletConnect
-
-            * `cex_manual` - CEX manual'
+            * `cex_manual` - CEX manual
+        tx_hash:
+          type: string
+          readOnly: true
+          nullable: true
+        idempotency_key:
+          type: string
           readOnly: true
         status:
           allOf:
           - $ref: '#/components/schemas/DepositRequestStatusEnum'
-          description: 'Deposit verification status (pending / completed / failed).
-
+          readOnly: true
+          description: |-
+            Deposit verification status (pending / completed / failed).
 
             * `pending` - Pending
-
             * `completed` - Completed
-
-            * `failed` - Failed'
-          readOnly: true
-        tx_hash:
-          nullable: true
-          readOnly: true
+            * `failed` - Failed
+        failure_reason:
           type: string
-        updated_at:
-          format: date-time
           readOnly: true
-          type: string
         verified_at:
-          format: date-time
-          nullable: true
-          readOnly: true
           type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
       required:
       - amount_credited
       - amount_requested
@@ -1214,138 +1213,179 @@ components:
       - tx_hash
       - updated_at
       - verified_at
-      type: object
     DepositRequestStatusEnum:
-      description: '* `pending` - Pending
-
-        * `completed` - Completed
-
-        * `failed` - Failed'
       enum:
       - pending
       - completed
       - failed
       type: string
+      description: |-
+        * `pending` - Pending
+        * `completed` - Completed
+        * `failed` - Failed
     DetailMessage:
+      type: object
       description: Generic success message with a ``detail`` string.
       properties:
         detail:
           type: string
       required:
       - detail
-      type: object
     ErrorDetail:
+      type: object
       description: 'Standard DRF ``{"detail": "..."}`` error body.'
       properties:
         detail:
           type: string
       required:
       - detail
-      type: object
     Esim:
-      description: Owned eSIM with ICCID, install, setup, and lifecycle fields.
+      type: object
+      description: Owned eSIM with ICCID, install, setup, lifecycle, and order snapshot.
       properties:
-        activation_policy:
-          allOf:
-          - $ref: '#/components/schemas/ActivationPolicyEnum'
-          readOnly: true
-        created_at:
-          format: date-time
-          readOnly: true
-          type: string
-        direct_apple_installation_url:
-          format: uri
-          readOnly: true
-          type: string
-        iccid:
-          readOnly: true
-          type: string
         id:
-          readOnly: true
           type: integer
-        installation_guide_url:
-          format: uri
           readOnly: true
+        iccid:
           type: string
+          readOnly: true
         lpa:
-          readOnly: true
           type: string
-        manual_installation:
           readOnly: true
-          type: string
         matching_id:
-          readOnly: true
           type: string
+          readOnly: true
         qrcode:
-          readOnly: true
           type: string
-        qrcode_installation:
           readOnly: true
-          type: string
         qrcode_url:
+          type: string
           format: uri
           readOnly: true
+        direct_apple_installation_url:
           type: string
-        setup_completed_at:
-          format: date-time
-          nullable: true
+          format: uri
           readOnly: true
+        manual_installation:
           type: string
-        setup_resume_step:
-          nullable: true
           readOnly: true
-          type: integer
-        setup_skipped_at:
-          format: date-time
-          nullable: true
-          readOnly: true
+        qrcode_installation:
           type: string
-        setup_version:
           readOnly: true
+        installation_guide_url:
           type: string
+          format: uri
+          readOnly: true
         status:
           allOf:
           - $ref: '#/components/schemas/EsimStatusEnum'
           readOnly: true
-        updated_at:
+        activation_policy:
+          allOf:
+          - $ref: '#/components/schemas/ActivationPolicyEnum'
+          readOnly: true
+        setup_version:
+          type: string
+          readOnly: true
+        setup_resume_step:
+          type: integer
+          readOnly: true
+          nullable: true
+        setup_completed_at:
+          type: string
           format: date-time
           readOnly: true
+          nullable: true
+        setup_skipped_at:
           type: string
-        usage_expired_at:
           format: date-time
-          nullable: true
           readOnly: true
-          type: string
-        usage_is_unlimited:
           nullable: true
-          readOnly: true
-          type: boolean
         usage_remaining_mb:
-          nullable: true
-          readOnly: true
           type: integer
-        usage_status:
           readOnly: true
-          type: string
-        usage_synced_at:
-          format: date-time
           nullable: true
-          readOnly: true
-          type: string
         usage_total_mb:
-          nullable: true
-          readOnly: true
           type: integer
+          readOnly: true
+          nullable: true
+        usage_status:
+          type: string
+          readOnly: true
+        usage_is_unlimited:
+          type: boolean
+          readOnly: true
+          nullable: true
+        usage_expired_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        usage_synced_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        package_title:
+          type: string
+          readOnly: true
+        location_title:
+          type: string
+          readOnly: true
+        country_code:
+          type: string
+          readOnly: true
+        data_allowance:
+          type: string
+          readOnly: true
+        validity_days:
+          type: integer
+          readOnly: true
+          nullable: true
+        paid_usd:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          readOnly: true
+          nullable: true
+        currency:
+          type: string
+          readOnly: true
+        issued_at:
+          type: string
+          format: date-time
+          readOnly: true
+        activated_at:
+          type: string
+          format: date-time
+          description: First ``system.status.activated`` event time, or null.
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
       required:
+      - activated_at
       - activation_policy
+      - country_code
       - created_at
+      - currency
+      - data_allowance
       - direct_apple_installation_url
       - iccid
       - id
       - installation_guide_url
+      - issued_at
+      - location_title
       - lpa
       - manual_installation
       - matching_id
+      - package_title
+      - paid_usd
       - qrcode
       - qrcode_installation
       - qrcode_url
@@ -1361,23 +1401,8 @@ components:
       - usage_status
       - usage_synced_at
       - usage_total_mb
-      type: object
+      - validity_days
     EsimStatusEnum:
-      description: '* `purchased` - Purchased
-
-        * `installation_started` - Installation started
-
-        * `installed` - Installed
-
-        * `activated` - Activated
-
-        * `in_use` - In use
-
-        * `exhausted` - Exhausted
-
-        * `expired` - Expired
-
-        * `unknown` - Unknown'
       enum:
       - purchased
       - installation_started
@@ -1388,7 +1413,17 @@ components:
       - expired
       - unknown
       type: string
+      description: |-
+        * `purchased` - Purchased
+        * `installation_started` - Installation started
+        * `installed` - Installed
+        * `activated` - Activated
+        * `in_use` - In use
+        * `exhausted` - Exhausted
+        * `expired` - Expired
+        * `unknown` - Unknown
     GoogleAuthError:
+      type: object
       description: Locked Google auth error body (ADR 015).
       properties:
         code:
@@ -1398,19 +1433,19 @@ components:
       required:
       - code
       - detail
-      type: object
     GoogleAuthRequest:
+      type: object
       description: GIS ID token credential from the browser.
       properties:
         credential:
-          maxLength: 8192
-          minLength: 1
           type: string
           writeOnly: true
+          minLength: 1
+          maxLength: 8192
       required:
       - credential
-      type: object
     GoogleAuthTokenResponse:
+      type: object
       description: Same JWT pair shape as password ``/auth/token/``.
       properties:
         access:
@@ -1420,54 +1455,54 @@ components:
       required:
       - access
       - refresh
-      type: object
     InsufficientCredits:
+      type: object
       description: Structured 402 payload from ``InsufficientFundsError.to_api_dict()``.
       properties:
-        balance:
-          type: string
         code:
           type: string
         detail:
           type: string
-        missing:
-          type: string
         required:
+          type: string
+        balance:
+          type: string
+        missing:
           type: string
       required:
       - code
       - detail
-      type: object
     LifecycleEvent:
+      type: object
       description: Persisted lifecycle / install telemetry event.
       properties:
-        created_at:
-          format: date-time
-          readOnly: true
-          type: string
-        event_type:
-          readOnly: true
-          type: string
         id:
+          type: string
           format: uuid
           readOnly: true
+        event_type:
           type: string
-        idempotency_key:
           readOnly: true
-          type: string
-        payload:
-          readOnly: true
-        schema_version:
-          readOnly: true
-          type: integer
-        setup_session_id:
-          format: uuid
-          nullable: true
-          readOnly: true
-          type: string
         source:
           allOf:
           - $ref: '#/components/schemas/SourceEnum'
+          readOnly: true
+        schema_version:
+          type: integer
+          readOnly: true
+        idempotency_key:
+          type: string
+          readOnly: true
+        setup_session_id:
+          type: string
+          format: uuid
+          readOnly: true
+          nullable: true
+        payload:
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
           readOnly: true
       required:
       - created_at
@@ -1478,77 +1513,77 @@ components:
       - schema_version
       - setup_session_id
       - source
-      type: object
     LifecycleEventCreateRequest:
+      type: object
       description: Request body for POST /api/v1/me/esims/{id}/events/.
       properties:
         event_type:
+          type: string
+          minLength: 1
           maxLength: 64
-          minLength: 1
-          type: string
         idempotency_key:
-          maxLength: 128
-          minLength: 1
           type: string
+          minLength: 1
+          maxLength: 128
+        setup_session_id:
+          type: string
+          format: uuid
+          nullable: true
+        schema_version:
+          type: integer
+          minimum: 1
+          default: 1
         payload:
-          additionalProperties: {}
           type: object
+          additionalProperties: {}
         resume_step:
+          type: integer
           maximum: 4
           minimum: 1
           nullable: true
-          type: integer
-        schema_version:
-          default: 1
-          minimum: 1
-          type: integer
-        setup_session_id:
-          format: uuid
-          nullable: true
-          type: string
       required:
       - event_type
       - idempotency_key
-      type: object
     Location:
+      type: object
       description: Full location detail, optionally including broader coverage.
       properties:
-        broader_locations:
-          items:
-            $ref: '#/components/schemas/LocationList'
-          readOnly: true
-          type: array
-        country_code:
-          readOnly: true
+        slug:
           type: string
+          readOnly: true
+          pattern: ^[-a-zA-Z0-9_]+$
+        title:
+          type: string
+          readOnly: true
+        country_code:
+          type: string
+          readOnly: true
         coverage_type:
           allOf:
           - $ref: '#/components/schemas/CoverageTypeEnum'
           readOnly: true
-        coverages:
+        image_url:
+          type: string
+          format: uri
           readOnly: true
         covered_country_codes:
           readOnly: true
-        image_url:
-          format: uri
+        coverages:
           readOnly: true
-          type: string
         is_popular:
-          readOnly: true
           type: boolean
+          readOnly: true
         min_price_usd:
+          type: string
           format: decimal
-          nullable: true
           pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
           readOnly: true
-          type: string
-        slug:
-          pattern: ^[-a-zA-Z0-9_]+$
+          nullable: true
+        broader_locations:
+          type: array
+          items:
+            $ref: '#/components/schemas/LocationList'
           readOnly: true
-          type: string
-        title:
-          readOnly: true
-          type: string
       required:
       - broader_locations
       - country_code
@@ -1560,41 +1595,41 @@ components:
       - min_price_usd
       - slug
       - title
-      type: object
     LocationList:
+      type: object
       description: Location card for the store listing.
       properties:
-        country_code:
-          readOnly: true
+        slug:
           type: string
+          readOnly: true
+          pattern: ^[-a-zA-Z0-9_]+$
+        title:
+          type: string
+          readOnly: true
+        country_code:
+          type: string
+          readOnly: true
         coverage_type:
           allOf:
           - $ref: '#/components/schemas/CoverageTypeEnum'
           readOnly: true
-        coverages:
+        image_url:
+          type: string
+          format: uri
           readOnly: true
         covered_country_codes:
           readOnly: true
-        image_url:
-          format: uri
+        coverages:
           readOnly: true
-          type: string
         is_popular:
-          readOnly: true
           type: boolean
+          readOnly: true
         min_price_usd:
+          type: string
           format: decimal
-          nullable: true
           pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
           readOnly: true
-          type: string
-        slug:
-          pattern: ^[-a-zA-Z0-9_]+$
-          readOnly: true
-          type: string
-        title:
-          readOnly: true
-          type: string
+          nullable: true
       required:
       - country_code
       - coverage_type
@@ -1605,84 +1640,101 @@ components:
       - min_price_usd
       - slug
       - title
-      type: object
     Order:
-      description: Order response including provisioned eSIMs when fulfilled.
+      type: object
+      description: |-
+        Order response including provisioned eSIMs when fulfilled.
+
+        Exposes purchase-time product snapshot (``paid_usd``, titles, …) for the
+        buyer. Never includes wholesale ``net_price_usd``.
       properties:
-        created_at:
-          format: date-time
-          readOnly: true
-          type: string
-        customer_ref:
-          readOnly: true
-          type: string
-        esims:
-          items:
-            $ref: '#/components/schemas/Esim'
-          readOnly: true
-          type: array
-        external_order_id:
-          readOnly: true
-          type: string
         id:
-          readOnly: true
           type: integer
-        idempotency_key:
-          nullable: true
           readOnly: true
-          type: string
         package_id:
-          readOnly: true
           type: string
+          readOnly: true
         status:
           allOf:
           - $ref: '#/components/schemas/OrderStatusEnum'
-          description: 'Order lifecycle status (draft → fulfilled / failed / cancelled).
-
+          readOnly: true
+          description: |-
+            Order lifecycle status (draft → fulfilled / failed / cancelled).
 
             * `draft` - Draft
-
             * `pending_payment` - Pending payment
-
             * `paid` - Paid
-
             * `fulfilling` - Fulfilling
-
             * `fulfilled` - Fulfilled
-
             * `failed` - Failed
-
-            * `cancelled` - Cancelled'
+            * `cancelled` - Cancelled
+        external_order_id:
+          type: string
           readOnly: true
-        updated_at:
+        customer_ref:
+          type: string
+          readOnly: true
+        idempotency_key:
+          type: string
+          readOnly: true
+          nullable: true
+        package_title:
+          type: string
+          readOnly: true
+        location_title:
+          type: string
+          readOnly: true
+        country_code:
+          type: string
+          readOnly: true
+        data_allowance:
+          type: string
+          readOnly: true
+        validity_days:
+          type: integer
+          readOnly: true
+          nullable: true
+        paid_usd:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          readOnly: true
+          nullable: true
+        currency:
+          type: string
+          readOnly: true
+          description: ISO 4217; copied from billing LEDGER_CURRENCY at purchase.
+        esims:
+          type: array
+          items:
+            $ref: '#/components/schemas/Esim'
+          readOnly: true
+        created_at:
+          type: string
           format: date-time
           readOnly: true
+        updated_at:
           type: string
+          format: date-time
+          readOnly: true
       required:
+      - country_code
       - created_at
+      - currency
       - customer_ref
+      - data_allowance
       - esims
       - external_order_id
       - id
       - idempotency_key
+      - location_title
       - package_id
+      - package_title
+      - paid_usd
       - status
       - updated_at
-      type: object
+      - validity_days
     OrderStatusEnum:
-      description: '* `draft` - Draft
-
-        * `pending_payment` - Pending payment
-
-        * `paid` - Paid
-
-        * `fulfilling` - Fulfilling
-
-        * `fulfilled` - Fulfilled
-
-        * `failed` - Failed
-
-        * `cancelled` - Cancelled'
       enum:
       - draft
       - pending_payment
@@ -1692,50 +1744,59 @@ components:
       - failed
       - cancelled
       type: string
+      description: |-
+        * `draft` - Draft
+        * `pending_payment` - Pending payment
+        * `paid` - Paid
+        * `fulfilling` - Fulfilling
+        * `fulfilled` - Fulfilled
+        * `failed` - Failed
+        * `cancelled` - Cancelled
     Package:
+      type: object
       description: Public package representation for the catalog API.
       properties:
-        activation_policy:
-          description: first_usage | installation | unknown (synced from provider).
-          readOnly: true
-          type: string
-        country_code:
-          readOnly: true
-          type: string
-        data_allowance:
-          readOnly: true
-          type: string
         id:
-          readOnly: true
           type: string
-        is_unlimited:
           readOnly: true
-          type: boolean
+        title:
+          type: string
+          readOnly: true
         operator_title:
-          readOnly: true
           type: string
-        plan_type:
           readOnly: true
+        country_code:
           type: string
+          readOnly: true
+        data_allowance:
+          type: string
+          readOnly: true
+        validity_days:
+          type: integer
+          readOnly: true
         price_usd:
+          type: string
           format: decimal
           pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
           readOnly: true
+        is_unlimited:
+          type: boolean
+          readOnly: true
+        plan_type:
           type: string
-        text_sms:
-          nullable: true
           readOnly: true
-          type: integer
-        title:
-          readOnly: true
-          type: string
-        validity_days:
-          readOnly: true
-          type: integer
         voice_minutes:
-          nullable: true
-          readOnly: true
           type: integer
+          readOnly: true
+          nullable: true
+        text_sms:
+          type: integer
+          readOnly: true
+          nullable: true
+        activation_policy:
+          type: string
+          readOnly: true
+          description: first_usage | installation | unknown (synced from provider).
       required:
       - activation_policy
       - country_code
@@ -1749,244 +1810,243 @@ components:
       - title
       - validity_days
       - voice_minutes
-      type: object
     PaginatedEsimList:
+      type: object
+      required:
+      - count
+      - results
       properties:
         count:
-          example: 123
           type: integer
+          example: 123
         next:
+          type: string
+          nullable: true
+          format: uri
           example: http://api.example.org/accounts/?page=4
-          format: uri
-          nullable: true
-          type: string
         previous:
-          example: http://api.example.org/accounts/?page=2
-          format: uri
-          nullable: true
           type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
         results:
+          type: array
           items:
             $ref: '#/components/schemas/Esim'
-          type: array
+    PaginatedLifecycleEventList:
+      type: object
       required:
       - count
       - results
-      type: object
-    PaginatedLifecycleEventList:
       properties:
         count:
-          example: 123
           type: integer
+          example: 123
         next:
+          type: string
+          nullable: true
+          format: uri
           example: http://api.example.org/accounts/?page=4
-          format: uri
-          nullable: true
-          type: string
         previous:
-          example: http://api.example.org/accounts/?page=2
-          format: uri
-          nullable: true
           type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
         results:
+          type: array
           items:
             $ref: '#/components/schemas/LifecycleEvent'
-          type: array
+    PaginatedLocationListList:
+      type: object
       required:
       - count
       - results
-      type: object
-    PaginatedLocationListList:
       properties:
         count:
-          example: 123
           type: integer
+          example: 123
         next:
+          type: string
+          nullable: true
+          format: uri
           example: http://api.example.org/accounts/?page=4
-          format: uri
-          nullable: true
-          type: string
         previous:
-          example: http://api.example.org/accounts/?page=2
-          format: uri
-          nullable: true
           type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
         results:
+          type: array
           items:
             $ref: '#/components/schemas/LocationList'
-          type: array
+    PaginatedPackageList:
+      type: object
       required:
       - count
       - results
-      type: object
-    PaginatedPackageList:
       properties:
         count:
-          example: 123
           type: integer
+          example: 123
         next:
+          type: string
+          nullable: true
+          format: uri
           example: http://api.example.org/accounts/?page=4
-          format: uri
-          nullable: true
-          type: string
         previous:
-          example: http://api.example.org/accounts/?page=2
-          format: uri
-          nullable: true
           type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
         results:
+          type: array
           items:
             $ref: '#/components/schemas/Package'
-          type: array
-      required:
-      - count
-      - results
-      type: object
     PasswordResetConfirmRequest:
+      type: object
       properties:
-        password:
-          maxLength: 128
-          minLength: 8
-          type: string
-          writeOnly: true
-        password_confirm:
-          maxLength: 128
-          minLength: 8
-          type: string
-          writeOnly: true
-        token:
-          minLength: 1
-          type: string
         uid:
-          minLength: 1
           type: string
+          minLength: 1
+        token:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          writeOnly: true
+          minLength: 8
+          maxLength: 128
+        password_confirm:
+          type: string
+          writeOnly: true
+          minLength: 8
+          maxLength: 128
       required:
       - password
       - password_confirm
       - token
       - uid
-      type: object
     PasswordResetRequestRequest:
+      type: object
       properties:
         email:
+          type: string
           format: email
           minLength: 1
-          type: string
       required:
       - email
-      type: object
     PurchaseTopupRequest:
+      type: object
       description: Request body for POST /api/v1/me/esims/{id}/topups/.
       properties:
-        idempotency_key:
-          maxLength: 128
-          minLength: 1
-          type: string
         package_id:
-          maxLength: 64
-          minLength: 1
           type: string
+          minLength: 1
+          maxLength: 64
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 128
       required:
       - idempotency_key
       - package_id
-      type: object
     RegisterRequest:
+      type: object
       properties:
         email:
+          type: string
           format: email
           minLength: 1
-          type: string
       required:
       - email
-      type: object
     SourceEnum:
-      description: '* `client` - Client
-
-        * `system` - System
-
-        * `provider` - Provider'
       enum:
       - client
       - system
       - provider
       type: string
+      description: |-
+        * `client` - Client
+        * `system` - System
+        * `provider` - Provider
     TokenObtainPair:
+      type: object
       properties:
         access:
-          readOnly: true
           type: string
+          readOnly: true
         refresh:
-          readOnly: true
           type: string
+          readOnly: true
       required:
       - access
       - refresh
-      type: object
     TokenObtainPairRequest:
+      type: object
       properties:
         email:
-          minLength: 1
           type: string
           writeOnly: true
+          minLength: 1
         password:
-          minLength: 1
           type: string
           writeOnly: true
+          minLength: 1
       required:
       - email
       - password
-      type: object
     TokenRefresh:
+      type: object
       properties:
         access:
-          readOnly: true
           type: string
+          readOnly: true
       required:
       - access
-      type: object
     TokenRefreshRequest:
+      type: object
       properties:
         refresh:
-          minLength: 1
           type: string
           writeOnly: true
+          minLength: 1
       required:
       - refresh
-      type: object
     Topup:
+      type: object
       description: Persisted top-up purchase response.
       properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        package_external_id:
+          type: string
+          readOnly: true
         amount:
+          type: string
           format: decimal
           pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
           readOnly: true
-          type: string
-        created_at:
-          format: date-time
-          readOnly: true
-          type: string
-        external_order_id:
-          readOnly: true
-          type: string
-        id:
-          format: uuid
-          readOnly: true
-          type: string
-        idempotency_key:
-          nullable: true
-          readOnly: true
-          type: string
-        package_external_id:
-          readOnly: true
-          type: string
         status:
           allOf:
           - $ref: '#/components/schemas/TopupStatusEnum'
           readOnly: true
-        updated_at:
+        external_order_id:
+          type: string
+          readOnly: true
+        idempotency_key:
+          type: string
+          readOnly: true
+          nullable: true
+        created_at:
+          type: string
           format: date-time
           readOnly: true
+        updated_at:
           type: string
+          format: date-time
+          readOnly: true
       required:
       - amount
       - created_at
@@ -1996,40 +2056,39 @@ components:
       - package_external_id
       - status
       - updated_at
-      type: object
     TopupStatusEnum:
-      description: '* `fulfilling` - Fulfilling
-
-        * `fulfilled` - Fulfilled
-
-        * `failed` - Failed'
       enum:
       - fulfilling
       - fulfilled
       - failed
       type: string
+      description: |-
+        * `fulfilling` - Fulfilling
+        * `fulfilled` - Fulfilled
+        * `failed` - Failed
     Usage:
+      type: object
       description: Live usage snapshot from the provider.
       properties:
-        expired_at:
-          nullable: true
-          type: string
-        is_unlimited:
-          nullable: true
-          type: boolean
         remaining_mb:
+          type: integer
+        total_mb:
+          type: integer
+        expired_at:
+          type: string
+          nullable: true
+        is_unlimited:
+          type: boolean
+          nullable: true
+        status:
+          type: string
+        remaining_voice:
           type: integer
         remaining_text:
           type: integer
-        remaining_voice:
-          type: integer
-        status:
-          type: string
-        total_mb:
+        total_voice:
           type: integer
         total_text:
-          type: integer
-        total_voice:
           type: integer
       required:
       - expired_at
@@ -2041,50 +2100,50 @@ components:
       - total_mb
       - total_text
       - total_voice
-      type: object
     User:
+      type: object
       properties:
-        created_at:
-          format: date-time
+        id:
+          type: integer
           readOnly: true
-          type: string
         email:
+          type: string
           format: email
           readOnly: true
+        created_at:
           type: string
-        id:
-          readOnly: true
-          type: integer
-        updated_at:
           format: date-time
           readOnly: true
+        updated_at:
           type: string
+          format: date-time
+          readOnly: true
       required:
       - created_at
       - email
       - id
       - updated_at
-      type: object
     VerifyDepositRequest:
+      type: object
       properties:
+        tx_hash:
+          type: string
+          minLength: 1
+          maxLength: 128
         amount_requested:
+          type: string
           format: decimal
           pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
-          type: string
         idempotency_key:
-          maxLength: 128
-          minLength: 1
           type: string
-        tx_hash:
-          maxLength: 128
           minLength: 1
-          type: string
+          maxLength: 128
       required:
       - amount_requested
       - idempotency_key
       - tx_hash
-      type: object
     VoucherError:
+      type: object
       properties:
         code:
           type: string
@@ -2093,35 +2152,54 @@ components:
       required:
       - code
       - detail
-      type: object
     VoucherRedeemRequestRequest:
+      type: object
       properties:
         code:
-          maxLength: 64
-          minLength: 1
           type: string
+          minLength: 1
+          maxLength: 64
       required:
       - code
-      type: object
     VoucherRedeemResponse:
+      type: object
       properties:
-        balance:
-          format: decimal
-          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
-          type: string
         credited:
+          type: string
           format: decimal
           pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
+        balance:
           type: string
+          format: decimal
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
         replay:
-          default: false
           type: boolean
+          default: false
       required:
       - balance
       - credited
-      type: object
   securitySchemes:
     bearerAuth:
-      bearerFormat: JWT
-      scheme: bearer
       type: http
+      scheme: bearer
+      bearerFormat: JWT
+servers:
+- url: https://api.staging.roamkit.net
+  description: Staging
+- url: https://api.roamkit.net
+  description: Production
+tags:
+- name: Authentication
+  description: Registration, login, and password reset
+- name: Billing
+  description: Prepaid credits, deposits, and wallet balance
+- name: Vouchers
+  description: Credit voucher and gift-code redeem (ADR 011)
+- name: Orders
+  description: Package purchase orders
+- name: Catalog
+  description: Packages and locations
+- name: eSIM
+  description: User eSIM inventory, usage, and top-ups
+- name: Users
+  description: Authenticated user profile
