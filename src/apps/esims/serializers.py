@@ -1,12 +1,41 @@
 """eSIM API serializers."""
 
+from datetime import datetime
+
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.esims.models import Esim, EsimLifecycleEvent, Topup
 
+# Lifecycle event written by LifecycleService.transition(..., ACTIVATED).
+ACTIVATED_EVENT_TYPE = "system.status.activated"
+
 
 class EsimSerializer(serializers.ModelSerializer):
-    """Owned eSIM with ICCID, install, setup, and lifecycle fields."""
+    """Owned eSIM with ICCID, install, setup, lifecycle, and order snapshot."""
+
+    package_title = serializers.CharField(source="order.package_title", read_only=True)
+    location_title = serializers.CharField(
+        source="order.location_title", read_only=True
+    )
+    country_code = serializers.CharField(source="order.country_code", read_only=True)
+    data_allowance = serializers.CharField(
+        source="order.data_allowance", read_only=True
+    )
+    validity_days = serializers.IntegerField(
+        source="order.validity_days", read_only=True, allow_null=True
+    )
+    paid_usd = serializers.DecimalField(
+        source="order.retail_price_usd",
+        max_digits=10,
+        decimal_places=2,
+        read_only=True,
+        allow_null=True,
+    )
+    currency = serializers.CharField(source="order.currency", read_only=True)
+    issued_at = serializers.DateTimeField(source="created_at", read_only=True)
+    activated_at = serializers.SerializerMethodField()
 
     class Meta:
         model = Esim
@@ -33,10 +62,33 @@ class EsimSerializer(serializers.ModelSerializer):
             "usage_is_unlimited",
             "usage_expired_at",
             "usage_synced_at",
+            "package_title",
+            "location_title",
+            "country_code",
+            "data_allowance",
+            "validity_days",
+            "paid_usd",
+            "currency",
+            "issued_at",
+            "activated_at",
             "created_at",
             "updated_at",
         ]
         read_only_fields = fields
+
+    @extend_schema_field(OpenApiTypes.DATETIME)
+    def get_activated_at(self, obj: Esim) -> datetime | None:
+        """First ``system.status.activated`` event time, or null."""
+        prefetched = getattr(obj, "_activated_events", None)
+        if prefetched is not None:
+            return prefetched[0].created_at if prefetched else None
+        event = (
+            obj.lifecycle_events.filter(event_type=ACTIVATED_EVENT_TYPE)
+            .order_by("created_at")
+            .values_list("created_at", flat=True)
+            .first()
+        )
+        return event
 
 
 class UsageSerializer(serializers.Serializer):
