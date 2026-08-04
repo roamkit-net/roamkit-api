@@ -9,7 +9,11 @@ from drf_spectacular.utils import (
 )
 from rest_framework import status
 from rest_framework.exceptions import NotFound
-from rest_framework.generics import GenericAPIView, ListAPIView, RetrieveAPIView
+from rest_framework.generics import (
+    GenericAPIView,
+    ListAPIView,
+    RetrieveUpdateAPIView,
+)
 from rest_framework.request import Request
 from rest_framework.response import Response
 
@@ -105,11 +109,36 @@ class EsimListView(OwnedEsimMixin, ListAPIView):
             ),
         },
     ),
+    patch=extend_schema(
+        tags=["eSIM"],
+        operation_id="esim_partial_update",
+        summary="Update my eSIM note",
+        description=(
+            "Partially update an owned eSIM. Only ``note`` is writable. "
+            "``note`` is user-local metadata and is never synchronized to Airalo. "
+            "Auth-gated like other My eSIM endpoints (no dedicated throttle). "
+            "PUT is not supported."
+        ),
+        request=EsimSerializer,
+        responses={
+            200: OpenApiResponse(response=EsimSerializer, description="eSIM"),
+            400: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Invalid request"
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="eSIM not found"
+            ),
+        },
+    ),
 )
-class EsimDetailView(OwnedEsimMixin, RetrieveAPIView):
-    """Retrieve a single owned eSIM."""
+class EsimDetailView(OwnedEsimMixin, RetrieveUpdateAPIView):
+    """Retrieve or partially update a single owned eSIM (PATCH note only)."""
 
     serializer_class = EsimSerializer
+    http_method_names = ["get", "head", "options", "patch"]
 
 
 @extend_schema_view(

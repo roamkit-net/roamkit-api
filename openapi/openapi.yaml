@@ -697,6 +697,52 @@ paths:
       summary: Retrieve my eSIM
       tags:
       - eSIM
+    patch:
+      description: Partially update an owned eSIM. Only ``note`` is writable. ``note`` is user-local metadata
+        and is never synchronized to Airalo. Auth-gated like other My eSIM endpoints (no dedicated throttle).
+        PUT is not supported.
+      operationId: esim_partial_update
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedEsimRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Esim'
+          description: eSIM
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Invalid request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: eSIM not found
+      security:
+      - bearerAuth: []
+      summary: Update my eSIM note
+      tags:
+      - eSIM
   /api/v1/me/esims/{id}/events/:
     get:
       description: Chronological install / lifecycle trail for an owned eSIM.
@@ -1243,7 +1289,14 @@ components:
       - detail
       type: object
     Esim:
-      description: Owned eSIM with ICCID, install, setup, lifecycle, and order snapshot.
+      description: 'Owned eSIM with ICCID, install, setup, lifecycle, and order snapshot.
+
+
+        ``note`` is the only writable field (PATCH). It is user-local metadata and
+
+        is never synchronized to Airalo. Future RoamKit-only user metadata belongs
+
+        on the same model with the same non-sync rule.'
       properties:
         activated_at:
           description: First ``system.status.activated`` event time, or null.
@@ -1296,6 +1349,11 @@ components:
           type: string
         matching_id:
           readOnly: true
+          type: string
+        note:
+          description: User-local note on this eSIM. Never synchronized to Airalo. Future user metadata
+            (label, favorite, archived, …) belongs on the same model without provider sync.
+          maxLength: 255
           type: string
         package_title:
           readOnly: true
@@ -1955,6 +2013,22 @@ components:
           type: string
       required:
       - email
+      type: object
+    PatchedEsimRequest:
+      description: 'Owned eSIM with ICCID, install, setup, lifecycle, and order snapshot.
+
+
+        ``note`` is the only writable field (PATCH). It is user-local metadata and
+
+        is never synchronized to Airalo. Future RoamKit-only user metadata belongs
+
+        on the same model with the same non-sync rule.'
+      properties:
+        note:
+          description: User-local note on this eSIM. Never synchronized to Airalo. Future user metadata
+            (label, favorite, archived, …) belongs on the same model without provider sync.
+          maxLength: 255
+          type: string
       type: object
     PurchaseTopupRequest:
       description: Request body for POST /api/v1/me/esims/{id}/topups/.
