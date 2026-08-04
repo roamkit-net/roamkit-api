@@ -14,6 +14,7 @@ from django.utils import timezone
 from apps.catalog.models import Package
 from apps.esims.models import Esim
 from apps.orders.models import Order
+from apps.orders.product_snapshot import product_snapshot_kwargs
 from shared.providers.esim import TopupPackage, UsageDTO
 
 User = get_user_model()
@@ -89,6 +90,7 @@ def package(db) -> Package:
         data_allowance="1 GB",
         validity_days=7,
         price_usd=Decimal("11.50"),
+        net_price_usd=Decimal("6.30"),
         synced_at=timezone.now(),
     )
 
@@ -100,6 +102,7 @@ def _make_esim(*, user: User, package: Package, iccid: str) -> Esim:
         status=Order.Status.FULFILLED,
         external_order_id=f"ext-{iccid[-4:]}",
         customer_ref=f"ref-{iccid[-4:]}",
+        **product_snapshot_kwargs(package),
     )
     return Esim.objects.create(
         user=user,
@@ -172,6 +175,16 @@ def test_list_esims_returns_only_own(
     assert item["direct_apple_installation_url"] == (
         alice_esim.direct_apple_installation_url
     )
+    assert item["package_title"] == "1 GB - 7 Days"
+    assert item["country_code"] == "US"
+    assert item["data_allowance"] == "1 GB"
+    assert item["validity_days"] == 7
+    assert item["paid_usd"] == "11.50"
+    assert item["currency"] == "USD"
+    assert item["issued_at"]
+    assert item["activated_at"] is None
+    assert "net_price_usd" not in item
+    assert "net_price" not in item
     assert bob_esim.iccid not in {row["iccid"] for row in payload["results"]}
 
 
@@ -190,6 +203,48 @@ def test_detail_returns_own_esim(client: Client, user: User, alice_esim: Esim) -
     assert payload["iccid"] == alice_esim.iccid
     assert payload["manual_installation"] == "<p>Manual</p>"
     assert payload["installation_guide_url"] == alice_esim.installation_guide_url
+    assert payload["paid_usd"] == "11.50"
+    assert payload["package_title"] == "1 GB - 7 Days"
+    assert payload["issued_at"] == payload["created_at"]
+    assert payload["activated_at"] is None
+    assert "net_price_usd" not in payload
+
+
+@pytest.mark.django_db
+def test_detail_includes_activated_at_from_lifecycle(
+    client: Client, user: User, alice_esim: Esim
+) -> None:
+    from apps.esims.services.lifecycle_service import lifecycle_service
+
+    lifecycle_service.transition(alice_esim, Esim.Status.INSTALLATION_STARTED)
+    lifecycle_service.transition(alice_esim, Esim.Status.INSTALLED)
+    lifecycle_service.transition(alice_esim, Esim.Status.ACTIVATED)
+
+    access = _access_token(client, user.email)
+    response = client.get(
+        f"/api/v1/me/esims/{alice_esim.pk}/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["activated_at"] is not None
+    assert payload["status"] == Esim.Status.ACTIVATED
+
+
+@pytest.mark.django_db
+def test_detail_paid_usd_uses_order_snapshot_not_live_catalog(
+    client: Client, user: User, alice_esim: Esim, package: Package
+) -> None:
+    package.price_usd = Decimal("99.00")
+    package.save(update_fields=["price_usd", "updated_at"])
+
+    access = _access_token(client, user.email)
+    response = client.get(
+        f"/api/v1/me/esims/{alice_esim.pk}/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert response.status_code == 200
+    assert response.json()["paid_usd"] == "11.50"
 
 
 @pytest.mark.django_db

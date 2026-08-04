@@ -1243,14 +1243,28 @@ components:
       - detail
       type: object
     Esim:
-      description: Owned eSIM with ICCID, install, setup, and lifecycle fields.
+      description: Owned eSIM with ICCID, install, setup, lifecycle, and order snapshot.
       properties:
+        activated_at:
+          description: First ``system.status.activated`` event time, or null.
+          format: date-time
+          readOnly: true
+          type: string
         activation_policy:
           allOf:
           - $ref: '#/components/schemas/ActivationPolicyEnum'
           readOnly: true
+        country_code:
+          readOnly: true
+          type: string
         created_at:
           format: date-time
+          readOnly: true
+          type: string
+        currency:
+          readOnly: true
+          type: string
+        data_allowance:
           readOnly: true
           type: string
         direct_apple_installation_url:
@@ -1267,6 +1281,13 @@ components:
           format: uri
           readOnly: true
           type: string
+        issued_at:
+          format: date-time
+          readOnly: true
+          type: string
+        location_title:
+          readOnly: true
+          type: string
         lpa:
           readOnly: true
           type: string
@@ -1274,6 +1295,15 @@ components:
           readOnly: true
           type: string
         matching_id:
+          readOnly: true
+          type: string
+        package_title:
+          readOnly: true
+          type: string
+        paid_usd:
+          format: decimal
+          nullable: true
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
           readOnly: true
           type: string
         qrcode:
@@ -1336,16 +1366,28 @@ components:
           nullable: true
           readOnly: true
           type: integer
+        validity_days:
+          nullable: true
+          readOnly: true
+          type: integer
       required:
+      - activated_at
       - activation_policy
+      - country_code
       - created_at
+      - currency
+      - data_allowance
       - direct_apple_installation_url
       - iccid
       - id
       - installation_guide_url
+      - issued_at
+      - location_title
       - lpa
       - manual_installation
       - matching_id
+      - package_title
+      - paid_usd
       - qrcode
       - qrcode_installation
       - qrcode_url
@@ -1361,6 +1403,7 @@ components:
       - usage_status
       - usage_synced_at
       - usage_total_mb
+      - validity_days
       type: object
     EsimStatusEnum:
       description: '* `purchased` - Purchased
@@ -1607,13 +1650,28 @@ components:
       - title
       type: object
     Order:
-      description: Order response including provisioned eSIMs when fulfilled.
+      description: 'Order response including provisioned eSIMs when fulfilled.
+
+
+        Exposes purchase-time product snapshot (``paid_usd``, titles, …) for the
+
+        buyer. Never includes wholesale ``net_price_usd``.'
       properties:
+        country_code:
+          readOnly: true
+          type: string
         created_at:
           format: date-time
           readOnly: true
           type: string
+        currency:
+          description: ISO 4217; copied from billing LEDGER_CURRENCY at purchase.
+          readOnly: true
+          type: string
         customer_ref:
+          readOnly: true
+          type: string
+        data_allowance:
           readOnly: true
           type: string
         esims:
@@ -1631,7 +1689,19 @@ components:
           nullable: true
           readOnly: true
           type: string
+        location_title:
+          readOnly: true
+          type: string
         package_id:
+          readOnly: true
+          type: string
+        package_title:
+          readOnly: true
+          type: string
+        paid_usd:
+          format: decimal
+          nullable: true
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
           readOnly: true
           type: string
         status:
@@ -1658,16 +1728,27 @@ components:
           format: date-time
           readOnly: true
           type: string
+        validity_days:
+          nullable: true
+          readOnly: true
+          type: integer
       required:
+      - country_code
       - created_at
+      - currency
       - customer_ref
+      - data_allowance
       - esims
       - external_order_id
       - id
       - idempotency_key
+      - location_title
       - package_id
+      - package_title
+      - paid_usd
       - status
       - updated_at
+      - validity_days
       type: object
     OrderStatusEnum:
       description: '* `draft` - Draft
