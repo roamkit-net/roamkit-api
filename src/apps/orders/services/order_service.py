@@ -15,6 +15,7 @@ from apps.esims.models import Esim
 from apps.esims.services.lifecycle_service import lifecycle_service
 from apps.orders.exceptions import IdempotencyKeyRequiredError, SpendInProgressError
 from apps.orders.models import Order
+from apps.orders.product_snapshot import product_snapshot_kwargs
 from shared.events.billing_events import (
     CreditDebited,
     CreditGranted,
@@ -136,6 +137,7 @@ class OrderService:
                     status=Order.Status.FULFILLING,
                     customer_ref=customer_ref or "",
                     idempotency_key=idempotency_key or None,
+                    **product_snapshot_kwargs(package),
                 )
             except IntegrityError:
                 existing = Order.objects.filter(idempotency_key=idempotency_key).first()
