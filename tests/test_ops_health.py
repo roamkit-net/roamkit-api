@@ -11,8 +11,9 @@ from django.db import connection
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
 
-from apps.ops.services.health import build_ops_health
+from apps.ops.services.health import build_ops_health, clear_probe_caches
 from apps.ops.services.health_dto import (
+    TIMEOUT_MS,
     HealthCheck,
     compute_overall_status,
     iso_now,
@@ -183,6 +184,44 @@ def test_live_ready_still_compatible(client: Client) -> None:
     assert "checks" in payload
 
 
+@pytest.fixture(autouse=True)
+def _reset_probe_caches() -> None:
+    clear_probe_caches()
+    yield
+    clear_probe_caches()
+
+
+def test_celery_worker_timeout_budget() -> None:
+    assert TIMEOUT_MS["celery_worker"] == 1000
+
+
+@pytest.mark.django_db
+def test_celery_worker_probe_uses_in_process_cache() -> None:
+    ping = {"celery@worker": {"ok": "pong"}}
+    inspector = MagicMock()
+    inspector.ping.return_value = ping
+    celery_app = MagicMock()
+    celery_app.control.inspect.return_value = inspector
+
+    with patch("config.celery.app", celery_app):
+        from apps.ops.services.health import _check_celery_worker
+
+        first = _check_celery_worker()
+        second = _check_celery_worker()
+
+    assert first.status == "healthy"
+    assert first.source == "live"
+    assert first.cache is not None and first.cache.hit is False
+    assert first.timeout_ms == 1000
+
+    assert second.status == "healthy"
+    assert second.source == "cached"
+    assert second.cache is not None and second.cache.hit is True
+    assert inspector.ping.call_count == 1
+    celery_app.control.inspect.assert_called_once()
+    assert celery_app.control.inspect.call_args.kwargs["timeout"] == 1.0
+
+
 @pytest.mark.django_db
 @patch("apps.ops.services.health._check_celery_worker")
 @patch("apps.ops.services.health._check_polygon_rpc")
@@ -199,8 +238,8 @@ def test_build_ops_health_wc_disabled_does_not_unhealth(
         reason="ok",
         message="ok",
         checked_at=now,
-        source="live",
-        timeout_ms=250,
+        source="cached",
+        timeout_ms=1000,
     )
     mock_poly.return_value = HealthCheck(
         status="healthy",
