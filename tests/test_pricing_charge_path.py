@@ -136,9 +136,9 @@ def test_flag_on_debits_customer_price_with_snapshot(
         package=package,
         idempotency_key="charge-disc-1",
     )
-    # 10% off 56 = 50.40
+    # margin-share: L=56 N=50 D=10% → C = 50 + 5.40 = 55.40
     assert order.list_price_usd == Decimal("56.00")
-    assert order.retail_price_usd == Decimal("50.40")
+    assert order.retail_price_usd == Decimal("55.40")
     assert order.pricing_profile_slug == "family-charge"
     assert order.pricing_context_hash
     assert order.snapshot_schema_version == 1
@@ -147,9 +147,9 @@ def test_flag_on_debits_customer_price_with_snapshot(
         reference_type=LedgerReferenceType.ORDER,
         reference_id=str(order.pk),
     )
-    assert debit.delta == Decimal("-50.40")
+    assert debit.delta == Decimal("-55.40")
     account.refresh_from_db()
-    assert account.balance == Decimal("49.60")
+    assert account.balance == Decimal("44.60")
 
 
 @pytest.mark.django_db
@@ -178,9 +178,9 @@ def test_refund_uses_snapshot_not_live_profile(
 
     order = Order.objects.get(idempotency_key="charge-refund-1")
     assert order.status == Order.Status.FAILED
-    assert order.retail_price_usd == Decimal("50.40")
+    assert order.retail_price_usd == Decimal("55.40")
 
-    # Change profile after failure — refund must still be 50.40 from snapshot.
+    # Change profile after failure — refund must still be 55.40 from snapshot.
     profile.discount_percent = Decimal("50.00")
     profile.save()
 
@@ -188,7 +188,7 @@ def test_refund_uses_snapshot_not_live_profile(
         reference_type=LedgerReferenceType.REFUND,
         reference_id=str(order.pk),
     )
-    assert refund.delta == Decimal("50.40")
+    assert refund.delta == Decimal("55.40")
     account.refresh_from_db()
     assert account.balance == Decimal("100.00")
 

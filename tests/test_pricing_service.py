@@ -1,10 +1,11 @@
-"""PricingService + snapshot helpers (ADR 019 PR2) — no debit wiring."""
+"""PricingService + snapshot helpers (ADR 019) — margin-share formula."""
 
 from __future__ import annotations
 
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -88,11 +89,23 @@ def test_flag_off_always_retail(settings, family_profile):
 
 
 @pytest.mark.django_db
-def test_discount_without_floor_hit(settings, family_profile):
+def test_discount_zero_equals_list(settings, family_profile):
+    """D=0 → C=L (compatibility with pre-discount behaviour)."""
     settings.PRICING_PROFILES_ENABLED = True
-    # 10% off 56 = 50.40 > net 50
+    family_profile.discount_percent = Decimal("0.00")
+    family_profile.save()
     q = pricing_service.resolve(_ctx(profile=family_profile))
-    assert q.customer_price == Decimal("50.40")
+    assert q.customer_price == Decimal("56.00")
+    assert q.list_price == Decimal("56.00")
+    assert q.pricing_reason == PricingReason.PRICING_PROFILE
+
+
+@pytest.mark.django_db
+def test_margin_share_10_percent(settings, family_profile):
+    settings.PRICING_PROFILES_ENABLED = True
+    # L=56 N=50 margin=6; D=10% → C = 50 + 5.40 = 55.40
+    q = pricing_service.resolve(_ctx(profile=family_profile))
+    assert q.customer_price == Decimal("55.40")
     assert q.pricing_reason == PricingReason.PRICING_PROFILE
     assert q.floor_reason == FloorReason.DISCOUNT
     assert q.pricing_profile_id == family_profile.pk
@@ -101,18 +114,114 @@ def test_discount_without_floor_hit(settings, family_profile):
 
 
 @pytest.mark.django_db
-def test_wholesale_floor_hit(settings, family_profile):
+def test_adr_worked_examples(settings, family_profile):
     settings.PRICING_PROFILES_ENABLED = True
-    family_profile.discount_percent = Decimal("20.00")
-    family_profile.save()
-    # 20% off 56 = 44.80 < net 50 → floor 50
-    q = pricing_service.resolve(_ctx(profile=family_profile))
-    assert q.customer_price == Decimal("50.00")
-    assert q.floor_reason == FloorReason.WHOLESALE_FLOOR
+    cases = [
+        ("25.00", "5.00", "50.00", "15.00"),
+        ("25.00", "5.00", "100.00", "5.00"),
+        ("57.00", "50.00", "5.00", "56.65"),
+    ]
+    for list_price, net_price, discount, expected in cases:
+        family_profile.discount_percent = Decimal(discount)
+        family_profile.save()
+        family_profile.refresh_from_db()
+        q = pricing_service.resolve(
+            _ctx(
+                profile=family_profile,
+                list_price=list_price,
+                net_price=net_price,
+            )
+        )
+        assert q.customer_price == Decimal(
+            expected
+        ), f"L={list_price} N={net_price} D={discount}"
 
 
 @pytest.mark.django_db
-def test_floor_policy_none(settings, family_profile):
+def test_monotonicity_discount_increases_price_never_rises(settings, family_profile):
+    settings.PRICING_PROFILES_ENABLED = True
+    expected = {
+        Decimal("0.00"): Decimal("25.00"),
+        Decimal("25.00"): Decimal("20.00"),
+        Decimal("50.00"): Decimal("15.00"),
+        Decimal("75.00"): Decimal("10.00"),
+        Decimal("100.00"): Decimal("5.00"),
+    }
+    prices: list[Decimal] = []
+    for discount, want in expected.items():
+        family_profile.discount_percent = discount
+        family_profile.save()
+        family_profile.refresh_from_db()
+        q = pricing_service.resolve(
+            _ctx(profile=family_profile, list_price="25.00", net_price="5.00")
+        )
+        assert q.customer_price == want
+        prices.append(q.customer_price)
+    assert prices == sorted(prices, reverse=True)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("list_price", "net_price", "discount"),
+    [
+        ("25.00", "5.00", "0.00"),
+        ("25.00", "5.00", "0.01"),
+        ("25.00", "5.00", "50.00"),
+        ("25.00", "5.00", "99.99"),
+        ("25.00", "5.00", "100.00"),
+        ("57.00", "50.00", "5.00"),
+        ("56.00", "50.00", "10.00"),
+        ("10.00", "10.00", "50.00"),  # zero margin
+    ],
+)
+def test_customer_between_net_and_list(
+    settings, family_profile, list_price, net_price, discount
+):
+    settings.PRICING_PROFILES_ENABLED = True
+    family_profile.discount_percent = Decimal(discount)
+    family_profile.save()
+    L = Decimal(list_price)
+    N = Decimal(net_price)
+    q = pricing_service.resolve(
+        _ctx(profile=family_profile, list_price=list_price, net_price=net_price)
+    )
+    assert N <= q.customer_price <= L
+
+
+@pytest.mark.django_db
+def test_net_missing_retail_warns_and_metrics(settings, family_profile):
+    settings.PRICING_PROFILES_ENABLED = True
+    with (
+        patch("apps.pricing.service.metrics.incr") as incr,
+        patch("apps.pricing.service.logger.warning") as warn,
+    ):
+        q = pricing_service.resolve(_ctx(profile=family_profile, net_price=None))
+    assert q.customer_price == Decimal("56.00")
+    assert q.pricing_reason == PricingReason.RETAIL
+    incr.assert_called_once()
+    assert incr.call_args.args[0] == "pricing.net_missing"
+    warn.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_invalid_margin_retail_warns_and_metrics(settings, family_profile):
+    settings.PRICING_PROFILES_ENABLED = True
+    with (
+        patch("apps.pricing.service.metrics.incr") as incr,
+        patch("apps.pricing.service.logger.warning") as warn,
+    ):
+        q = pricing_service.resolve(
+            _ctx(profile=family_profile, list_price="40.00", net_price="50.00")
+        )
+    assert q.customer_price == Decimal("40.00")
+    assert q.pricing_reason == PricingReason.INVALID_MARGIN
+    incr.assert_called_once()
+    assert incr.call_args.args[0] == "pricing.invalid_margin"
+    warn.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_floor_policy_none_legacy_percent_off_list(settings, family_profile):
     settings.PRICING_PROFILES_ENABLED = True
     family_profile.discount_percent = Decimal("20.00")
     family_profile.floor_policy = FloorPolicy.NONE
@@ -151,6 +260,24 @@ def test_resolve_deterministic(settings, family_profile):
     assert a == b
     assert a.fingerprint == b.fingerprint
     assert a.pricing_context_hash == b.pricing_context_hash
+
+
+@pytest.mark.django_db
+def test_fingerprint_stable_for_same_l_n_d(settings, family_profile):
+    settings.PRICING_PROFILES_ENABLED = True
+    ts = timezone.now()
+    family_profile.discount_percent = Decimal("5.00")
+    family_profile.save()
+    ctx = _ctx(
+        profile=family_profile,
+        ts=ts,
+        list_price="57.00",
+        net_price="50.00",
+    )
+    a = pricing_service.resolve(ctx)
+    b = pricing_service.resolve(ctx)
+    assert a.customer_price == Decimal("56.65")
+    assert a.fingerprint == b.fingerprint
 
 
 @pytest.mark.django_db

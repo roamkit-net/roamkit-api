@@ -21,6 +21,7 @@ class OrderType:
 class PricingReason:
     RETAIL = "retail"
     PRICING_PROFILE = "pricing_profile"
+    INVALID_MARGIN = "invalid_margin"
 
 
 class FloorReason:
