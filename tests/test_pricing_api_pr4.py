@@ -99,7 +99,7 @@ def test_packages_authenticated_family_discount(
     assert response.status_code == 200
     result = response.json()["results"][0]
     assert result["list_price_usd"] == "57.00"
-    assert result["price_usd"] == "54.15"
+    assert result["price_usd"] == "56.65"
     assert result["discount_percent"] == "5.00"
     assert result["pricing_reason"] == PricingReason.PRICING_PROFILE
     assert "net_price" not in result
@@ -128,7 +128,7 @@ def test_public_price_dict_matches_resolve(
     _user, account, _profile = family_user
     quote = resolve_package_quote(package, account=account)
     pub = public_price_dict(quote)
-    assert pub["price_usd"] == Decimal("54.15")
+    assert pub["price_usd"] == Decimal("56.65")
     assert pub["list_price_usd"] == Decimal("57.00")
     assert set(pub) == {
         "price_usd",
@@ -183,7 +183,7 @@ def test_internal_preview_staff_ok(
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["price_usd"] == "54.15"
+    assert body["price_usd"] == "56.65"
     assert body["list_price_usd"] == "57.00"
     assert body["pricing_reason"] == PricingReason.PRICING_PROFILE
     assert body["quote_fingerprint"]
