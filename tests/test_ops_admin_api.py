@@ -192,6 +192,37 @@ def test_ops_users_list_paginated_and_badges(
 
 
 @pytest.mark.django_db
+def test_ops_users_list_ordering_email(
+    client: Client,
+    staff_user: User,
+) -> None:
+    User.objects.create_user(email="zzz-sort@example.com", password=PASSWORD)
+    User.objects.create_user(email="aaa-sort@example.com", password=PASSWORD)
+    headers = _auth(client, staff_user)
+
+    asc = client.get(
+        "/api/v1/admin/users/?ordering=email&page_size=100",
+        **headers,
+    ).json()["results"]
+    emails_asc = [r["email"] for r in asc]
+    assert emails_asc == sorted(emails_asc)
+
+    desc = client.get(
+        "/api/v1/admin/users/?ordering=-email&page_size=100",
+        **headers,
+    ).json()["results"]
+    emails_desc = [r["email"] for r in desc]
+    assert emails_desc == sorted(emails_desc, reverse=True)
+
+    # Unknown ordering falls back to default (-created_at); still 200.
+    bad = client.get(
+        "/api/v1/admin/users/?ordering=not_a_field",
+        **headers,
+    )
+    assert bad.status_code == 200
+
+
+@pytest.mark.django_db
 def test_ops_user_detail_timeline(
     client: Client,
     staff_user: User,

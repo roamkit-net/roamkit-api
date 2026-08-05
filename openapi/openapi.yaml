@@ -258,6 +258,12 @@ paths:
         name: is_active
         schema:
           type: boolean
+      - description: 'Sort field: email, balance, last_login, flags (prefix with - for descending). Default:
+          -created_at.'
+        in: query
+        name: ordering
+        schema:
+          type: string
       - description: A page number within the paginated result set.
         in: query
         name: page
