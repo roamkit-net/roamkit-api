@@ -321,6 +321,17 @@ GOOGLE_OAUTH_CLOCK_SKEW_SECONDS = int(
 # receive addresses; empty until allocate — never commit a real seed.
 WALLET_HD_MNEMONIC = os.environ.get("WALLET_HD_MNEMONIC", "")
 
+# Wallet Product Activation flags (ADR 018). Default off — shared ADR 010
+# path remains primary until Phase 3 cutover GO.
+WALLET_ADDRESS_ENABLED = (
+    os.environ.get("WALLET_ADDRESS_ENABLED", "false").lower() == "true"
+)
+OBSERVATION_ENABLED = os.environ.get("OBSERVATION_ENABLED", "false").lower() == "true"
+CREDIT_CONVERSION_V2 = (
+    os.environ.get("CREDIT_CONVERSION_V2", "false").lower() == "true"
+)
+SHADOW_MODE = os.environ.get("SHADOW_MODE", "false").lower() == "true"
+
 # Polygon USDT deposits (ADR-010). Defaults match mainnet; set wallet in env.
 POLYGON_RPC_URL = os.environ.get("POLYGON_RPC_URL", "")
 POLYGON_USDT_CONTRACT = os.environ.get(
