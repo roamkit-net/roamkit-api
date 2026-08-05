@@ -2,6 +2,7 @@
 
 from apps.wallet.services.allocation import WalletAllocationService
 from apps.wallet.services.conversion import CreditConversionService
+from apps.wallet.services.flags import WalletCutoverFlags, get_cutover_flags
 from apps.wallet.services.funding import FundingService
 from apps.wallet.services.metrics import collect_wallet_metrics
 from apps.wallet.services.observation import (
@@ -16,7 +17,9 @@ __all__ = [
     "FundingService",
     "ObservationSignal",
     "WalletAllocationService",
+    "WalletCutoverFlags",
     "collect_wallet_metrics",
     "collect_wallet_ops_status",
+    "get_cutover_flags",
     "resume_converts",
 ]
