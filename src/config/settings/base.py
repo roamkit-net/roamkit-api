@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "core.apps.CoreConfig",
     "apps.accounts",
     "apps.billing",
+    "apps.pricing",
     "apps.wallet",
     "apps.catalog",
     "apps.orders",
@@ -300,6 +301,10 @@ SUBSCRIPTIONS_ENABLED = (
     os.environ.get("SUBSCRIPTIONS_ENABLED", "false").lower() == "true"
 )
 VOUCHERS_ENABLED = os.environ.get("VOUCHERS_ENABLED", "false").lower() == "true"
+# ADR 019 — when false, PricingService always returns retail (list == customer).
+PRICING_PROFILES_ENABLED = (
+    os.environ.get("PRICING_PROFILES_ENABLED", "false").lower() == "true"
+)
 WALLETCONNECT_ENABLED = (
     os.environ.get("WALLETCONNECT_ENABLED", "false").lower() == "true"
 )

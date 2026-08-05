@@ -32,6 +32,7 @@ from apps.billing.services import (
     resolve_reference,
 )
 from apps.billing.services.metrics import spend_by_reference_type
+from apps.pricing.models import PricingProfile, assign_pricing_profile
 from shared.events.billing_events import CreditDebited, CreditGranted
 from shared.events.event_bus import event_bus
 
@@ -52,10 +53,28 @@ class AdminAdjustForm(forms.Form):
     )
 
 
+class AssignPricingProfileForm(forms.Form):
+    pricing_profile = forms.ModelChoiceField(
+        queryset=PricingProfile.objects.filter(archived_at__isnull=True),
+        required=False,
+        empty_label="— Clear assignment (retail) —",
+    )
+    reason = forms.CharField(max_length=255, initial="bulk_assign", required=False)
+
+
 @admin.register(Account)
 class AccountAdmin(admin.ModelAdmin):
-    list_display = ("id", "user", "balance", "version", "created_at", "adjust_link")
+    list_display = (
+        "id",
+        "user",
+        "balance",
+        "pricing_profile",
+        "version",
+        "created_at",
+        "adjust_link",
+    )
     search_fields = ("user__email", "id")
+    list_filter = ("pricing_profile",)
     readonly_fields = (
         "id",
         "balance",
@@ -64,12 +83,58 @@ class AccountAdmin(admin.ModelAdmin):
         "updated_at",
     )
     raw_id_fields = ("user",)
-    actions = ("rebuild_selected_balances",)
+    autocomplete_fields = ("pricing_profile",)
+    actions = ("rebuild_selected_balances", "assign_pricing_profile_action")
 
     @admin.display(description="Adjust")
     def adjust_link(self, obj: Account) -> str:
         url = reverse("admin:billing_account_adjust", args=[obj.pk])
         return format_html('<a href="{}">Adjust…</a>', url)
+
+    @admin.action(description="Assign Pricing Profile")
+    def assign_pricing_profile_action(self, request: HttpRequest, queryset):
+        if "apply" in request.POST:
+            form = AssignPricingProfileForm(request.POST)
+            if form.is_valid():
+                if queryset.count() > 100:
+                    self.message_user(
+                        request,
+                        "Select at most 100 accounts per bulk assign transaction.",
+                        messages.ERROR,
+                    )
+                    return None
+                ids = list(queryset.values_list("pk", flat=True))
+                try:
+                    updated = assign_pricing_profile(
+                        account_ids=ids,
+                        profile=form.cleaned_data["pricing_profile"],
+                        actor=request.user,
+                        reason=form.cleaned_data.get("reason") or "bulk_assign",
+                    )
+                except Exception as exc:
+                    self.message_user(request, str(exc), messages.ERROR)
+                    return None
+                self.message_user(
+                    request,
+                    f"Updated pricing profile on {updated} account(s).",
+                    messages.SUCCESS,
+                )
+                return None
+        else:
+            form = AssignPricingProfileForm()
+        context = {
+            **self.admin_site.each_context(request),
+            "title": "Assign Pricing Profile",
+            "queryset": queryset,
+            "form": form,
+            "opts": self.model._meta,
+            "action": "assign_pricing_profile_action",
+        }
+        return render(
+            request,
+            "admin/billing/assign_pricing_profile.html",
+            context,
+        )
 
     @admin.action(description="Rebuild selected balances from ledger")
     def rebuild_selected_balances(self, request: HttpRequest, queryset) -> None:
