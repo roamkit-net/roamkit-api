@@ -69,7 +69,9 @@ class DepositObservationService:
     def __init__(self, confirmation_policy: ConfirmationPolicy | None = None) -> None:
         self.confirmation_policy = confirmation_policy or ConfirmationPolicy()
 
-    def ingest(self, signal: ObservationSignal) -> DepositObservation:
+    def ingest(
+        self, signal: ObservationSignal, *, shadow_only: bool = False
+    ) -> DepositObservation:
         chain = signal.chain or WalletChain.POLYGON
         tx_hash = normalize_tx_hash(signal.tx_hash)
         to_address = normalize_evm_address(signal.to_address)
@@ -103,6 +105,7 @@ class DepositObservationService:
                         from_address=from_address,
                         confirmations=int(signal.confirmations),
                         block_number=signal.block_number,
+                        shadow_only=shadow_only,
                     )
             except IntegrityError:
                 continue
@@ -154,6 +157,7 @@ class DepositObservationService:
         from_address: str,
         confirmations: int,
         block_number: int | None,
+        shadow_only: bool = False,
     ) -> DepositObservation:
         existing = (
             DepositObservation.objects.select_for_update()
@@ -174,6 +178,7 @@ class DepositObservationService:
             confirmations=confirmations,
             block_number=block_number,
             status=ObservationStatus.OBSERVED,
+            shadow_only=shadow_only,
         )
         obs.status = ObservationStatus.PENDING_CONFIRMATION
         obs.pending_at = timezone.now()

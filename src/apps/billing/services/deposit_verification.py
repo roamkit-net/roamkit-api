@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 from typing import Any
 
@@ -29,6 +30,8 @@ from shared.providers.blockchain import (
     TransferResult,
 )
 from shared.providers.factory import get_blockchain_provider
+
+logger = logging.getLogger(__name__)
 
 
 class DepositVerificationService:
@@ -405,6 +408,18 @@ class DepositVerificationService:
 
         for event in events:
             event_bus.publish(event)
+
+        # ADR 018 Phase 1: shadow dual-path after legacy Credits are final.
+        # Failures must never affect ADR 010 success / latency path.
+        try:
+            from apps.wallet.services.shadow import safe_compare_legacy_deposit
+
+            safe_compare_legacy_deposit(deposit=deposit, transfer=transfer)
+        except Exception:  # noqa: BLE001 — never break production money path
+            logger.exception(
+                "wallet shadow hook failed deposit_id=%s",
+                deposit.pk,
+            )
         return deposit
 
     def _mark_failed(

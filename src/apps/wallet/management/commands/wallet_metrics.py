@@ -27,5 +27,12 @@ class Command(BaseCommand):
         self.stdout.write(f"credited_amount_total={data['credited_amount_total']}")
         self.stdout.write(f"rejected_count={data['rejected_count']}")
         self.stdout.write(f"expired_count={data['expired_count']}")
+        self.stdout.write(f"shadow_match_total={data['shadow_match_total']}")
+        self.stdout.write(f"shadow_mismatch_total={data['shadow_mismatch_total']}")
+        self.stdout.write(f"shadow_error_total={data['shadow_error_total']}")
+        self.stdout.write(f"shadow_critical_total={data['shadow_critical_total']}")
+        self.stdout.write(f"shadow_warning_total={data['shadow_warning_total']}")
+        self.stdout.write(f"shadow_match_rate={data['shadow_match_rate']}")
+        self.stdout.write(f"shadow_latency_ms_avg={data['shadow_latency_ms_avg']}")
         for status_name, count in sorted(data["observation_counts"].items()):
             self.stdout.write(f"observation[{status_name}]={count}")

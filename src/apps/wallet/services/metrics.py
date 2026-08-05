@@ -1,6 +1,6 @@
 """Wallet Platform ops metrics (ADR 017 Cap — Wallet Metrics).
 
-Counters for allocation / observation / confirmation / convert.
+Counters for allocation / observation / confirmation / convert / shadow.
 Not a Credits source of truth — ledger remains authoritative via CreditService.
 """
 
@@ -19,6 +19,7 @@ from apps.wallet.models import (
     WalletAddressStatus,
     WalletIdentity,
 )
+from apps.wallet.services.shadow import shadow_metrics_snapshot
 
 _MONEY_QUANT = Decimal("0.000001")
 
@@ -39,6 +40,13 @@ class WalletMetrics:
     credited_amount_total: Decimal
     rejected_count: int
     expired_count: int
+    shadow_match_total: int
+    shadow_mismatch_total: int
+    shadow_error_total: int
+    shadow_critical_total: int
+    shadow_warning_total: int
+    shadow_match_rate: float | None
+    shadow_latency_ms_avg: int | None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +62,13 @@ class WalletMetrics:
             "credited_amount_total": f"{self.credited_amount_total:.6f}",
             "rejected_count": self.rejected_count,
             "expired_count": self.expired_count,
+            "shadow_match_total": self.shadow_match_total,
+            "shadow_mismatch_total": self.shadow_mismatch_total,
+            "shadow_error_total": self.shadow_error_total,
+            "shadow_critical_total": self.shadow_critical_total,
+            "shadow_warning_total": self.shadow_warning_total,
+            "shadow_match_rate": self.shadow_match_rate,
+            "shadow_latency_ms_avg": self.shadow_latency_ms_avg,
         }
 
 
@@ -80,9 +95,17 @@ def collect_wallet_metrics() -> WalletMetrics:
         obs_counts.setdefault(status, 0)
 
     credited_agg = DepositObservation.objects.filter(
-        status=ObservationStatus.CREDITED
+        status=ObservationStatus.CREDITED,
+        shadow_only=False,
     ).aggregate(n=Count("id"), total=Sum("amount"))
     credited_total = Decimal(credited_agg["total"] or 0).quantize(_MONEY_QUANT)
+
+    confirmed_awaiting = DepositObservation.objects.filter(
+        status=ObservationStatus.CONFIRMED,
+        shadow_only=False,
+    ).count()
+
+    shadow = shadow_metrics_snapshot()
 
     return WalletMetrics(
         wallet_identity_count=identity_count,
@@ -91,10 +114,17 @@ def collect_wallet_metrics() -> WalletMetrics:
         derivation_index_max=None if index_max is None else int(index_max),
         observation_counts=obs_counts,
         pending_confirmation=obs_counts[ObservationStatus.PENDING_CONFIRMATION],
-        confirmed_awaiting_convert=obs_counts[ObservationStatus.CONFIRMED],
+        confirmed_awaiting_convert=confirmed_awaiting,
         conversion_started=obs_counts[ObservationStatus.CONVERSION_STARTED],
         credited_count=int(credited_agg["n"] or 0),
         credited_amount_total=credited_total,
         rejected_count=obs_counts[ObservationStatus.REJECTED],
         expired_count=obs_counts[ObservationStatus.EXPIRED],
+        shadow_match_total=int(shadow["shadow_match_total"]),
+        shadow_mismatch_total=int(shadow["shadow_mismatch_total"]),
+        shadow_error_total=int(shadow["shadow_error_total"]),
+        shadow_critical_total=int(shadow["shadow_critical_total"]),
+        shadow_warning_total=int(shadow["shadow_warning_total"]),
+        shadow_match_rate=shadow["shadow_match_rate"],
+        shadow_latency_ms_avg=shadow["shadow_latency_ms_avg"],
     )

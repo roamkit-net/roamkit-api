@@ -40,6 +40,11 @@ class CreditConversionService:
                     )
                 return entry
 
+            if locked.shadow_only:
+                raise ObservationTransitionError(
+                    "shadow_only observation cannot convert (ADR 018 Phase 1)"
+                )
+
             if locked.status == ObservationStatus.CONVERSION_STARTED:
                 # Resume after crash between start and credit.
                 return self._credit_and_finish(locked)

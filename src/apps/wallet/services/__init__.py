@@ -16,6 +16,11 @@ from apps.wallet.services.observation import (
     ObservationSignal,
 )
 from apps.wallet.services.ops import collect_wallet_ops_status, resume_converts
+from apps.wallet.services.shadow import (
+    compare_legacy_deposit,
+    safe_compare_legacy_deposit,
+    shadow_metrics_snapshot,
+)
 
 __all__ = [
     "BackfillReport",
@@ -28,8 +33,11 @@ __all__ = [
     "WalletCutoverFlags",
     "collect_wallet_metrics",
     "collect_wallet_ops_status",
+    "compare_legacy_deposit",
     "get_cutover_flags",
     "resume_converts",
     "run_wallet_backfill",
+    "safe_compare_legacy_deposit",
+    "shadow_metrics_snapshot",
     "validate_wallet_migration",
 ]

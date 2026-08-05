@@ -143,6 +143,9 @@ class DepositObservation(models.Model):
 
     Observation Identity = ``chain`` + ``tx_hash`` + ``log_index``.
     Duplicate adapter signals must collapse to one row.
+
+    ``shadow_only`` rows are ADR 018 Phase 1 dual-path compares. They must
+    never call ``CreditConversionService`` / ``CreditService``.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -169,6 +172,10 @@ class DepositObservation(models.Model):
     confirmations = models.PositiveIntegerField(default=0)
     block_number = models.PositiveBigIntegerField(null=True, blank=True)
     status_reason = models.CharField(max_length=255, blank=True, default="")
+    shadow_only = models.BooleanField(
+        default=False,
+        help_text="ADR 018 shadow dual-path — compare only; never grant Credits.",
+    )
     observed_at = models.DateTimeField(auto_now_add=True)
     pending_at = models.DateTimeField(null=True, blank=True)
     confirmed_at = models.DateTimeField(null=True, blank=True)
@@ -206,3 +213,72 @@ class DepositObservation(models.Model):
 
     def __str__(self) -> str:
         return f"{self.chain}:{self.tx_hash}:{self.log_index} ({self.status})"
+
+
+class ShadowDecisionOutcome(models.TextChoices):
+    EQUAL = "equal", "Equal"
+    DIFFERENT = "different", "Different"
+    ERROR = "error", "Error"
+
+
+class ShadowDecisionSeverity(models.TextChoices):
+    NONE = "none", "None"
+    WARNING = "warning", "Warning"
+    CRITICAL = "critical", "Critical"
+
+
+class ShadowDecision(models.Model):
+    """ADR 018 Phase 1 Shadow Decision Record (compare only — no Credits).
+
+    Deposit → Legacy Result → Shadow Result → Equal/Different → Reason.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    deposit_request = models.OneToOneField(
+        "billing.DepositRequest",
+        on_delete=models.CASCADE,
+        related_name="shadow_decision",
+    )
+    observation = models.ForeignKey(
+        DepositObservation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shadow_decisions",
+    )
+    legacy_amount = models.DecimalField(max_digits=20, decimal_places=6)
+    legacy_account_id = models.UUIDField()
+    legacy_tx_hash = models.CharField(max_length=66)
+    shadow_amount = models.DecimalField(
+        max_digits=20, decimal_places=6, null=True, blank=True
+    )
+    shadow_account_id = models.UUIDField(null=True, blank=True)
+    shadow_observation_status = models.CharField(max_length=32, blank=True, default="")
+    shadow_would_credit = models.BooleanField(default=False)
+    outcome = models.CharField(max_length=16, choices=ShadowDecisionOutcome.choices)
+    severity = models.CharField(
+        max_length=16,
+        choices=ShadowDecisionSeverity.choices,
+        default=ShadowDecisionSeverity.NONE,
+    )
+    reason = models.CharField(max_length=255, blank=True, default="")
+    latency_ms = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "shadow decision"
+        verbose_name_plural = "shadow decisions"
+        indexes = [
+            models.Index(
+                fields=["outcome", "severity"],
+                name="wallet_shadow_outcome_sev",
+            ),
+            models.Index(fields=["created_at"], name="wallet_shadow_created"),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"ShadowDecision deposit={self.deposit_request_id} "
+            f"{self.outcome}/{self.severity}"
+        )

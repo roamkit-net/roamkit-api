@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from apps.wallet.models import DepositObservation, WalletAddress, WalletIdentity
+from apps.wallet.models import (
+    DepositObservation,
+    ShadowDecision,
+    WalletAddress,
+    WalletIdentity,
+)
 
 
 class WalletAddressInline(admin.TabularInline):
@@ -91,9 +96,10 @@ class DepositObservationAdmin(admin.ModelAdmin):
         "amount",
         "wallet_address",
         "confirmations",
+        "shadow_only",
         "observed_at",
     )
-    list_filter = ("chain", "status")
+    list_filter = ("chain", "status", "shadow_only")
     search_fields = ("tx_hash", "id", "wallet_address__address")
     readonly_fields = (
         "id",
@@ -108,6 +114,7 @@ class DepositObservationAdmin(admin.ModelAdmin):
         "confirmations",
         "block_number",
         "status_reason",
+        "shadow_only",
         "observed_at",
         "pending_at",
         "confirmed_at",
@@ -118,6 +125,50 @@ class DepositObservationAdmin(admin.ModelAdmin):
         "updated_at",
     )
     raw_id_fields = ("wallet_address",)
+
+    def has_add_permission(self, request) -> bool:
+        return False
+
+    def has_change_permission(self, request, obj=None) -> bool:
+        return False
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False
+
+
+@admin.register(ShadowDecision)
+class ShadowDecisionAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "deposit_request",
+        "outcome",
+        "severity",
+        "reason",
+        "legacy_amount",
+        "shadow_amount",
+        "latency_ms",
+        "created_at",
+    )
+    list_filter = ("outcome", "severity")
+    search_fields = ("id", "legacy_tx_hash", "reason", "deposit_request__id")
+    readonly_fields = (
+        "id",
+        "deposit_request",
+        "observation",
+        "legacy_amount",
+        "legacy_account_id",
+        "legacy_tx_hash",
+        "shadow_amount",
+        "shadow_account_id",
+        "shadow_observation_status",
+        "shadow_would_credit",
+        "outcome",
+        "severity",
+        "reason",
+        "latency_ms",
+        "created_at",
+    )
+    raw_id_fields = ("deposit_request", "observation")
 
     def has_add_permission(self, request) -> bool:
         return False
