@@ -1,7 +1,8 @@
 openapi: 3.0.3
 info:
   description: Self-service eSIM API. Public REST under `/api/v1/`. Staff Operations Dashboard under `/api/v1/admin/`
-    (read-only). Authenticate with JWT Bearer tokens from `/api/v1/auth/token/`.
+    (read-only). Staff internal tools under `/api/internal/`. Authenticate with JWT Bearer tokens from
+    `/api/v1/auth/token/`.
   title: RoamKit API
   version: 1.0.0
 servers:
@@ -26,6 +27,8 @@ tags:
   name: Users
 - description: Staff-only read-only Operations Dashboard (members, search, aggregates)
   name: Ops
+- description: Staff-only internal tools under `/api/internal/` (pricing preview; not public catalog)
+  name: Internal
 paths:
   /api/internal/pricing/preview:
     post:
