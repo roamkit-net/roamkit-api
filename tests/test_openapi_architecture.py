@@ -1,4 +1,4 @@
-"""Architecture tests: OpenAPI covers 100% of /api/v1/ and documents auth."""
+"""Architecture tests: OpenAPI covers 100% of /api/v1/ and /api/internal/."""
 
 from __future__ import annotations
 
@@ -33,6 +33,8 @@ PUBLIC_OPERATION_IDS = frozenset(
     }
 )
 
+_API_PREFIXES = ("api/v1/", "api/internal/")
+
 
 def _normalize_path(path: str) -> str:
     path = "/" + path.lstrip("/")
@@ -45,18 +47,18 @@ def _normalize_path(path: str) -> str:
     return path
 
 
-def _collect_api_v1_paths(patterns=None, prefix: str = "") -> set[str]:
+def _collect_documented_api_paths(patterns=None, prefix: str = "") -> set[str]:
     if patterns is None:
         patterns = get_resolver().url_patterns
     found: set[str] = set()
     for pattern in patterns:
         if isinstance(pattern, URLResolver):
-            found |= _collect_api_v1_paths(
+            found |= _collect_documented_api_paths(
                 pattern.url_patterns, prefix + str(pattern.pattern)
             )
         elif isinstance(pattern, URLPattern):
             full = prefix + str(pattern.pattern)
-            if full.startswith("api/v1/"):
+            if full.startswith(_API_PREFIXES):
                 found.add(_normalize_path(full))
     return found
 
@@ -79,8 +81,8 @@ def _iter_operations(schema: dict):
 
 @pytest.mark.django_db
 def test_openapi_path_coverage_is_complete() -> None:
-    """100% of public /api/v1/ routes must appear in OpenAPI (and reverse)."""
-    django_paths = _collect_api_v1_paths()
+    """Documented API routes (/api/v1/, /api/internal/) must match OpenAPI."""
+    django_paths = _collect_documented_api_paths()
     schema = SchemaGenerator().get_schema(request=None, public=True)
     openapi_paths = {
         _normalize_path(p) if not p.endswith("/") else p

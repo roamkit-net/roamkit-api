@@ -213,6 +213,7 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": (
         "Self-service eSIM API. Public REST under `/api/v1/`. "
         "Staff Operations Dashboard under `/api/v1/admin/` (read-only). "
+        "Staff internal tools under `/api/internal/`. "
         "Authenticate with JWT Bearer tokens from `/api/v1/auth/token/`."
     ),
     "VERSION": "1.0.0",
@@ -242,6 +243,13 @@ SPECTACULAR_SETTINGS = {
             "description": (
                 "Staff-only read-only Operations Dashboard "
                 "(members, search, aggregates)"
+            ),
+        },
+        {
+            "name": "Internal",
+            "description": (
+                "Staff-only internal tools under `/api/internal/` "
+                "(pricing preview; not public catalog)"
             ),
         },
     ],
