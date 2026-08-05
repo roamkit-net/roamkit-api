@@ -56,6 +56,8 @@ def test_confirmation_and_observation_do_not_import_billing_credit() -> None:
         "allocation.py",
         "hd.py",
         "funding.py",
+        "metrics.py",
+        "ops.py",
     ):
         path = WALLET_ROOT / "services" / name
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
