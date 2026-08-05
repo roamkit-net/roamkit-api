@@ -327,9 +327,7 @@ WALLET_ADDRESS_ENABLED = (
     os.environ.get("WALLET_ADDRESS_ENABLED", "false").lower() == "true"
 )
 OBSERVATION_ENABLED = os.environ.get("OBSERVATION_ENABLED", "false").lower() == "true"
-CREDIT_CONVERSION_V2 = (
-    os.environ.get("CREDIT_CONVERSION_V2", "false").lower() == "true"
-)
+CREDIT_CONVERSION_V2 = os.environ.get("CREDIT_CONVERSION_V2", "false").lower() == "true"
 SHADOW_MODE = os.environ.get("SHADOW_MODE", "false").lower() == "true"
 
 # Polygon USDT deposits (ADR-010). Defaults match mainnet; set wallet in env.
