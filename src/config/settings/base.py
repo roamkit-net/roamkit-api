@@ -298,6 +298,10 @@ GOOGLE_OAUTH_CLOCK_SKEW_SECONDS = int(
     os.environ.get("GOOGLE_OAUTH_CLOCK_SKEW_SECONDS", "60")
 )
 
+# Platform Wallet Infrastructure (ADR 017 / RFC 004). BIP39 mnemonic for HD
+# receive addresses; empty until allocate — never commit a real seed.
+WALLET_HD_MNEMONIC = os.environ.get("WALLET_HD_MNEMONIC", "")
+
 # Polygon USDT deposits (ADR-010). Defaults match mainnet; set wallet in env.
 POLYGON_RPC_URL = os.environ.get("POLYGON_RPC_URL", "")
 POLYGON_USDT_CONTRACT = os.environ.get(
