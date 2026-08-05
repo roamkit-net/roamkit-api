@@ -24,12 +24,14 @@ from apps.ops.permissions import IsStaff
 from apps.ops.serializers import (
     OpsDashboardSerializer,
     OpsDepositListItemSerializer,
+    OpsHealthSerializer,
     OpsOrderListItemSerializer,
     OpsSearchResponseSerializer,
     OpsUserDetailSerializer,
     OpsUserListItemSerializer,
 )
 from apps.ops.services.dashboard import build_dashboard
+from apps.ops.services.health import build_ops_health
 from apps.ops.services.members import (
     serialize_user_detail,
     serialize_user_list_item,
@@ -77,6 +79,35 @@ class OpsListAPIView(NoStoreCacheMixin, ListAPIView):
 class OpsDashboardView(OpsAPIView):
     def get(self, request: Request) -> Response:
         return Response(build_dashboard(), status=status.HTTP_200_OK)
+
+
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Ops"],
+        operation_id="ops_health",
+        summary="Operations health aggregate",
+        description=(
+            "Staff-only read-only health snapshot: dependencies, workers, "
+            "providers, metrics, version/deployment metadata. "
+            "Checks are read-only with per-check timeouts; overall_status "
+            "follows the Observability V1 matrix."
+        ),
+        responses={
+            200: OpenApiResponse(
+                response=OpsHealthSerializer, description="Health aggregate"
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Staff required"
+            ),
+        },
+    ),
+)
+class OpsHealthView(OpsAPIView):
+    def get(self, request: Request) -> Response:
+        return Response(build_ops_health(), status=status.HTTP_200_OK)
 
 
 @extend_schema_view(
