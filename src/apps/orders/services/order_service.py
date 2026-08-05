@@ -1,4 +1,4 @@
-"""Order fulfillment service — debit-reserve then provider (ADR-010)."""
+"""Order fulfillment service — debit-reserve then provider (ADR-010 / ADR-019)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from apps.esims.services.lifecycle_service import lifecycle_service
 from apps.orders.exceptions import IdempotencyKeyRequiredError, SpendInProgressError
 from apps.orders.models import Order
 from apps.orders.product_snapshot import product_snapshot_kwargs
+from apps.pricing.charge import resolve_package_charge
 from shared.events.billing_events import (
     CreditDebited,
     CreditGranted,
@@ -25,7 +26,6 @@ from shared.events.event_bus import event_bus
 from shared.events.order_events import AiraloOrderCreated
 
 if TYPE_CHECKING:
-    from decimal import Decimal
 
     from apps.accounts.models import User
     from apps.billing.models import Account, CreditLedgerEntry
@@ -38,9 +38,9 @@ logger = logging.getLogger(__name__)
 class OrderService:
     """Creates local orders and fulfills them via an OrderProvider.
 
-    Paid path (default): debit credits and reserve the Order in one DB
-    transaction, then call the provider. Provider failure → compensating
-    REFUND credit + FAILED status + snapshot events.
+    Paid path (default): resolve price once → snapshot on Order → debit from
+    snapshot → provider. Provider failure → compensating REFUND from snapshot
+    charged amount (never re-resolve).
 
     Paid requests require ``idempotency_key`` (same pattern as deposits):
     retries return the prior FULFILLED/FAILED result without a second debit
@@ -63,7 +63,6 @@ class OrderService:
     ) -> Order:
         """Place a provider order and persist Order + Esim rows."""
         account = ensure_billing_account(user)
-        amount = package.price_usd
 
         if not skip_payment and not idempotency_key:
             raise IdempotencyKeyRequiredError("idempotency_key is required")
@@ -72,12 +71,16 @@ class OrderService:
             account=account,
             package=package,
             customer_ref=customer_ref,
-            amount=amount,
             skip_payment=skip_payment,
             idempotency_key=idempotency_key,
         )
         if replay:
             return order
+
+        # Snapshot is source of truth for charge after reserve (ADR 019).
+        amount = order.retail_price_usd
+        if amount is None:
+            raise RuntimeError("Order missing retail_price_usd snapshot after reserve")
 
         if debit_entry is not None:
             event_bus.publish(
@@ -98,7 +101,6 @@ class OrderService:
             self._compensate_failed(
                 order=order,
                 account=account,
-                amount=amount,
                 skip_payment=skip_payment,
             )
             logger.exception("Order %s provider fulfillment failed", order.pk)
@@ -114,7 +116,6 @@ class OrderService:
         account: Account,
         package: Package,
         customer_ref: str | None,
-        amount: Decimal,
         skip_payment: bool,
         idempotency_key: str | None,
     ) -> tuple[Order, CreditLedgerEntry | None, bool]:
@@ -130,6 +131,19 @@ class OrderService:
                         raise SpendInProgressError("Order request is still in progress")
                     return existing, None, True
 
+            # Resolve at most once per new order; snapshot before debit.
+            _charge, pricing_kwargs = resolve_package_charge(
+                account=account, package=package
+            )
+            create_kwargs = {
+                **product_snapshot_kwargs(package),
+                **pricing_kwargs,
+            }
+            # Ensure charged amount is always on the row (legacy + flag paths).
+            if "retail_price_usd" not in pricing_kwargs:
+                create_kwargs["retail_price_usd"] = package.price_usd
+                create_kwargs.setdefault("list_price_usd", package.price_usd)
+
             try:
                 order = Order.objects.create(
                     account=account,
@@ -137,7 +151,7 @@ class OrderService:
                     status=Order.Status.FULFILLING,
                     customer_ref=customer_ref or "",
                     idempotency_key=idempotency_key or None,
-                    **product_snapshot_kwargs(package),
+                    **create_kwargs,
                 )
             except IntegrityError:
                 existing = Order.objects.filter(idempotency_key=idempotency_key).first()
@@ -159,6 +173,10 @@ class OrderService:
             if not settings.BILLING_ENABLED:
                 raise BillingDisabledError("Billing is disabled")
 
+            amount = order.retail_price_usd
+            if amount is None:
+                raise RuntimeError("Order missing retail_price_usd before debit")
+
             entry = credit_service.debit(
                 account,
                 amount,
@@ -173,7 +191,6 @@ class OrderService:
         *,
         order: Order,
         account: Account,
-        amount: Decimal,
         skip_payment: bool,
     ) -> None:
         events: list[CreditGranted | FulfillmentRefunded] = []
@@ -186,6 +203,10 @@ class OrderService:
 
             if skip_payment:
                 return
+
+            amount = locked.retail_price_usd
+            if amount is None:
+                raise RuntimeError("Order missing retail_price_usd for refund")
 
             entry = credit_service.credit(
                 account,

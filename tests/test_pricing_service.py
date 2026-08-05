@@ -259,10 +259,10 @@ def test_no_quantize_outside_money_round_in_pricing_and_spend():
     assert offenders == [], f"quantize outside money_round: {offenders}"
 
 
-def test_order_service_still_uses_package_price_usd():
-    """PR2 must not change debit source — OrderService still reads package.price_usd."""
+def test_order_service_resolve_only_via_charge_helper():
+    """PR3: OrderService uses charge helper once in reserve; not raw resolve."""
     path = SRC_ROOT / "apps" / "orders" / "services" / "order_service.py"
     text = path.read_text(encoding="utf-8")
-    assert "amount = package.price_usd" in text
-    assert "PricingService" not in text
-    assert "pricing_service" not in text
+    assert "resolve_package_charge" in text
+    assert "pricing_service.resolve" not in text
+    assert "amount = package.price_usd" not in text
