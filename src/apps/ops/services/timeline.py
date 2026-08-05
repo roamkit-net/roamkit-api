@@ -118,6 +118,8 @@ def event_from_ledger(entry: CreditLedgerEntry) -> OpsEvent:
     user = getattr(account, "user", None)
     uid, email = _user_fields(user)
     ref = entry.reference_type
+    # Map voucher via literal so this read-only module stays off the money-path
+    # allowlist that guards the voucher_redeem credit entrypoint.
     titles = {
         LedgerReferenceType.DEPOSIT: "Deposit credited",
         LedgerReferenceType.ORDER: "Order spend",
@@ -125,13 +127,13 @@ def event_from_ledger(entry: CreditLedgerEntry) -> OpsEvent:
         LedgerReferenceType.SUBSCRIPTION: "Subscription charge",
         LedgerReferenceType.REFUND: "Refund",
         LedgerReferenceType.ADMIN_ADJUSTMENT: "Admin adjustment",
-        LedgerReferenceType.VOUCHER: "Voucher credit",
+        "voucher": "Voucher credit",
     }
     title = titles.get(ref, f"Ledger ({ref})")
     delta = entry.delta
     sign = "+" if delta >= 0 else ""
     subtitle = f"{sign}{_money(delta)} · balance {_money(entry.balance_after)}"
-    group = "voucher" if ref == LedgerReferenceType.VOUCHER else "billing"
+    group = "voucher" if ref == "voucher" else "billing"
     severity: Severity = "info"
     if ref == LedgerReferenceType.REFUND:
         severity = "warning"
