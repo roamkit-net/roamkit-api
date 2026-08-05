@@ -28,7 +28,7 @@ HEALTH_SCHEMA_VERSION = 1
 TIMEOUT_MS = {
     "database": 100,
     "redis": 100,
-    "celery_worker": 250,
+    "celery_worker": 1000,
     "celery_beat": 250,
     "polygon_rpc": 500,
     "airalo": 100,
@@ -36,8 +36,9 @@ TIMEOUT_MS = {
     "api": 50,
 }
 
-# In-process Polygon probe cache TTL (no Redis writes — read-only guardrail).
+# In-process probe caches (no Redis writes — read-only guardrail).
 POLYGON_CACHE_TTL_SECONDS = 45
+CELERY_WORKER_CACHE_TTL_SECONDS = 20
 
 
 @dataclass(slots=True)

@@ -21,6 +21,7 @@ from apps.billing.models import DepositRequest
 from apps.catalog.models import Package
 from apps.esims.models import Esim
 from apps.ops.services.health_dto import (
+    CELERY_WORKER_CACHE_TTL_SECONDS,
     HEALTH_SCHEMA_VERSION,
     POLYGON_CACHE_TTL_SECONDS,
     TIMEOUT_MS,
@@ -32,8 +33,17 @@ from apps.ops.services.health_dto import (
 )
 from apps.orders.models import Order
 
-# Process-local Polygon probe cache (no Redis writes).
+# Process-local probe caches (no Redis writes).
 _polygon_cache: dict[str, Any] = {"expires_at": 0.0, "check": None}
+_celery_worker_cache: dict[str, Any] = {"expires_at": 0.0, "check": None}
+
+
+def clear_probe_caches() -> None:
+    """Reset in-process probe caches (tests / cold start)."""
+    _polygon_cache["expires_at"] = 0.0
+    _polygon_cache["check"] = None
+    _celery_worker_cache["expires_at"] = 0.0
+    _celery_worker_cache["check"] = None
 
 
 def _elapsed_ms(start: float) -> int:
@@ -124,8 +134,7 @@ def _check_redis() -> HealthCheck:
         )
 
 
-def _check_celery_worker() -> HealthCheck:
-    timeout_ms = TIMEOUT_MS["celery_worker"]
+def _probe_celery_worker_live(timeout_ms: int) -> HealthCheck:
     started = time.perf_counter()
     checked = iso_now()
     try:
@@ -156,7 +165,8 @@ def _check_celery_worker() -> HealthCheck:
             latency_ms=latency,
             details={},
         )
-    except Exception as exc:  # noqa: BLE001 — surface as degraded, never raise
+    except Exception as exc:  # noqa: BLE001 — surface probe failure, never raise
+        # Probe could not complete → unknown; timed-out inspect → degraded.
         if _elapsed_ms(started) >= timeout_ms:
             reason = "timeout"
             status = "degraded"
@@ -173,6 +183,55 @@ def _check_celery_worker() -> HealthCheck:
             latency_ms=_elapsed_ms(started),
             details={},
         )
+
+
+def _check_celery_worker() -> HealthCheck:
+    """Celery worker ping with short in-process TTL (avoids inspect flapping)."""
+    timeout_ms = TIMEOUT_MS["celery_worker"]
+    now = time.time()
+    cached = _celery_worker_cache.get("check")
+    expires_at = float(_celery_worker_cache.get("expires_at") or 0.0)
+    if cached is not None and now < expires_at:
+        ttl_ms = int((expires_at - now) * 1000)
+        check: HealthCheck = cached
+        return HealthCheck(
+            status=check.status,
+            reason=check.reason,
+            message=check.message,
+            checked_at=iso_now(),
+            source="cached",
+            timeout_ms=timeout_ms,
+            latency_ms=check.latency_ms,
+            last_success_at=check.last_success_at,
+            cache=CacheMeta(
+                hit=True,
+                ttl_remaining_ms=ttl_ms,
+                expires_at=iso_now(timezone.now() + timedelta(milliseconds=ttl_ms)),
+            ),
+            details=dict(check.details or {}),
+        )
+
+    live = _probe_celery_worker_live(timeout_ms)
+    _celery_worker_cache["check"] = live
+    _celery_worker_cache["expires_at"] = now + CELERY_WORKER_CACHE_TTL_SECONDS
+    return HealthCheck(
+        status=live.status,
+        reason=live.reason,
+        message=live.message,
+        checked_at=live.checked_at,
+        source="live",
+        timeout_ms=timeout_ms,
+        latency_ms=live.latency_ms,
+        last_success_at=live.last_success_at,
+        cache=CacheMeta(
+            hit=False,
+            ttl_remaining_ms=CELERY_WORKER_CACHE_TTL_SECONDS * 1000,
+            expires_at=iso_now(
+                timezone.now() + timedelta(seconds=CELERY_WORKER_CACHE_TTL_SECONDS)
+            ),
+        ),
+        details=dict(live.details or {}),
+    )
 
 
 def _check_celery_beat() -> HealthCheck:
