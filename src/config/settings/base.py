@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "core.apps.CoreConfig",
     "apps.accounts",
     "apps.billing",
+    "apps.wallet",
     "apps.catalog",
     "apps.orders",
     "apps.esims",
