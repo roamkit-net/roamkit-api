@@ -34,5 +34,14 @@ class Command(BaseCommand):
         self.stdout.write(f"shadow_warning_total={data['shadow_warning_total']}")
         self.stdout.write(f"shadow_match_rate={data['shadow_match_rate']}")
         self.stdout.write(f"shadow_latency_ms_avg={data['shadow_latency_ms_avg']}")
+        self.stdout.write(f"cutover_cohort_size={data['cutover_cohort_size']}")
+        self.stdout.write(
+            f"cutover_cohort_deposits_completed="
+            f"{data['cutover_cohort_deposits_completed']}"
+        )
+        self.stdout.write(
+            f"cutover_limited_traffic_active={data['cutover_limited_traffic_active']}"
+        )
+        self.stdout.write(f"cutover_rollback_status={data['cutover_rollback_status']}")
         for status_name, count in sorted(data["observation_counts"].items()):
             self.stdout.write(f"observation[{status_name}]={count}")

@@ -60,6 +60,8 @@ def iter_convertible_observations(*, limit: int | None = None):
     """Confirmed or Conversion Started — eligible for CreditConversionService.
 
     Excludes ADR 018 ``shadow_only`` rows (compare-only; never grant Credits).
+    Phase 2: further filtered by cohort + ``CREDIT_CONVERSION_V2`` in
+    ``resume_converts``.
     """
     qs = DepositObservation.objects.filter(
         status__in=(
@@ -77,19 +79,29 @@ def resume_converts(*, apply: bool, limit: int | None = None) -> dict[str, Any]:
     """Resume Confirmed / Conversion Started → Credited.
 
     Dry-run (``apply=False``) lists candidates only. Never invents a side ledger.
+    Skips accounts outside the Limited Traffic cohort when conversion is gated.
     """
+    from apps.wallet.services.flags import should_use_credit_conversion_v2
+
     svc = CreditConversionService()
     candidates = list(iter_convertible_observations(limit=limit))
     results: list[dict[str, str]] = []
     credited = 0
     errors = 0
+    skipped = 0
 
     for obs in candidates:
+        account_id = obs.wallet_address.wallet_identity.account_id
         item = {
             "id": str(obs.pk),
             "status": obs.status,
             "identity": f"{obs.chain}:{obs.tx_hash}:{obs.log_index}",
         }
+        if not should_use_credit_conversion_v2(account_id):
+            item["action"] = "skipped_not_in_cohort"
+            skipped += 1
+            results.append(item)
+            continue
         if not apply:
             item["action"] = "would_convert"
             results.append(item)
@@ -110,5 +122,6 @@ def resume_converts(*, apply: bool, limit: int | None = None) -> dict[str, Any]:
         "candidates": len(candidates),
         "credited": credited,
         "errors": errors,
+        "skipped": skipped,
         "results": results,
     }

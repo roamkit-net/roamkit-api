@@ -44,7 +44,9 @@ class _FakeBlockchainProvider:
         self._result = result
         self.calls: list[str] = []
 
-    def fetch_usdt_transfer(self, tx_hash: str) -> TransferResult:
+    def fetch_usdt_transfer(
+        self, tx_hash: str, *, to_address: str | None = None
+    ) -> TransferResult:
         self.calls.append(tx_hash)
         if isinstance(self._result, Exception):
             raise self._result

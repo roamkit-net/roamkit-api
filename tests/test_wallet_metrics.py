@@ -73,6 +73,8 @@ def test_wallet_metrics_command() -> None:
     assert "shadow_match_total=" in text
     assert "shadow_mismatch_total=" in text
     assert "shadow_match_rate=" in text
+    assert "cutover_cohort_size=" in text
+    assert "cutover_rollback_status=" in text
 
 
 @pytest.mark.django_db

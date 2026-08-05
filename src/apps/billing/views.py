@@ -174,7 +174,8 @@ class DepositInfoView(BillingAPIView):
     """GET /api/v1/billing/deposit-info/ — full Polygon USDT meta + EIP-681 URI."""
 
     def get(self, request: Request) -> Response:
-        return Response(DepositInfoSerializer(get_deposit_info()).data)
+        account = ensure_billing_account(request.user)
+        return Response(DepositInfoSerializer(get_deposit_info(account=account)).data)
 
 
 @extend_schema_view(

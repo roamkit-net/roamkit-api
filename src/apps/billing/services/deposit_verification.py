@@ -274,6 +274,13 @@ class DepositVerificationService:
             raise
 
     def _verify_pending(self, deposit: DepositRequest) -> DepositRequest:
+        from apps.wallet.services.flags import should_use_wallet_money_path
+
+        if should_use_wallet_money_path(deposit.account_id):
+            return self._verify_pending_wallet_path(deposit)
+        return self._verify_pending_legacy(deposit)
+
+    def _verify_pending_legacy(self, deposit: DepositRequest) -> DepositRequest:
         tx_hash = deposit.tx_hash
         if not tx_hash:
             reason = "Deposit is missing tx_hash"
@@ -292,6 +299,48 @@ class DepositVerificationService:
             self._mark_failed(deposit, str(exc))
             raise DepositVerificationFailedError(str(exc)) from exc
 
+        return self._apply_transfer_gates(deposit, transfer, complete=self._complete)
+
+    def _verify_pending_wallet_path(self, deposit: DepositRequest) -> DepositRequest:
+        """ADR 018 Phase 2: WalletAddress → Observation → Credit Conversion."""
+        from apps.wallet.services.allocation import WalletAllocationService
+
+        tx_hash = deposit.tx_hash
+        if not tx_hash:
+            reason = "Deposit is missing tx_hash"
+            self._mark_failed(deposit, reason)
+            raise DepositVerificationFailedError(reason)
+
+        wallet_address = WalletAllocationService().ensure_active_address(
+            deposit.account
+        )
+        try:
+            transfer = self.provider.fetch_usdt_transfer(
+                tx_hash, to_address=wallet_address.address
+            )
+        except TransferNotFoundError as exc:
+            self._mark_failed(deposit, str(exc))
+            raise DepositVerificationFailedError(str(exc)) from exc
+        except BlockchainRPCError as exc:
+            self._mark_failed(deposit, f"RPC error: {exc}")
+            raise
+        except BlockchainProviderError as exc:
+            self._mark_failed(deposit, str(exc))
+            raise DepositVerificationFailedError(str(exc)) from exc
+
+        return self._apply_transfer_gates(
+            deposit,
+            transfer,
+            complete=lambda d, t: self._complete_wallet_path(d, t, wallet_address),
+        )
+
+    def _apply_transfer_gates(
+        self,
+        deposit: DepositRequest,
+        transfer: TransferResult,
+        *,
+        complete,
+    ) -> DepositRequest:
         deposit.raw_rpc_response = transfer.raw_rpc_response
         deposit.save(update_fields=["raw_rpc_response", "updated_at"])
 
@@ -313,7 +362,125 @@ class DepositVerificationService:
             self._mark_failed(deposit, reason, raw=transfer.raw_rpc_response)
             raise AmountMismatchError(transfer.amount, deposit.amount_requested)
 
-        return self._complete(deposit, transfer)
+        return complete(deposit, transfer)
+
+    def _complete_wallet_path(
+        self,
+        deposit: DepositRequest,
+        transfer: TransferResult,
+        wallet_address,
+    ) -> DepositRequest:
+        """Credit via Observation + Conversion only (no legacy deposit: ledger key)."""
+        from apps.wallet.models import ObservationStatus, WalletChain
+        from apps.wallet.services.conversion import CreditConversionService
+        from apps.wallet.services.observation import (
+            DepositObservationService,
+            ObservationSignal,
+        )
+
+        events: list[DepositVerified | CreditGranted] = []
+
+        with transaction.atomic():
+            locked = (
+                DepositRequest.objects.select_for_update()
+                .select_related("account")
+                .get(pk=deposit.pk)
+            )
+            if locked.status == DepositRequest.Status.COMPLETED:
+                return locked
+            if locked.status == DepositRequest.Status.FAILED:
+                return locked
+
+            other_completed = (
+                DepositRequest.objects.select_for_update()
+                .filter(
+                    tx_hash=locked.tx_hash,
+                    status=DepositRequest.Status.COMPLETED,
+                )
+                .exclude(pk=locked.pk)
+                .exists()
+            )
+            if other_completed:
+                locked.status = DepositRequest.Status.FAILED
+                locked.failure_reason = (
+                    f"Transaction already credited: {locked.tx_hash}"
+                )
+                locked.raw_rpc_response = transfer.raw_rpc_response
+                locked.save(
+                    update_fields=[
+                        "status",
+                        "failure_reason",
+                        "raw_rpc_response",
+                        "updated_at",
+                    ]
+                )
+                raise DuplicateTransactionError(locked.failure_reason)
+
+            log_index = _log_index_from_transfer(transfer)
+            signal = ObservationSignal(
+                chain=WalletChain.POLYGON,
+                tx_hash=locked.tx_hash or transfer.tx_hash,
+                log_index=log_index,
+                to_address=wallet_address.address,
+                amount=transfer.amount,
+                token_contract=transfer.token_contract,
+                confirmations=int(transfer.confirmations),
+                from_address=transfer.from_address or "",
+                block_number=transfer.block_number,
+            )
+            observation = DepositObservationService().ingest(signal, shadow_only=False)
+            if observation.status != ObservationStatus.CONFIRMED:
+                raise DepositVerificationFailedError(
+                    f"Observation not confirmed: {observation.status} "
+                    f"({observation.status_reason})"
+                )
+
+            entry = CreditConversionService().convert(observation)
+
+            locked.amount_credited = transfer.amount
+            locked.status = DepositRequest.Status.COMPLETED
+            locked.verified_at = timezone.now()
+            locked.failure_reason = ""
+            locked.raw_rpc_response = transfer.raw_rpc_response
+            locked.save(
+                update_fields=[
+                    "amount_credited",
+                    "status",
+                    "verified_at",
+                    "failure_reason",
+                    "raw_rpc_response",
+                    "updated_at",
+                ]
+            )
+
+            events.append(
+                DepositVerified(
+                    deposit_id=str(locked.pk),
+                    account_id=str(locked.account_id),
+                    amount=transfer.amount,
+                    balance_after=entry.balance_after,
+                    tx_hash=locked.tx_hash or transfer.tx_hash,
+                    payment_method=locked.payment_method,
+                    ledger_entry_id=str(entry.pk),
+                    verified_at=locked.verified_at,
+                )
+            )
+            events.append(
+                CreditGranted(
+                    account_id=str(locked.account_id),
+                    amount=transfer.amount,
+                    balance_after=entry.balance_after,
+                    reference_type=LedgerReferenceType.DEPOSIT,
+                    reference_id=str(observation.pk),
+                    ledger_entry_id=str(entry.pk),
+                    created_at=entry.created_at,
+                )
+            )
+            deposit = locked
+
+        for event in events:
+            event_bus.publish(event)
+        return deposit
 
     def _complete(
         self, deposit: DepositRequest, transfer: TransferResult
@@ -457,6 +624,17 @@ class DepositVerificationService:
 
 
 deposit_verification_service = DepositVerificationService()
+
+
+def _log_index_from_transfer(transfer: TransferResult) -> int:
+    matched = (transfer.raw_rpc_response or {}).get("matched_log") or {}
+    raw = matched.get("logIndex", matched.get("index", 0))
+    if isinstance(raw, str):
+        text = raw.strip().lower()
+        if text.startswith("0x"):
+            return int(text, 16)
+        return int(text)
+    return int(raw or 0)
 
 
 def _normalize_tx_hash(value: str) -> str:

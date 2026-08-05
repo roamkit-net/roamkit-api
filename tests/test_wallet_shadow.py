@@ -40,7 +40,9 @@ class _FakeBlockchainProvider:
     def __init__(self, result: TransferResult) -> None:
         self._result = result
 
-    def fetch_usdt_transfer(self, tx_hash: str) -> TransferResult:
+    def fetch_usdt_transfer(
+        self, tx_hash: str, *, to_address: str | None = None
+    ) -> TransferResult:
         return self._result
 
 
