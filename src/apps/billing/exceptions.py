@@ -81,6 +81,31 @@ class DepositVerificationFailedError(DepositVerificationError):
     """Raised when on-chain verification fails (wrong amount, reverted, missing)."""
 
 
+class AmountMismatchError(DepositVerificationFailedError):
+    """Raised when on-chain transfer amount != amount_requested (exact match)."""
+
+    code = "AMOUNT_MISMATCH"
+
+    def __init__(
+        self,
+        on_chain_amount: Decimal,
+        requested_amount: Decimal,
+    ) -> None:
+        self.on_chain_amount = on_chain_amount
+        self.requested_amount = requested_amount
+        super().__init__(
+            "Amount mismatch: on-chain "
+            f"{on_chain_amount} != requested {requested_amount}"
+        )
+
+    def to_api_extras(self) -> dict[str, str]:
+        """Structured fields for 400 responses (alongside DepositRequest body)."""
+        return {
+            "code": self.code,
+            "on_chain_amount": f"{self.on_chain_amount:.6f}",
+        }
+
+
 class SubscriptionsDisabledError(CreditServiceError):
     """Raised when subscriptions are disabled via SUBSCRIPTIONS_ENABLED."""
 

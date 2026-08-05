@@ -19,6 +19,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.billing.exceptions import (
+    AmountMismatchError,
     BillingDisabledError,
     DepositVerificationError,
     DepositVerificationFailedError,
@@ -301,6 +302,20 @@ def _verify_deposit(request: Request, *, payment_method: str) -> Response:
         return Response(payload, status=status.HTTP_202_ACCEPTED)
     except DuplicateTransactionError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+    except AmountMismatchError as exc:
+        deposit = DepositRequest.objects.filter(idempotency_key=idempotency_key).first()
+        if deposit is not None:
+            return Response(
+                {
+                    **DepositRequestSerializer(deposit).data,
+                    **exc.to_api_extras(),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            {"detail": str(exc), **exc.to_api_extras()},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     except (DepositVerificationFailedError, InvalidAmountError) as exc:
         deposit = DepositRequest.objects.filter(idempotency_key=idempotency_key).first()
         if deposit is not None:
