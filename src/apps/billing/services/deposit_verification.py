@@ -10,6 +10,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.billing.exceptions import (
+    AmountMismatchError,
     BillingDisabledError,
     DepositVerificationError,
     DepositVerificationFailedError,
@@ -97,9 +98,11 @@ class DepositVerificationService:
     ) -> DepositRequest:
         """Verify ``tx_hash`` and credit ``account`` when on-chain checks pass.
 
-        Idempotent on ``idempotency_key``: a completed (or failed) prior result
-        is returned without a second ledger credit. Completed ``tx_hash`` values
-        cannot be credited twice.
+        Idempotent on ``idempotency_key`` for ``COMPLETED`` results (no second
+        ledger credit). ``FAILED`` deposits for the **same account** may be
+        recovered by correcting ``amount_requested`` and re-running verification
+        (exact-match rule unchanged). Completed ``tx_hash`` values cannot be
+        credited twice.
 
         Raises:
             BillingDisabledError: ``BILLING_ENABLED`` is false.
@@ -108,6 +111,7 @@ class DepositVerificationService:
             DuplicateTransactionError: ``tx_hash`` already credited elsewhere.
             InsufficientConfirmationsError: transfer found but under-confirmed
                 (deposit stays ``PENDING`` for retry).
+            AmountMismatchError: on-chain amount != requested (deposit ``FAILED``).
             DepositVerificationFailedError: permanent verification failure
                 (deposit marked ``FAILED``).
             BlockchainRPCError: RPC failed after retries (deposit marked
@@ -126,21 +130,102 @@ class DepositVerificationService:
             idempotency_key=idempotency_key
         ).first()
         if existing is not None:
-            if existing.status != DepositRequest.Status.PENDING:
+            if existing.status == DepositRequest.Status.COMPLETED:
                 return existing
-            deposit = existing
+            if existing.status == DepositRequest.Status.FAILED:
+                if existing.account_id != account.id:
+                    return existing
+                # Same amount → permanent failure stays failed (no RPC burn).
+                # Corrected amount → self-service recovery (exact-match still applies).
+                if existing.amount_requested == amount:
+                    return existing
+                deposit = self._recover_failed_deposit(
+                    existing,
+                    account=account,
+                    amount_requested=amount,
+                    idempotency_key=idempotency_key,
+                )
+            else:
+                deposit = existing
         else:
-            deposit = self._create_pending_deposit(
-                account=account,
-                tx_hash=normalized_hash,
-                payment_method=method,
-                amount_requested=amount,
-                idempotency_key=idempotency_key,
+            failed_for_tx = (
+                DepositRequest.objects.filter(
+                    tx_hash=normalized_hash,
+                    status=DepositRequest.Status.FAILED,
+                )
+                .select_related("account")
+                .first()
             )
-            if deposit.status != DepositRequest.Status.PENDING:
-                return deposit
+            if failed_for_tx is not None:
+                if failed_for_tx.account_id != account.id:
+                    raise DuplicateTransactionError(
+                        f"Transaction already submitted: {normalized_hash}"
+                    )
+                if failed_for_tx.amount_requested == amount:
+                    return failed_for_tx
+                deposit = self._recover_failed_deposit(
+                    failed_for_tx,
+                    account=account,
+                    amount_requested=amount,
+                    idempotency_key=idempotency_key,
+                )
+            else:
+                deposit = self._create_pending_deposit(
+                    account=account,
+                    tx_hash=normalized_hash,
+                    payment_method=method,
+                    amount_requested=amount,
+                    idempotency_key=idempotency_key,
+                )
+                if deposit.status != DepositRequest.Status.PENDING:
+                    return deposit
 
         return self._verify_pending(deposit)
+
+    def _recover_failed_deposit(
+        self,
+        deposit: DepositRequest,
+        *,
+        account: Account,
+        amount_requested: Decimal,
+        idempotency_key: str,
+    ) -> DepositRequest:
+        """Reset a same-account FAILED deposit for amount-correction retry."""
+        if deposit.account_id != account.id:
+            raise DuplicateTransactionError(
+                f"Transaction already submitted: {deposit.tx_hash}"
+            )
+        if not deposit.tx_hash:
+            raise DepositVerificationError(
+                "Cannot recover a failed deposit without tx_hash"
+            )
+
+        with transaction.atomic():
+            locked = DepositRequest.objects.select_for_update().get(pk=deposit.pk)
+            if locked.status == DepositRequest.Status.COMPLETED:
+                return locked
+            if locked.status != DepositRequest.Status.FAILED:
+                return locked
+            if locked.account_id != account.id:
+                raise DuplicateTransactionError(
+                    f"Transaction already submitted: {locked.tx_hash}"
+                )
+
+            locked.amount_requested = amount_requested
+            locked.status = DepositRequest.Status.PENDING
+            locked.failure_reason = ""
+            update_fields = [
+                "amount_requested",
+                "status",
+                "failure_reason",
+                "updated_at",
+            ]
+            if locked.idempotency_key != idempotency_key:
+                # Client issued a fresh key after FAILED — bind it to this row.
+                locked.idempotency_key = idempotency_key
+                update_fields.append("idempotency_key")
+            locked.save(update_fields=update_fields)
+            return locked
 
     def _create_pending_deposit(
         self,
@@ -223,7 +308,7 @@ class DepositVerificationService:
                 f"{transfer.amount} != requested {deposit.amount_requested}"
             )
             self._mark_failed(deposit, reason, raw=transfer.raw_rpc_response)
-            raise DepositVerificationFailedError(reason)
+            raise AmountMismatchError(transfer.amount, deposit.amount_requested)
 
         return self._complete(deposit, transfer)
 
