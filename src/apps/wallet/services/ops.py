@@ -57,12 +57,16 @@ def collect_wallet_ops_status() -> WalletOpsStatus:
 
 
 def iter_convertible_observations(*, limit: int | None = None):
-    """Confirmed or Conversion Started — eligible for CreditConversionService."""
+    """Confirmed or Conversion Started — eligible for CreditConversionService.
+
+    Excludes ADR 018 ``shadow_only`` rows (compare-only; never grant Credits).
+    """
     qs = DepositObservation.objects.filter(
         status__in=(
             ObservationStatus.CONFIRMED,
             ObservationStatus.CONVERSION_STARTED,
-        )
+        ),
+        shadow_only=False,
     ).order_by("confirmed_at", "observed_at")
     if limit is not None:
         qs = qs[:limit]

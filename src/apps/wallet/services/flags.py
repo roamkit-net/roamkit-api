@@ -1,7 +1,8 @@
 """ADR 018 cutover feature flags (read-only helpers).
 
-Defaults are off. Wiring into deposit-info / Observation / Conversion is
-later Cutover PRs — this module only exposes current settings.
+Defaults are off. ``SHADOW_MODE`` gates Phase 1 dual-path compare
+(``apps.wallet.services.shadow``). deposit-info / default WalletAddress wiring
+is later Cutover PRs.
 """
 
 from __future__ import annotations
