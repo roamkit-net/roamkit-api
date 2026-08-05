@@ -120,3 +120,89 @@ class WalletAddress(models.Model):
 
     def __str__(self) -> str:
         return f"{self.chain}:{self.address} ({self.status})"
+
+
+class ObservationStatus(models.TextChoices):
+    """Deposit Observation state machine (RFC 006).
+
+    Cap 2 owns transitions through Confirmed / Rejected / Expired.
+    Cap 3 owns Credit Conversion Started → Credited.
+    """
+
+    OBSERVED = "observed", "Observed"
+    PENDING_CONFIRMATION = "pending_confirmation", "Pending Confirmation"
+    CONFIRMED = "confirmed", "Confirmed"
+    CONVERSION_STARTED = "conversion_started", "Credit Conversion Started"
+    CREDITED = "credited", "Credited"
+    REJECTED = "rejected", "Rejected"
+    EXPIRED = "expired", "Expired"
+
+
+class DepositObservation(models.Model):
+    """Inbound value observation keyed by Observation Identity (RFC 006).
+
+    Observation Identity = ``chain`` + ``tx_hash`` + ``log_index``.
+    Duplicate adapter signals must collapse to one row.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    wallet_address = models.ForeignKey(
+        WalletAddress,
+        on_delete=models.PROTECT,
+        related_name="observations",
+    )
+    chain = models.CharField(
+        max_length=32,
+        choices=WalletChain.choices,
+        default=WalletChain.POLYGON,
+    )
+    tx_hash = models.CharField(max_length=66)
+    log_index = models.PositiveIntegerField()
+    status = models.CharField(
+        max_length=32,
+        choices=ObservationStatus.choices,
+        default=ObservationStatus.OBSERVED,
+    )
+    amount = models.DecimalField(max_digits=20, decimal_places=6)
+    token_contract = models.CharField(max_length=42)
+    from_address = models.CharField(max_length=42, blank=True, default="")
+    confirmations = models.PositiveIntegerField(default=0)
+    block_number = models.PositiveBigIntegerField(null=True, blank=True)
+    status_reason = models.CharField(max_length=255, blank=True, default="")
+    observed_at = models.DateTimeField(auto_now_add=True)
+    pending_at = models.DateTimeField(null=True, blank=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    conversion_started_at = models.DateTimeField(null=True, blank=True)
+    credited_at = models.DateTimeField(null=True, blank=True)
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    expired_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-observed_at"]
+        verbose_name = "deposit observation"
+        verbose_name_plural = "deposit observations"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["chain", "tx_hash", "log_index"],
+                name="wallet_observation_identity_unique",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name="wallet_observation_amount_gt_0",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(log_index__gte=0),
+                name="wallet_observation_log_index_gte_0",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["status", "chain"], name="wallet_obs_status_chain"),
+            models.Index(
+                fields=["wallet_address", "status"],
+                name="wallet_obs_address_status",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.chain}:{self.tx_hash}:{self.log_index} ({self.status})"

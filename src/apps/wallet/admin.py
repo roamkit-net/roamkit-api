@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from apps.wallet.models import WalletAddress, WalletIdentity
+from apps.wallet.models import DepositObservation, WalletAddress, WalletIdentity
 
 
 class WalletAddressInline(admin.TabularInline):
@@ -69,6 +69,55 @@ class WalletAddressAdmin(admin.ModelAdmin):
         "retired_at",
     )
     raw_id_fields = ("wallet_identity",)
+
+    def has_add_permission(self, request) -> bool:
+        return False
+
+    def has_change_permission(self, request, obj=None) -> bool:
+        return False
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False
+
+
+@admin.register(DepositObservation)
+class DepositObservationAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "chain",
+        "tx_hash",
+        "log_index",
+        "status",
+        "amount",
+        "wallet_address",
+        "confirmations",
+        "observed_at",
+    )
+    list_filter = ("chain", "status")
+    search_fields = ("tx_hash", "id", "wallet_address__address")
+    readonly_fields = (
+        "id",
+        "wallet_address",
+        "chain",
+        "tx_hash",
+        "log_index",
+        "status",
+        "amount",
+        "token_contract",
+        "from_address",
+        "confirmations",
+        "block_number",
+        "status_reason",
+        "observed_at",
+        "pending_at",
+        "confirmed_at",
+        "conversion_started_at",
+        "credited_at",
+        "rejected_at",
+        "expired_at",
+        "updated_at",
+    )
+    raw_id_fields = ("wallet_address",)
 
     def has_add_permission(self, request) -> bool:
         return False
