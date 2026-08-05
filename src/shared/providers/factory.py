@@ -36,3 +36,9 @@ def get_mexc_funding_provider() -> FundingProvider:
     """Return the configured MEXC Funding Provider adapter."""
     provider_class = import_string(settings.MEXC_FUNDING_PROVIDER)
     return provider_class()
+
+
+def get_binance_funding_provider() -> FundingProvider:
+    """Return the configured Binance Funding Provider adapter."""
+    provider_class = import_string(settings.BINANCE_FUNDING_PROVIDER)
+    return provider_class()

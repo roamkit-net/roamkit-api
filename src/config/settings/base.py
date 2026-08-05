@@ -265,6 +265,16 @@ MEXC_WITHDRAW_URL = os.environ.get(
 )
 MEXC_POLYGON_NETWORK_LABEL = os.environ.get("MEXC_POLYGON_NETWORK_LABEL", "MATIC")
 
+BINANCE_FUNDING_PROVIDER = os.environ.get(
+    "BINANCE_FUNDING_PROVIDER",
+    "apps.integrations.binance.providers.BinanceFundingProvider",
+)
+BINANCE_WITHDRAW_URL = os.environ.get(
+    "BINANCE_WITHDRAW_URL",
+    "https://www.binance.com/en/my/wallet/account/main/withdrawal/crypto/USDT",
+)
+BINANCE_POLYGON_NETWORK_LABEL = os.environ.get("BINANCE_POLYGON_NETWORK_LABEL", "MATIC")
+
 AIRALO_CLIENT_ID = os.environ.get("AIRALO_CLIENT_ID", "")
 AIRALO_CLIENT_SECRET = os.environ.get("AIRALO_CLIENT_SECRET", "")
 AIRALO_SANDBOX = os.environ.get("AIRALO_SANDBOX", "true").lower() == "true"
