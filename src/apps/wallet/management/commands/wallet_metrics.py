@@ -42,8 +42,6 @@ class Command(BaseCommand):
         self.stdout.write(
             f"cutover_limited_traffic_active={data['cutover_limited_traffic_active']}"
         )
-        self.stdout.write(
-            f"cutover_rollback_status={data['cutover_rollback_status']}"
-        )
+        self.stdout.write(f"cutover_rollback_status={data['cutover_rollback_status']}")
         for status_name, count in sorted(data["observation_counts"].items()):
             self.stdout.write(f"observation[{status_name}]={count}")
