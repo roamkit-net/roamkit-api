@@ -399,8 +399,10 @@ LOGGING = {
     },
 }
 
-# Release metadata — consumed by GET /version (ADR 013).
+# Release metadata — consumed by GET /version and ops health (ADR 013).
 ROAMKIT_GIT_SHA = os.environ.get("ROAMKIT_GIT_SHA", "")
 ROAMKIT_BUILD_DATE = os.environ.get("ROAMKIT_BUILD_DATE", "")
 ROAMKIT_IMAGE_TAG = os.environ.get("ROAMKIT_IMAGE_TAG", "")
 ROAMKIT_ENVIRONMENT = os.environ.get("ROAMKIT_ENVIRONMENT", "")
+ROAMKIT_RELEASE = os.environ.get("ROAMKIT_RELEASE", "")
+ROAMKIT_DEPLOYMENT_ID = os.environ.get("ROAMKIT_DEPLOYMENT_ID", "")

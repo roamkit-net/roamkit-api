@@ -6,16 +6,15 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
-from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Avg, Count, Max, Q, Sum
 from django.utils import timezone
 
 from apps.billing.models import CreditLedgerEntry, DepositRequest, LedgerReferenceType
 from apps.esims.models import Esim, Topup
+from apps.ops.services.health import build_ops_health
 from apps.ops.services.timeline import build_global_activity
 from apps.orders.models import Order
-from core.health.views import _check_database, _check_redis
 
 User = get_user_model()
 
@@ -54,31 +53,6 @@ def _dec(value: Decimal | None) -> str:
     if value is None:
         return "0.000000"
     return f"{value:.6f}"
-
-
-def _health() -> dict[str, Any]:
-    db_ok, db_detail = _check_database()
-    redis_ok, redis_detail = _check_redis()
-    wc_enabled = bool(getattr(settings, "WALLETCONNECT_ENABLED", False))
-    return {
-        "api": {"status": "ok", "detail": "ok"},
-        "database": {
-            "status": "ok" if db_ok else "error",
-            "detail": db_detail,
-        },
-        "redis": {
-            "status": "ok" if redis_ok else "error",
-            "detail": redis_detail,
-        },
-        "walletconnect": {
-            "status": "enabled" if wc_enabled else "disabled",
-            "detail": "config flag only",
-        },
-        "airalo": {"status": "unknown", "detail": "not probed"},
-        "polygon_rpc": {"status": "unknown", "detail": "not probed"},
-        "email": {"status": "unknown", "detail": "not probed"},
-        "celery": {"status": "unknown", "detail": "not probed"},
-    }
 
 
 def build_dashboard() -> dict[str, Any]:
@@ -268,6 +242,6 @@ def build_dashboard() -> dict[str, Any]:
             for row in top_packages
         ],
         "alerts": alerts,
-        "health": _health(),
+        "health": build_ops_health(),
         "activity": build_global_activity(limit=50),
     }

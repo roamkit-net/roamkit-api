@@ -23,7 +23,34 @@ class OpsEventSerializer(serializers.Serializer):
 
 class HealthItemSerializer(serializers.Serializer):
     status = serializers.CharField()
-    detail = serializers.CharField()
+    reason = serializers.CharField()
+    message = serializers.CharField()
+    checked_at = serializers.CharField()
+    source = serializers.CharField()
+    timeout_ms = serializers.IntegerField()
+    latency_ms = serializers.IntegerField(allow_null=True, required=False)
+    last_success_at = serializers.CharField(allow_null=True, required=False)
+    cache = serializers.DictField(required=False)
+    details = serializers.DictField()
+
+
+class OpsHealthMetricSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    value = serializers.FloatField(allow_null=True)
+    unit = serializers.CharField()
+    status = serializers.CharField()
+
+
+class OpsHealthSerializer(serializers.Serializer):
+    schema_version = serializers.IntegerField()
+    overall_status = serializers.CharField()
+    generated_at = serializers.CharField()
+    version = serializers.DictField()
+    dependencies = serializers.DictField(child=HealthItemSerializer())
+    workers = serializers.DictField(child=HealthItemSerializer())
+    providers = serializers.DictField(child=HealthItemSerializer())
+    metrics = OpsHealthMetricSerializer(many=True)
+    checks = serializers.DictField(child=HealthItemSerializer())
 
 
 class OpsAlertSerializer(serializers.Serializer):
@@ -41,7 +68,7 @@ class OpsDashboardSerializer(serializers.Serializer):
     top_destinations = serializers.ListField()
     top_packages = serializers.ListField()
     alerts = OpsAlertSerializer(many=True)
-    health = serializers.DictField(child=HealthItemSerializer())
+    health = OpsHealthSerializer()
     activity = OpsEventSerializer(many=True)
 
 

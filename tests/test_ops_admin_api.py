@@ -108,9 +108,17 @@ def test_ops_dashboard_staff_ok(client: Client, staff_user: User, user: User) ->
     assert "financial" in payload
     assert "activity" in payload
     assert "health" in payload
-    assert payload["health"]["api"]["status"] == "ok"
-    assert payload["health"]["airalo"]["status"] == "unknown"
-    assert "whatsapp" not in payload["health"]
+    health = payload["health"]
+    assert health["schema_version"] == 1
+    assert "overall_status" in health
+    assert health["dependencies"]["database"]["status"] in {
+        "healthy",
+        "unhealthy",
+        "degraded",
+        "unknown",
+    }
+    assert "whatsapp" not in health.get("checks", {})
+    assert "whatsapp" not in health.get("providers", {})
     assert payload["kpi"]["users_total"] >= 2
 
 

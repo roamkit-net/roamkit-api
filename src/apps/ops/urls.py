@@ -5,6 +5,7 @@ from django.urls import path
 from apps.ops.views import (
     OpsDashboardView,
     OpsDepositListView,
+    OpsHealthView,
     OpsOrderListView,
     OpsSearchView,
     OpsUserDetailView,
@@ -13,6 +14,7 @@ from apps.ops.views import (
 
 urlpatterns = [
     path("dashboard/", OpsDashboardView.as_view(), name="ops-dashboard"),
+    path("health/", OpsHealthView.as_view(), name="ops-health"),
     path("search/", OpsSearchView.as_view(), name="ops-search"),
     path("users/", OpsUserListView.as_view(), name="ops-users-list"),
     path("users/<int:pk>/", OpsUserDetailView.as_view(), name="ops-users-detail"),

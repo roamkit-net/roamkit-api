@@ -107,6 +107,36 @@ paths:
       summary: List deposits
       tags:
       - Ops
+  /api/v1/admin/health/:
+    get:
+      description: 'Staff-only read-only health snapshot: dependencies, workers, providers, metrics, version/deployment
+        metadata. Checks are read-only with per-check timeouts; overall_status follows the Observability
+        V1 matrix.'
+      operationId: ops_health
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsHealth'
+          description: Health aggregate
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Staff required
+      security:
+      - bearerAuth: []
+      summary: Operations health aggregate
+      tags:
+      - Ops
   /api/v1/admin/orders/:
     get:
       description: Prevent intermediary/browser caching of staff ops payloads.
@@ -1797,13 +1827,38 @@ components:
       type: object
     HealthItem:
       properties:
-        detail:
+        cache:
+          additionalProperties: {}
+          type: object
+        checked_at:
+          type: string
+        details:
+          additionalProperties: {}
+          type: object
+        last_success_at:
+          nullable: true
+          type: string
+        latency_ms:
+          nullable: true
+          type: integer
+        message:
+          type: string
+        reason:
+          type: string
+        source:
           type: string
         status:
           type: string
+        timeout_ms:
+          type: integer
       required:
-      - detail
+      - checked_at
+      - details
+      - message
+      - reason
+      - source
       - status
+      - timeout_ms
       type: object
     InsufficientCredits:
       description: Structured 402 payload from ``InsufficientFundsError.to_api_dict()``.
@@ -2020,9 +2075,7 @@ components:
           additionalProperties: {}
           type: object
         health:
-          additionalProperties:
-            $ref: '#/components/schemas/HealthItem'
-          type: object
+          $ref: '#/components/schemas/OpsHealth'
         kpi:
           additionalProperties: {}
           type: object
@@ -2121,6 +2174,66 @@ components:
       - timestamp
       - title
       - type
+      type: object
+    OpsHealth:
+      properties:
+        checks:
+          additionalProperties:
+            $ref: '#/components/schemas/HealthItem'
+          type: object
+        dependencies:
+          additionalProperties:
+            $ref: '#/components/schemas/HealthItem'
+          type: object
+        generated_at:
+          type: string
+        metrics:
+          items:
+            $ref: '#/components/schemas/OpsHealthMetric'
+          type: array
+        overall_status:
+          type: string
+        providers:
+          additionalProperties:
+            $ref: '#/components/schemas/HealthItem'
+          type: object
+        schema_version:
+          type: integer
+        version:
+          additionalProperties: {}
+          type: object
+        workers:
+          additionalProperties:
+            $ref: '#/components/schemas/HealthItem'
+          type: object
+      required:
+      - checks
+      - dependencies
+      - generated_at
+      - metrics
+      - overall_status
+      - providers
+      - schema_version
+      - version
+      - workers
+      type: object
+    OpsHealthMetric:
+      properties:
+        key:
+          type: string
+        status:
+          type: string
+        unit:
+          type: string
+        value:
+          format: double
+          nullable: true
+          type: number
+      required:
+      - key
+      - status
+      - unit
+      - value
       type: object
     OpsOrderListItem:
       properties:
