@@ -19,6 +19,7 @@ from shared.providers.funding import (
 
 _PROVIDER_SETTINGS = {
     "mexc": "MEXC_FUNDING_PROVIDER",
+    "binance": "BINANCE_FUNDING_PROVIDER",
 }
 
 
