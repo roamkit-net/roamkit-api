@@ -60,8 +60,12 @@ def test_packages_list_returns_active_packages(
     assert result["title"] == "1 GB - 7 Days"
     assert result["country_code"] == "US"
     assert result["price_usd"] == "11.50"
+    assert result["list_price_usd"] == "11.50"
+    assert result["discount_percent"] == "0.00"
+    assert result["pricing_reason"] == "retail"
     assert result["voice_minutes"] is None
     assert result["text_sms"] is None
+    assert "net_price_usd" not in result
 
 
 @pytest.mark.django_db

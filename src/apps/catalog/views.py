@@ -18,6 +18,7 @@ from apps.catalog.serializers import (
     LocationSerializer,
     PackageSerializer,
 )
+from apps.pricing.presentation import pricing_account_for_request
 
 
 def _active_package_min_price():
@@ -29,7 +30,12 @@ def _active_package_min_price():
         tags=["Catalog"],
         operation_id="catalog_packages_list",
         summary="List packages",
-        description="List active packages synced from external providers.",
+        description=(
+            "List active packages synced from external providers. "
+            "Additive pricing fields: ``price_usd`` is the customer charge "
+            "(authenticated + flag ON may apply a pricing profile); "
+            "``list_price_usd`` is the provider list price."
+        ),
         auth=[],
         parameters=[
             OpenApiParameter(
@@ -59,6 +65,11 @@ class PackageListView(ListAPIView):
 
     serializer_class = PackageSerializer
     permission_classes = [AllowAny]
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["pricing_account"] = pricing_account_for_request(self.request)
+        return context
 
     def get_queryset(self):
         queryset = Package.objects.filter(is_active=True)

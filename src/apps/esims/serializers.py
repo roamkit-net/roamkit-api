@@ -190,15 +190,42 @@ class LifecycleEventSerializer(serializers.ModelSerializer):
 
 
 class TopupPackageSerializer(serializers.Serializer):
-    """Available top-up package for an eSIM."""
+    """Available top-up package for an eSIM (additive pricing — ADR 019)."""
 
     id = serializers.CharField(source="external_id")
     title = serializers.CharField()
     data_allowance = serializers.CharField()
     validity_days = serializers.IntegerField()
     price_usd = serializers.DecimalField(max_digits=10, decimal_places=2)
+    list_price_usd = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, default="0.00"
+    )
+    discount_percent = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, default="0.00"
+    )
+    pricing_reason = serializers.CharField(required=False, default="retail")
     is_unlimited = serializers.BooleanField()
     plan_type = serializers.CharField()
+
+    def to_representation(self, instance) -> dict:
+        from apps.pricing.presentation import public_price_dict, resolve_topup_quote
+
+        data = {
+            "id": instance.external_id,
+            "title": instance.title,
+            "data_allowance": instance.data_allowance,
+            "validity_days": instance.validity_days,
+            "is_unlimited": instance.is_unlimited,
+            "plan_type": instance.plan_type,
+        }
+        account = self.context.get("pricing_account")
+        quote = resolve_topup_quote(instance, account=account)
+        for key, value in public_price_dict(quote).items():
+            if key in {"price_usd", "list_price_usd", "discount_percent"}:
+                data[key] = f"{value:.2f}"
+            else:
+                data[key] = value
+        return data
 
 
 class PurchaseTopupSerializer(serializers.Serializer):

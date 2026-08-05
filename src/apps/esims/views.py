@@ -45,6 +45,7 @@ from apps.orders.exceptions import (
     ProviderFulfillmentError,
     SpendInProgressError,
 )
+from apps.pricing.presentation import pricing_account_for_request
 from core.openapi_serializers import (
     ErrorDetailSerializer,
     InsufficientCreditsSerializer,
@@ -259,9 +260,16 @@ class EsimEventsView(OwnedEsimMixin, GenericAPIView):
         tags=["eSIM"],
         operation_id="esim_topups_list",
         summary="List top-up packages",
-        description="List available top-up packages for an owned eSIM.",
+        description=(
+            "List available top-up packages for an owned eSIM. "
+            "Additive pricing fields match catalog packages "
+            "(``price_usd`` customer charge, ``list_price_usd`` provider list)."
+        ),
         responses={
-            200: OpenApiResponse(description="Top-up package list"),
+            200: OpenApiResponse(
+                response=TopupPackageSerializer(many=True),
+                description="Top-up package list",
+            ),
             401: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Authentication required"
             ),
@@ -311,7 +319,15 @@ class EsimTopupsView(OwnedEsimMixin, GenericAPIView):
     def get(self, request: Request, *args, **kwargs) -> Response:
         esim = self.get_object()
         packages = TopupService(get_topup_provider()).list_topups(esim)
-        return Response({"results": TopupPackageSerializer(packages, many=True).data})
+        serializer = TopupPackageSerializer(
+            packages,
+            many=True,
+            context={
+                "request": request,
+                "pricing_account": pricing_account_for_request(request),
+            },
+        )
+        return Response({"results": serializer.data})
 
     def post(self, request: Request, *args, **kwargs) -> Response:
         if not settings.BILLING_ENABLED:

@@ -27,6 +27,34 @@ tags:
 - description: Staff-only read-only Operations Dashboard (members, search, aggregates)
   name: Ops
 paths:
+  /api/internal/pricing/preview:
+    post:
+      description: Read-only preview via ``PricingService.resolve``. No ledger writes, no cache mutation,
+        no side effects.
+      operationId: internal_pricing_preview
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PricingPreviewRequestRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PricingPreviewResponse'
+          description: Resolved quote
+        '400':
+          description: Invalid request
+        '403':
+          description: Staff required
+        '404':
+          description: Package or account not found
+      security:
+      - bearerAuth: []
+      summary: Preview pricing quote
+      tags:
+      - Internal
   /api/v1/admin/dashboard/:
     get:
       description: 'Single read-only payload for the ops home page: KPIs, pending work, financial summary,
@@ -1113,7 +1141,8 @@ paths:
       - eSIM
   /api/v1/me/esims/{id}/topups/:
     get:
-      description: List available top-up packages for an owned eSIM.
+      description: List available top-up packages for an owned eSIM. Additive pricing fields match catalog
+        packages (``price_usd`` customer charge, ``list_price_usd`` provider list).
       operationId: esim_topups_list
       parameters:
       - in: path
@@ -1123,6 +1152,10 @@ paths:
           type: integer
       responses:
         '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTopupPackageList'
           description: Top-up package list
         '401':
           content:
@@ -1302,7 +1335,9 @@ paths:
       - Orders
   /api/v1/packages/:
     get:
-      description: List active packages synced from external providers.
+      description: 'List active packages synced from external providers. Additive pricing fields: ``price_usd``
+        is the customer charge (authenticated + flag ON may apply a pricing profile); ``list_price_usd``
+        is the provider list price.'
       operationId: catalog_packages_list
       parameters:
       - description: Filter by ISO country code
@@ -2611,8 +2646,21 @@ components:
       - failed
       - cancelled
       type: string
+    OrderTypeEnum:
+      description: '* `package` - package
+
+        * `topup` - topup'
+      enum:
+      - package
+      - topup
+      type: string
     Package:
-      description: Public package representation for the catalog API.
+      description: 'Public package representation for the catalog API.
+
+
+        Additive pricing (ADR 019): ``price_usd`` is the customer charge;
+
+        ``list_price_usd`` is provider list. Anonymous / flag-off → retail.'
       properties:
         activation_policy:
           description: first_usage | installation | unknown (synced from provider).
@@ -2624,12 +2672,18 @@ components:
         data_allowance:
           readOnly: true
           type: string
+        discount_percent:
+          readOnly: true
+          type: string
         id:
           readOnly: true
           type: string
         is_unlimited:
           readOnly: true
           type: boolean
+        list_price_usd:
+          readOnly: true
+          type: string
         operator_title:
           readOnly: true
           type: string
@@ -2637,8 +2691,9 @@ components:
           readOnly: true
           type: string
         price_usd:
-          format: decimal
-          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          readOnly: true
+          type: string
+        pricing_reason:
           readOnly: true
           type: string
         text_sms:
@@ -2659,11 +2714,14 @@ components:
       - activation_policy
       - country_code
       - data_allowance
+      - discount_percent
       - id
       - is_unlimited
+      - list_price_usd
       - operator_title
       - plan_type
       - price_usd
+      - pricing_reason
       - text_sms
       - title
       - validity_days
@@ -2830,6 +2888,29 @@ components:
       - count
       - results
       type: object
+    PaginatedTopupPackageList:
+      properties:
+        count:
+          example: 123
+          type: integer
+        next:
+          example: http://api.example.org/accounts/?page=4
+          format: uri
+          nullable: true
+          type: string
+        previous:
+          example: http://api.example.org/accounts/?page=2
+          format: uri
+          nullable: true
+          type: string
+        results:
+          items:
+            $ref: '#/components/schemas/TopupPackage'
+          type: array
+      required:
+      - count
+      - results
+      type: object
     PasswordResetConfirmRequest:
       properties:
         password:
@@ -2878,6 +2959,80 @@ components:
             (label, favorite, archived, …) belongs on the same model without provider sync.
           maxLength: 255
           type: string
+      type: object
+    PricingPreviewRequestRequest:
+      description: Preview inputs — package catalog id and/or explicit prices for topup.
+      properties:
+        account_id:
+          format: uuid
+          nullable: true
+          type: string
+        list_price_usd:
+          format: decimal
+          nullable: true
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          type: string
+        net_price_usd:
+          format: decimal
+          nullable: true
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          type: string
+        order_type:
+          allOf:
+          - $ref: '#/components/schemas/OrderTypeEnum'
+          default: package
+        package_id:
+          description: Catalog ``Package.external_id`` when order_type=package.
+          maxLength: 64
+          type: string
+      type: object
+    PricingPreviewResponse:
+      description: Internal preview response (may include ops-only fields).
+      properties:
+        discount_percent:
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          type: string
+        floor_reason:
+          type: string
+        list_price_usd:
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          type: string
+        price_usd:
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          type: string
+        pricing_context_hash:
+          type: string
+        pricing_profile_id:
+          format: uuid
+          nullable: true
+          type: string
+        pricing_profile_slug:
+          nullable: true
+          type: string
+        pricing_profile_version:
+          nullable: true
+          type: integer
+        pricing_reason:
+          type: string
+        quote_fingerprint:
+          type: string
+        snapshot_schema_version:
+          type: integer
+      required:
+      - discount_percent
+      - floor_reason
+      - list_price_usd
+      - price_usd
+      - pricing_context_hash
+      - pricing_profile_id
+      - pricing_profile_slug
+      - pricing_profile_version
+      - pricing_reason
+      - quote_fingerprint
+      - snapshot_schema_version
       type: object
     PurchaseTopupRequest:
       description: Request body for POST /api/v1/me/esims/{id}/topups/.
@@ -3011,6 +3166,47 @@ components:
       - package_external_id
       - status
       - updated_at
+      type: object
+    TopupPackage:
+      description: Available top-up package for an eSIM (additive pricing — ADR 019).
+      properties:
+        data_allowance:
+          type: string
+        discount_percent:
+          default: '0.00'
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          type: string
+        id:
+          type: string
+        is_unlimited:
+          type: boolean
+        list_price_usd:
+          default: '0.00'
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          type: string
+        plan_type:
+          type: string
+        price_usd:
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          type: string
+        pricing_reason:
+          default: retail
+          type: string
+        title:
+          type: string
+        validity_days:
+          type: integer
+      required:
+      - data_allowance
+      - id
+      - is_unlimited
+      - plan_type
+      - price_usd
+      - title
+      - validity_days
       type: object
     TopupStatusEnum:
       description: '* `fulfilling` - Fulfilling
