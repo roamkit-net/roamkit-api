@@ -83,9 +83,14 @@ def test_resume_converts_dry_run_does_not_credit() -> None:
             confirmations=50,
         )
     )
-    report = resume_converts(apply=False)
+    with override_settings(
+        CREDIT_CONVERSION_V2=True,
+        WALLET_CUTOVER_COHORT_ACCOUNT_IDS=str(addr.wallet_identity.account_id),
+    ):
+        report = resume_converts(apply=False)
     assert report["candidates"] == 1
     assert report["credited"] == 0
+    assert report["results"][0]["action"] == "would_convert"
     obs.refresh_from_db()
     assert obs.status == ObservationStatus.CONFIRMED
     account = addr.wallet_identity.account
@@ -108,8 +113,12 @@ def test_resume_converts_apply_credits_once() -> None:
             confirmations=50,
         )
     )
-    first = resume_converts(apply=True)
-    second = resume_converts(apply=True)
+    with override_settings(
+        CREDIT_CONVERSION_V2=True,
+        WALLET_CUTOVER_COHORT_ACCOUNT_IDS=str(addr.wallet_identity.account_id),
+    ):
+        first = resume_converts(apply=True)
+        second = resume_converts(apply=True)
     assert first["credited"] == 1
     assert second["candidates"] == 0
     obs.refresh_from_db()
@@ -117,6 +126,31 @@ def test_resume_converts_apply_credits_once() -> None:
     account = addr.wallet_identity.account
     account.refresh_from_db()
     assert account.balance == Decimal("9.250000")
+
+
+@pytest.mark.django_db
+@override_settings(POLYGON_MIN_CONFIRMATIONS=20, POLYGON_USDT_CONTRACT=_USDT)
+def test_resume_converts_skips_outside_cohort() -> None:
+    addr = _address(email="ops-skip@example.com", index=4)
+    DepositObservationService().ingest(
+        ObservationSignal(
+            chain=WalletChain.POLYGON,
+            tx_hash=_TX,
+            log_index=4,
+            to_address=addr.address,
+            amount=Decimal("2.000000"),
+            token_contract=_USDT,
+            confirmations=50,
+        )
+    )
+    with override_settings(
+        CREDIT_CONVERSION_V2=True,
+        WALLET_CUTOVER_COHORT_ACCOUNT_IDS="",
+    ):
+        report = resume_converts(apply=True)
+    assert report["credited"] == 0
+    assert report["skipped"] == 1
+    assert report["results"][0]["action"] == "skipped_not_in_cohort"
 
 
 @pytest.mark.django_db

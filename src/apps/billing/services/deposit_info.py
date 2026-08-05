@@ -1,12 +1,17 @@
-"""Build deposit-info and billing display-config payloads (ADR-010)."""
+"""Build deposit-info and billing display-config payloads (ADR-010 / ADR 018)."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 from typing import Any
+from uuid import UUID
 
 from django.conf import settings
+
+from apps.billing.models import Account
+from apps.wallet.services.allocation import WalletAllocationService
+from apps.wallet.services.flags import should_expose_wallet_address
 
 # Shared display/token constants — deposit-info and billing/config must not drift.
 CONFIG_VERSION = 1
@@ -56,9 +61,22 @@ def billing_config_etag(payload: dict[str, Any]) -> str:
     return f'"{digest}"'
 
 
-def get_deposit_info() -> dict[str, Any]:
-    """Return full token/chain meta so frontends never hardcode Polygon USDT."""
-    wallet = (settings.POLYGON_PLATFORM_WALLET or "").strip()
+def resolve_deposit_wallet(*, account: Account | None = None) -> str:
+    """Shared ADR 010 wallet, or cohort WalletAddress (Limited Traffic)."""
+    if account is not None and should_expose_wallet_address(account.pk):
+        addr = WalletAllocationService().ensure_active_address(account)
+        return (addr.address or "").strip()
+    return (settings.POLYGON_PLATFORM_WALLET or "").strip()
+
+
+def get_deposit_info(*, account: Account | None = None) -> dict[str, Any]:
+    """Return full token/chain meta so frontends never hardcode Polygon USDT.
+
+    When ``account`` is in the cutover cohort and ``WALLET_ADDRESS_ENABLED``,
+    ``wallet`` is the Account's active WalletAddress. Otherwise the shared
+    ADR 010 platform wallet. Empty cohort ⇒ always shared (instant rollback).
+    """
+    wallet = resolve_deposit_wallet(account=account)
     contract = (settings.POLYGON_USDT_CONTRACT or "").strip()
     chain_id = int(settings.POLYGON_CHAIN_ID)
     return {
@@ -75,3 +93,9 @@ def get_deposit_info() -> dict[str, Any]:
         "subscriptions_enabled": bool(settings.SUBSCRIPTIONS_ENABLED),
         "vouchers_enabled": bool(settings.VOUCHERS_ENABLED),
     }
+
+
+def deposit_info_for_account_id(account_id: UUID | str) -> dict[str, Any]:
+    """Helper for callers that only have an Account primary key."""
+    account = Account.objects.filter(pk=account_id).first()
+    return get_deposit_info(account=account)

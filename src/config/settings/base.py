@@ -329,6 +329,11 @@ WALLET_ADDRESS_ENABLED = (
 OBSERVATION_ENABLED = os.environ.get("OBSERVATION_ENABLED", "false").lower() == "true"
 CREDIT_CONVERSION_V2 = os.environ.get("CREDIT_CONVERSION_V2", "false").lower() == "true"
 SHADOW_MODE = os.environ.get("SHADOW_MODE", "false").lower() == "true"
+# Explicit Account UUID allowlist for Phase 2 Limited Traffic (comma-separated).
+# Empty = instant rollback to legacy ADR 010 for all accounts (no deploy).
+WALLET_CUTOVER_COHORT_ACCOUNT_IDS = os.environ.get(
+    "WALLET_CUTOVER_COHORT_ACCOUNT_IDS", ""
+)
 
 # Polygon USDT deposits (ADR-010). Defaults match mainnet; set wallet in env.
 POLYGON_RPC_URL = os.environ.get("POLYGON_RPC_URL", "")

@@ -1,7 +1,7 @@
 """Wallet Platform ops metrics (ADR 017 Cap — Wallet Metrics).
 
-Counters for allocation / observation / confirmation / convert / shadow.
-Not a Credits source of truth — ledger remains authoritative via CreditService.
+Counters for allocation / observation / confirmation / convert / shadow /
+Limited Traffic cohort. Not a Credits source of truth.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from typing import Any
 
 from django.db.models import Count, Max, Sum
 
+from apps.billing.models import DepositRequest
 from apps.wallet.models import (
     DepositObservation,
     ObservationStatus,
@@ -19,6 +20,7 @@ from apps.wallet.models import (
     WalletAddressStatus,
     WalletIdentity,
 )
+from apps.wallet.services.flags import cutover_cohort_account_ids, cutover_ops_snapshot
 from apps.wallet.services.shadow import shadow_metrics_snapshot
 
 _MONEY_QUANT = Decimal("0.000001")
@@ -47,6 +49,10 @@ class WalletMetrics:
     shadow_warning_total: int
     shadow_match_rate: float | None
     shadow_latency_ms_avg: int | None
+    cutover_cohort_size: int
+    cutover_cohort_deposits_completed: int
+    cutover_limited_traffic_active: bool
+    cutover_rollback_status: str
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -69,6 +75,10 @@ class WalletMetrics:
             "shadow_warning_total": self.shadow_warning_total,
             "shadow_match_rate": self.shadow_match_rate,
             "shadow_latency_ms_avg": self.shadow_latency_ms_avg,
+            "cutover_cohort_size": self.cutover_cohort_size,
+            "cutover_cohort_deposits_completed": self.cutover_cohort_deposits_completed,
+            "cutover_limited_traffic_active": self.cutover_limited_traffic_active,
+            "cutover_rollback_status": self.cutover_rollback_status,
         }
 
 
@@ -106,6 +116,14 @@ def collect_wallet_metrics() -> WalletMetrics:
     ).count()
 
     shadow = shadow_metrics_snapshot()
+    cutover = cutover_ops_snapshot()
+    cohort = cutover_cohort_account_ids()
+    cohort_deposits = 0
+    if cohort:
+        cohort_deposits = DepositRequest.objects.filter(
+            account_id__in=cohort,
+            status=DepositRequest.Status.COMPLETED,
+        ).count()
 
     return WalletMetrics(
         wallet_identity_count=identity_count,
@@ -127,4 +145,8 @@ def collect_wallet_metrics() -> WalletMetrics:
         shadow_warning_total=int(shadow["shadow_warning_total"]),
         shadow_match_rate=shadow["shadow_match_rate"],
         shadow_latency_ms_avg=shadow["shadow_latency_ms_avg"],
+        cutover_cohort_size=int(cutover["cutover_cohort_size"]),
+        cutover_cohort_deposits_completed=int(cohort_deposits),
+        cutover_limited_traffic_active=bool(cutover["cutover_limited_traffic_active"]),
+        cutover_rollback_status=str(cutover["cutover_rollback_status"]),
     )

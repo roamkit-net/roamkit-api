@@ -8,7 +8,16 @@ from apps.wallet.services.backfill import (
     validate_wallet_migration,
 )
 from apps.wallet.services.conversion import CreditConversionService
-from apps.wallet.services.flags import WalletCutoverFlags, get_cutover_flags
+from apps.wallet.services.flags import (
+    WalletCutoverFlags,
+    cutover_cohort_account_ids,
+    cutover_ops_snapshot,
+    get_cutover_flags,
+    is_in_cutover_cohort,
+    should_expose_wallet_address,
+    should_use_credit_conversion_v2,
+    should_use_wallet_money_path,
+)
 from apps.wallet.services.funding import FundingService
 from apps.wallet.services.metrics import collect_wallet_metrics
 from apps.wallet.services.observation import (
@@ -34,10 +43,16 @@ __all__ = [
     "collect_wallet_metrics",
     "collect_wallet_ops_status",
     "compare_legacy_deposit",
+    "cutover_cohort_account_ids",
+    "cutover_ops_snapshot",
     "get_cutover_flags",
+    "is_in_cutover_cohort",
     "resume_converts",
     "run_wallet_backfill",
     "safe_compare_legacy_deposit",
     "shadow_metrics_snapshot",
+    "should_expose_wallet_address",
+    "should_use_credit_conversion_v2",
+    "should_use_wallet_money_path",
     "validate_wallet_migration",
 ]
