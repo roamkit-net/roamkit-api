@@ -255,6 +255,15 @@ BLOCKCHAIN_PROVIDER = os.environ.get(
     "BLOCKCHAIN_PROVIDER",
     "apps.integrations.polygon.providers.PolygonProvider",
 )
+MEXC_FUNDING_PROVIDER = os.environ.get(
+    "MEXC_FUNDING_PROVIDER",
+    "apps.integrations.mexc.providers.MexcFundingProvider",
+)
+MEXC_WITHDRAW_URL = os.environ.get(
+    "MEXC_WITHDRAW_URL",
+    "https://www.mexc.com/assets/withdraw/USDT",
+)
+MEXC_POLYGON_NETWORK_LABEL = os.environ.get("MEXC_POLYGON_NETWORK_LABEL", "MATIC")
 
 AIRALO_CLIENT_ID = os.environ.get("AIRALO_CLIENT_ID", "")
 AIRALO_CLIENT_SECRET = os.environ.get("AIRALO_CLIENT_SECRET", "")

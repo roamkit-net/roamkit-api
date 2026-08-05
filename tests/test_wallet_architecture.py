@@ -50,7 +50,13 @@ def test_wallet_modules_do_not_assign_account_balance() -> None:
 
 
 def test_confirmation_and_observation_do_not_import_billing_credit() -> None:
-    for name in ("confirmation.py", "observation.py", "allocation.py", "hd.py"):
+    for name in (
+        "confirmation.py",
+        "observation.py",
+        "allocation.py",
+        "hd.py",
+        "funding.py",
+    ):
         path = WALLET_ROOT / "services" / name
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
