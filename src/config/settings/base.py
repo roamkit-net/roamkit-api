@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "apps.esims",
     "apps.notifications",
     "apps.integrations",
+    "apps.ops",
 ]
 
 MIDDLEWARE = [
@@ -210,6 +211,7 @@ SPECTACULAR_SETTINGS = {
     "TITLE": "RoamKit API",
     "DESCRIPTION": (
         "Self-service eSIM API. Public REST under `/api/v1/`. "
+        "Staff Operations Dashboard under `/api/v1/admin/` (read-only). "
         "Authenticate with JWT Bearer tokens from `/api/v1/auth/token/`."
     ),
     "VERSION": "1.0.0",
@@ -234,6 +236,13 @@ SPECTACULAR_SETTINGS = {
         {"name": "Catalog", "description": "Packages and locations"},
         {"name": "eSIM", "description": "User eSIM inventory, usage, and top-ups"},
         {"name": "Users", "description": "Authenticated user profile"},
+        {
+            "name": "Ops",
+            "description": (
+                "Staff-only read-only Operations Dashboard "
+                "(members, search, aggregates)"
+            ),
+        },
     ],
     "SERVERS": [
         {"url": "https://api.staging.roamkit.net", "description": "Staging"},
