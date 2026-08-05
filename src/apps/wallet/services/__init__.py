@@ -7,6 +7,7 @@ from apps.wallet.services.observation import (
     DepositObservationService,
     ObservationSignal,
 )
+from apps.wallet.services.ops import collect_wallet_ops_status, resume_converts
 
 __all__ = [
     "CreditConversionService",
@@ -14,4 +15,6 @@ __all__ = [
     "FundingService",
     "ObservationSignal",
     "WalletAllocationService",
+    "collect_wallet_ops_status",
+    "resume_converts",
 ]
