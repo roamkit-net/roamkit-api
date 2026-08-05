@@ -175,3 +175,26 @@ def users_queryset():
             queryset=WalletAddress.objects.order_by("derivation_index"),
         )
     )
+
+
+# Whitelisted list sorts (DRF-style ``ordering`` query param).
+_USER_LIST_ORDERING: dict[str, tuple[str, ...]] = {
+    "email": ("email",),
+    "-email": ("-email",),
+    "balance": ("billing_account__balance", "email"),
+    "-balance": ("-billing_account__balance", "email"),
+    "last_login": ("last_login", "email"),
+    "-last_login": ("-last_login", "email"),
+    # Flags are derived badges; approximate with staff then active.
+    "flags": ("is_staff", "is_active", "email"),
+    "-flags": ("-is_staff", "-is_active", "email"),
+}
+
+_DEFAULT_USER_LIST_ORDERING = ("-created_at",)
+
+
+def apply_user_list_ordering(qs, ordering: str | None):
+    """Apply a whitelisted ``ordering`` value; unknown values keep default."""
+    key = (ordering or "").strip()
+    fields = _USER_LIST_ORDERING.get(key, _DEFAULT_USER_LIST_ORDERING)
+    return qs.order_by(*fields)

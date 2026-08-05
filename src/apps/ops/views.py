@@ -33,6 +33,7 @@ from apps.ops.serializers import (
 from apps.ops.services.dashboard import build_dashboard
 from apps.ops.services.health import build_ops_health
 from apps.ops.services.members import (
+    apply_user_list_ordering,
     serialize_user_detail,
     serialize_user_list_item,
     users_queryset,
@@ -166,6 +167,16 @@ class OpsSearchView(OpsAPIView):
                 location=OpenApiParameter.QUERY,
                 required=False,
             ),
+            OpenApiParameter(
+                name="ordering",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description=(
+                    "Sort field: email, balance, last_login, flags "
+                    "(prefix with - for descending). Default: -created_at."
+                ),
+            ),
         ],
         responses={
             200: OpenApiResponse(
@@ -183,7 +194,7 @@ class OpsSearchView(OpsAPIView):
 )
 class OpsUserListView(OpsListAPIView):
     def get_queryset(self):
-        qs = users_queryset().order_by("-created_at")
+        qs = users_queryset()
         q = self.request.query_params.get("q")
         if q:
             qs = qs.filter(email__icontains=q.strip())
@@ -191,7 +202,7 @@ class OpsUserListView(OpsListAPIView):
         if is_active is not None:
             val = is_active.lower() in {"1", "true", "yes"}
             qs = qs.filter(is_active=val)
-        return qs
+        return apply_user_list_ordering(qs, self.request.query_params.get("ordering"))
 
     def list(self, request: Request, *args, **kwargs) -> Response:
         queryset = self.filter_queryset(self.get_queryset())
