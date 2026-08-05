@@ -1,4 +1,4 @@
-"""Wallet domain errors (ADR 017 / RFC 004)."""
+"""Wallet domain errors (ADR 017 / RFC 004 / RFC 006)."""
 
 from __future__ import annotations
 
@@ -17,3 +17,15 @@ class WalletAllocationError(WalletError):
 
 class WalletAddressNotFoundError(WalletError):
     """Expected active address is missing (e.g. rotate without prior allocate)."""
+
+
+class ObservationError(WalletError):
+    """Base error for deposit observation (RFC 006)."""
+
+
+class ObservationAttributionError(ObservationError):
+    """Signal ``to_address`` is not a known RoamKit WalletAddress."""
+
+
+class ObservationTransitionError(ObservationError):
+    """Illegal state transition for a DepositObservation."""
