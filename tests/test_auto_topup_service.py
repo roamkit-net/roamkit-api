@@ -163,15 +163,22 @@ def _fund(user: User, amount: str = "50.00") -> None:
 def _policy(user: User, esim: Esim, **kwargs) -> EsimAutoTopupPolicy:
     defaults = {
         "account": user.billing_account,
-        "esim": esim,
         "package_id": "topup-1gb",
         "enabled": True,
         "status": EsimAutoTopupPolicy.Status.ACTIVE,
         "trigger_mode": EsimAutoTopupPolicy.TriggerMode.USAGE_ZERO,
         "renew_mode": EsimAutoTopupPolicy.RenewMode.UNTIL_FUNDS,
+        "reason": "",
+        "threshold_mb": None,
+        "remaining_count": None,
+        "cooldown_until": None,
     }
     defaults.update(kwargs)
-    return EsimAutoTopupPolicy.objects.create(**defaults)
+    policy, _created = EsimAutoTopupPolicy.objects.update_or_create(
+        esim=esim,
+        defaults=defaults,
+    )
+    return policy
 
 
 @pytest.mark.django_db
@@ -401,8 +408,11 @@ def test_event_publish_failure_does_not_undo_success(
     policy = _policy(user, esim)
 
     def _boom(event) -> None:
-        raise RuntimeError("handler exploded")
+        if type(event).__name__ == "AutoTopupSucceeded":
+            raise RuntimeError("handler exploded")
+        real_publish(event)
 
+    real_publish = event_bus.publish
     monkeypatch.setattr(event_bus, "publish", _boom)
     service = AutoTopupService(FakeTopupProvider())
     assert service.evaluate_one(policy.pk) == "success"
