@@ -3,6 +3,7 @@
 from django.urls import path
 
 from apps.esims.views import (
+    EsimAutoTopupView,
     EsimDetailView,
     EsimEventsView,
     EsimListView,
@@ -16,4 +17,9 @@ urlpatterns = [
     path("esims/<int:pk>/usage/", EsimUsageView.as_view(), name="me-esim-usage"),
     path("esims/<int:pk>/events/", EsimEventsView.as_view(), name="me-esim-events"),
     path("esims/<int:pk>/topups/", EsimTopupsView.as_view(), name="me-esim-topups"),
+    path(
+        "esims/<int:pk>/auto-topup/",
+        EsimAutoTopupView.as_view(),
+        name="me-esim-auto-topup",
+    ),
 ]
