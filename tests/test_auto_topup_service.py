@@ -388,8 +388,38 @@ def test_parallel_evaluate_one_topup(user: User, esim: Esim) -> None:
 
 
 @pytest.mark.django_db
-@override_settings(BILLING_ENABLED=True, AUTO_TOPUP_ENABLED=True)
-def test_publish_policy_created_event(user: User, esim: Esim) -> None:
+@override_settings(
+    BILLING_ENABLED=True,
+    AUTO_TOPUP_ENABLED=True,
+    AUTO_TOPUP_ROLLOUT_MODE="all",
+    AUTO_TOPUP_MINIMUM_AGE_SECONDS=0,
+)
+def test_event_publish_failure_does_not_undo_success(
+    user: User, esim: Esim, monkeypatch
+) -> None:
+    _fund(user)
+    policy = _policy(user, esim)
+
+    def _boom(event) -> None:
+        raise RuntimeError("handler exploded")
+
+    monkeypatch.setattr(event_bus, "publish", _boom)
+    service = AutoTopupService(FakeTopupProvider())
+    assert service.evaluate_one(policy.pk) == "success"
+    policy.refresh_from_db()
+    assert policy.cooldown_until is not None
+    assert Topup.objects.count() == 1
+
+
+@pytest.mark.django_db
+@override_settings(BILLING_ENABLED=True, AUTO_TOPUP_ENABLED=False)
+def test_evaluate_due_disabled_when_flag_off(user: User, esim: Esim) -> None:
+    _fund(user)
+    _policy(user, esim)
+    stats = AutoTopupService(FakeTopupProvider()).evaluate_due()
+    assert stats == {"disabled": 1}
+    assert Topup.objects.count() == 0
+
     policy = _policy(user, esim)
     captured: list = []
     event_bus.subscribe(AutoTopupPolicyCreated, captured.append)

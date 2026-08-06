@@ -69,15 +69,14 @@ class AutoTopupService:
     def evaluate_one(self, policy_id) -> str:
         """Evaluate a single policy. Returns success|skipped|paused|blocked|failed."""
         started = time.monotonic()
-        metrics.incr("auto_topup_attempts_total")
+        self._metric_incr("auto_topup_attempts_total")
         try:
-            outcome = self._evaluate_one_inner(policy_id)
+            return self._evaluate_one_inner(policy_id)
         finally:
-            metrics.observe(
+            self._metric_observe(
                 "auto_topup_duration_seconds",
                 time.monotonic() - started,
             )
-        return outcome
 
     def publish_policy_created(
         self,
@@ -86,7 +85,7 @@ class AutoTopupService:
         actor: str = "system",
     ) -> None:
         """Snapshot event for policy create (called from API/admin in PR4+)."""
-        event_bus.publish(self._policy_created_event(policy, actor=actor))
+        self._safe_publish(self._policy_created_event(policy, actor=actor))
 
     def publish_policy_updated(
         self,
@@ -95,7 +94,7 @@ class AutoTopupService:
         actor: str = "system",
     ) -> None:
         """Snapshot event for policy update (called from API/admin in PR4+)."""
-        event_bus.publish(self._policy_updated_event(policy, actor=actor))
+        self._safe_publish(self._policy_updated_event(policy, actor=actor))
 
     def _evaluate_one_inner(self, policy_id) -> str:
         prepared = self._prepare(policy_id)
@@ -116,10 +115,10 @@ class AutoTopupService:
         except TopupPackageNotFoundError:
             return self._block_package(policy_id)
         except SpendInProgressError:
-            metrics.incr("auto_topup_failed_total", reason="spend_in_progress")
+            self._metric_incr("auto_topup_failed_total", reason="spend_in_progress")
             return "failed"
         except ProviderFulfillmentError:
-            metrics.incr("auto_topup_failed_total", reason="provider_timeout")
+            self._metric_incr("auto_topup_failed_total", reason="provider_timeout")
             logger.warning(
                 "Auto top-up policy %s provider failure; retry next beat",
                 policy_id,
@@ -152,7 +151,7 @@ class AutoTopupService:
             esim = policy.esim
 
         if not self._ensure_fresh_usage(esim):
-            metrics.incr("auto_topup_failed_total", reason="usage_stale")
+            self._metric_incr("auto_topup_failed_total", reason="usage_stale")
             return "skipped"
 
         with transaction.atomic():
@@ -274,6 +273,7 @@ class AutoTopupService:
             ]
 
             remaining_after: int | None = policy.remaining_count
+            count_exhausted = False
             if policy.renew_mode == EsimAutoTopupPolicy.RenewMode.FIXED_COUNT:
                 current = policy.remaining_count or 0
                 remaining_after = max(current - 1, 0)
@@ -283,22 +283,25 @@ class AutoTopupService:
                     policy.status = EsimAutoTopupPolicy.Status.PAUSED
                     policy.reason = EsimAutoTopupPolicy.Reason.COUNT_EXHAUSTED
                     update_fields.extend(["status", "reason"])
-                    metrics.incr("auto_topup_paused_total", reason="count_exhausted")
+                    count_exhausted = True
 
             policy.save(update_fields=update_fields)
-            event_bus.publish(
-                AutoTopupSucceeded(
-                    policy_id=str(policy.pk),
-                    topup_id=str(topup.pk),
-                    package_id=policy.package_id,
-                    amount=topup.amount,
-                    remaining_count=remaining_after,
-                    account_id=str(policy.account_id),
-                    esim_id=str(policy.esim_id),
-                    created_at=now,
-                )
+            succeeded = AutoTopupSucceeded(
+                policy_id=str(policy.pk),
+                topup_id=str(topup.pk),
+                package_id=policy.package_id,
+                amount=topup.amount,
+                remaining_count=remaining_after,
+                account_id=str(policy.account_id),
+                esim_id=str(policy.esim_id),
+                created_at=now,
             )
-        metrics.incr("auto_topup_success_total")
+
+        # Events/metrics must not undo a committed purchase or policy update.
+        self._safe_publish(succeeded)
+        self._metric_incr("auto_topup_success_total")
+        if count_exhausted:
+            self._metric_incr("auto_topup_paused_total", reason="count_exhausted")
         return "success"
 
     def _pause_funds(self, policy_id, exc: InsufficientFundsError) -> str:
@@ -307,19 +310,18 @@ class AutoTopupService:
             policy.status = EsimAutoTopupPolicy.Status.PAUSED
             policy.reason = EsimAutoTopupPolicy.Reason.INSUFFICIENT_FUNDS
             policy.save(update_fields=["status", "reason", "updated_at"])
-            event_bus.publish(
-                AutoTopupPausedFunds(
-                    policy_id=str(policy.pk),
-                    account_id=str(policy.account_id),
-                    esim_id=str(policy.esim_id),
-                    package_id=policy.package_id,
-                    amount_required=exc.amount_required,
-                    balance=exc.account_balance,
-                    deposit_url=self._deposit_url(),
-                    created_at=timezone.now(),
-                )
+            paused = AutoTopupPausedFunds(
+                policy_id=str(policy.pk),
+                account_id=str(policy.account_id),
+                esim_id=str(policy.esim_id),
+                package_id=policy.package_id,
+                amount_required=exc.amount_required,
+                balance=exc.account_balance,
+                deposit_url=self._deposit_url(),
+                created_at=timezone.now(),
             )
-        metrics.incr("auto_topup_paused_total", reason="insufficient_funds")
+        self._safe_publish(paused)
+        self._metric_incr("auto_topup_paused_total", reason="insufficient_funds")
         return "paused"
 
     def _block_package(self, policy_id) -> str:
@@ -328,8 +330,34 @@ class AutoTopupService:
             policy.status = EsimAutoTopupPolicy.Status.BLOCKED
             policy.reason = EsimAutoTopupPolicy.Reason.PACKAGE_UNAVAILABLE
             policy.save(update_fields=["status", "reason", "updated_at"])
-        metrics.incr("auto_topup_paused_total", reason="package_unavailable")
+        self._metric_incr("auto_topup_paused_total", reason="package_unavailable")
         return "blocked"
+
+    @staticmethod
+    def _safe_publish(event) -> None:
+        try:
+            event_bus.publish(event)
+        except Exception:
+            logger.exception(
+                "Auto top-up event publish failed (best-effort): %s",
+                type(event).__name__,
+            )
+
+    @staticmethod
+    def _metric_incr(name: str, **tags: str) -> None:
+        try:
+            metrics.incr(name, **tags)
+        except Exception:
+            logger.exception("Auto top-up metric incr failed (best-effort): %s", name)
+
+    @staticmethod
+    def _metric_observe(name: str, value: float, **tags: str) -> None:
+        try:
+            metrics.observe(name, value, **tags)
+        except Exception:
+            logger.exception(
+                "Auto top-up metric observe failed (best-effort): %s", name
+            )
 
     def _rollout_allows(self, policy: EsimAutoTopupPolicy) -> bool:
         if not self._master_enabled():
