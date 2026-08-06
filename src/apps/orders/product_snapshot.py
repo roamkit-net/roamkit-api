@@ -27,6 +27,7 @@ def product_snapshot_kwargs(package: Any) -> dict[str, Any]:
             country_code = getattr(location, "country_code", None) or ""
 
     return {
+        "package_external_id": getattr(package, "external_id", None) or "",
         "package_title": package.title or "",
         "operator_title": package.operator_title or "",
         "location_title": location_title,
@@ -89,6 +90,11 @@ def backfill_order_product_snapshots(Order: Any) -> int:
                 getattr(package, "pk", None),
                 exc_info=True,
             )
+            continue
+
+        concrete = {f.name for f in order._meta.concrete_fields}
+        fields = {k: v for k, v in fields.items() if k in concrete}
+        if not fields:
             continue
 
         for name, value in fields.items():

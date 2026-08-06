@@ -1,7 +1,8 @@
 openapi: 3.0.3
 info:
-  description: Self-service eSIM API. Public REST under `/api/v1/`. Authenticate with JWT Bearer tokens
-    from `/api/v1/auth/token/`.
+  description: Self-service eSIM API. Public REST under `/api/v1/`. Staff Operations Dashboard under `/api/v1/admin/`
+    (read-only). Staff internal tools under `/api/internal/`. Authenticate with JWT Bearer tokens from
+    `/api/v1/auth/token/`.
   title: RoamKit API
   version: 1.0.0
 servers:
@@ -24,7 +25,326 @@ tags:
   name: eSIM
 - description: Authenticated user profile
   name: Users
+- description: Staff-only read-only Operations Dashboard (members, search, aggregates)
+  name: Ops
+- description: Staff-only internal tools under `/api/internal/` (pricing preview; not public catalog)
+  name: Internal
 paths:
+  /api/internal/pricing/preview:
+    post:
+      description: Read-only preview via ``PricingService.resolve``. No ledger writes, no cache mutation,
+        no side effects.
+      operationId: internal_pricing_preview
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PricingPreviewRequestRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PricingPreviewResponse'
+          description: Resolved quote
+        '400':
+          description: Invalid request
+        '403':
+          description: Staff required
+        '404':
+          description: Package or account not found
+      security:
+      - bearerAuth: []
+      summary: Preview pricing quote
+      tags:
+      - Internal
+  /api/v1/admin/dashboard/:
+    get:
+      description: 'Single read-only payload for the ops home page: KPIs, pending work, financial summary,
+        destinations, packages, alerts, health, and activity feed. schema_version is stable for additive
+        field changes.'
+      operationId: ops_dashboard
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsDashboard'
+          description: Dashboard
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Staff required
+      security:
+      - bearerAuth: []
+      summary: Operations dashboard aggregate
+      tags:
+      - Ops
+  /api/v1/admin/deposits/:
+    get:
+      description: Prevent intermediary/browser caching of staff ops payloads.
+      operationId: ops_deposits_list
+      parameters:
+      - description: A page number within the paginated result set.
+        in: query
+        name: page
+        required: false
+        schema:
+          type: integer
+      - description: Number of results to return per page.
+        in: query
+        name: page_size
+        required: false
+        schema:
+          type: integer
+      - description: Filter by tx_hash or user email
+        in: query
+        name: q
+        schema:
+          type: string
+      - in: query
+        name: status
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedOpsDepositListItemList'
+          description: Paginated deposits
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Staff required
+      security:
+      - bearerAuth: []
+      summary: List deposits
+      tags:
+      - Ops
+  /api/v1/admin/health/:
+    get:
+      description: 'Staff-only read-only health snapshot: dependencies, workers, providers, metrics, version/deployment
+        metadata. Checks are read-only with per-check timeouts; overall_status follows the Observability
+        V1 matrix.'
+      operationId: ops_health
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsHealth'
+          description: Health aggregate
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Staff required
+      security:
+      - bearerAuth: []
+      summary: Operations health aggregate
+      tags:
+      - Ops
+  /api/v1/admin/orders/:
+    get:
+      description: Prevent intermediary/browser caching of staff ops payloads.
+      operationId: ops_orders_list
+      parameters:
+      - description: A page number within the paginated result set.
+        in: query
+        name: page
+        required: false
+        schema:
+          type: integer
+      - description: Number of results to return per page.
+        in: query
+        name: page_size
+        required: false
+        schema:
+          type: integer
+      - in: query
+        name: status
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedOpsOrderListItemList'
+          description: Paginated orders
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Staff required
+      security:
+      - bearerAuth: []
+      summary: List orders
+      tags:
+      - Ops
+  /api/v1/admin/search/:
+    get:
+      description: Search users, orders, deposits, eSIMs, and vouchers. Response always includes all group
+        keys (possibly empty).
+      operationId: ops_search
+      parameters:
+      - description: Search query (min 3 chars, or exact UUID)
+        in: query
+        name: q
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsSearchResponse'
+          description: Grouped hits
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Staff required
+      security:
+      - bearerAuth: []
+      summary: Global ops search
+      tags:
+      - Ops
+  /api/v1/admin/users/:
+    get:
+      description: Prevent intermediary/browser caching of staff ops payloads.
+      operationId: ops_users_list
+      parameters:
+      - in: query
+        name: is_active
+        schema:
+          type: boolean
+      - description: 'Sort field: email, balance, last_login, flags (prefix with - for descending). Default:
+          -created_at.'
+        in: query
+        name: ordering
+        schema:
+          type: string
+      - description: A page number within the paginated result set.
+        in: query
+        name: page
+        required: false
+        schema:
+          type: integer
+      - description: Number of results to return per page.
+        in: query
+        name: page_size
+        required: false
+        schema:
+          type: integer
+      - description: Filter by email (icontains)
+        in: query
+        name: q
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedOpsUserListItemList'
+          description: Paginated members
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Staff required
+      security:
+      - bearerAuth: []
+      summary: List members
+      tags:
+      - Ops
+  /api/v1/admin/users/{id}/:
+    get:
+      description: Prevent intermediary/browser caching of staff ops payloads.
+      operationId: ops_users_retrieve
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsUserDetail'
+          description: Member detail
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Staff required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not found
+      security:
+      - bearerAuth: []
+      summary: Member detail with timeline
+      tags:
+      - Ops
   /api/v1/auth/activate/:
     post:
       description: Set password from the confirmation link and activate the account.
@@ -830,7 +1150,8 @@ paths:
       - eSIM
   /api/v1/me/esims/{id}/topups/:
     get:
-      description: List available top-up packages for an owned eSIM.
+      description: List available top-up packages for an owned eSIM. Additive pricing fields match catalog
+        packages (``price_usd`` customer charge, ``list_price_usd`` provider list).
       operationId: esim_topups_list
       parameters:
       - in: path
@@ -840,6 +1161,10 @@ paths:
           type: integer
       responses:
         '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTopupPackageList'
           description: Top-up package list
         '401':
           content:
@@ -1019,7 +1344,9 @@ paths:
       - Orders
   /api/v1/packages/:
     get:
-      description: List active packages synced from external providers.
+      description: 'List active packages synced from external providers. Additive pricing fields: ``price_usd``
+        is the customer charge (authenticated + flag ON may apply a pricing profile); ``list_price_usd``
+        is the provider list price.'
       operationId: catalog_packages_list
       parameters:
       - description: Filter by ISO country code
@@ -1489,6 +1816,26 @@ components:
       - expired
       - unknown
       type: string
+    EventGroupEnum:
+      description: '* `account` - account
+
+        * `billing` - billing
+
+        * `order` - order
+
+        * `esim` - esim
+
+        * `wallet` - wallet
+
+        * `voucher` - voucher'
+      enum:
+      - account
+      - billing
+      - order
+      - esim
+      - wallet
+      - voucher
+      type: string
     GoogleAuthError:
       description: Locked Google auth error body (ADR 015).
       properties:
@@ -1521,6 +1868,41 @@ components:
       required:
       - access
       - refresh
+      type: object
+    HealthItem:
+      properties:
+        cache:
+          additionalProperties: {}
+          type: object
+        checked_at:
+          type: string
+        details:
+          additionalProperties: {}
+          type: object
+        last_success_at:
+          nullable: true
+          type: string
+        latency_ms:
+          nullable: true
+          type: integer
+        message:
+          type: string
+        reason:
+          type: string
+        source:
+          type: string
+        status:
+          type: string
+        timeout_ms:
+          type: integer
+      required:
+      - checked_at
+      - details
+      - message
+      - reason
+      - source
+      - status
+      - timeout_ms
       type: object
     InsufficientCredits:
       description: Structured 402 payload from ``InsufficientFundsError.to_api_dict()``.
@@ -1707,6 +2089,448 @@ components:
       - slug
       - title
       type: object
+    OpsAlert:
+      properties:
+        code:
+          type: string
+        count:
+          type: integer
+        severity:
+          type: string
+        title:
+          type: string
+      required:
+      - code
+      - count
+      - severity
+      - title
+      type: object
+    OpsDashboard:
+      properties:
+        activity:
+          items:
+            $ref: '#/components/schemas/OpsEvent'
+          type: array
+        alerts:
+          items:
+            $ref: '#/components/schemas/OpsAlert'
+          type: array
+        financial:
+          additionalProperties: {}
+          type: object
+        health:
+          $ref: '#/components/schemas/OpsHealth'
+        kpi:
+          additionalProperties: {}
+          type: object
+        pending_work:
+          additionalProperties: {}
+          type: object
+        schema_version:
+          type: integer
+        top_destinations:
+          items: {}
+          type: array
+        top_packages:
+          items: {}
+          type: array
+      required:
+      - activity
+      - alerts
+      - financial
+      - health
+      - kpi
+      - pending_work
+      - schema_version
+      - top_destinations
+      - top_packages
+      type: object
+    OpsDepositListItem:
+      properties:
+        amount_credited:
+          nullable: true
+          type: string
+        amount_requested:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        payment_method:
+          type: string
+        status:
+          type: string
+        tx_hash:
+          nullable: true
+          type: string
+        user_email:
+          format: email
+          type: string
+        user_id:
+          type: integer
+      required:
+      - amount_credited
+      - amount_requested
+      - created_at
+      - id
+      - payment_method
+      - status
+      - tx_hash
+      - user_email
+      - user_id
+      type: object
+    OpsEvent:
+      properties:
+        event_group:
+          $ref: '#/components/schemas/EventGroupEnum'
+        icon:
+          type: string
+        reference_id:
+          type: string
+        schema_version:
+          type: integer
+        severity:
+          $ref: '#/components/schemas/SeverityEnum'
+        subtitle:
+          type: string
+        timestamp:
+          format: date-time
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+        user_email:
+          format: email
+          nullable: true
+          type: string
+        user_id:
+          nullable: true
+          type: integer
+      required:
+      - event_group
+      - icon
+      - reference_id
+      - schema_version
+      - severity
+      - subtitle
+      - timestamp
+      - title
+      - type
+      type: object
+    OpsHealth:
+      properties:
+        checks:
+          additionalProperties:
+            $ref: '#/components/schemas/HealthItem'
+          type: object
+        dependencies:
+          additionalProperties:
+            $ref: '#/components/schemas/HealthItem'
+          type: object
+        generated_at:
+          type: string
+        metrics:
+          items:
+            $ref: '#/components/schemas/OpsHealthMetric'
+          type: array
+        overall_status:
+          type: string
+        providers:
+          additionalProperties:
+            $ref: '#/components/schemas/HealthItem'
+          type: object
+        schema_version:
+          type: integer
+        version:
+          additionalProperties: {}
+          type: object
+        workers:
+          additionalProperties:
+            $ref: '#/components/schemas/HealthItem'
+          type: object
+      required:
+      - checks
+      - dependencies
+      - generated_at
+      - metrics
+      - overall_status
+      - providers
+      - schema_version
+      - version
+      - workers
+      type: object
+    OpsHealthMetric:
+      properties:
+        key:
+          type: string
+        status:
+          type: string
+        unit:
+          type: string
+        value:
+          format: double
+          nullable: true
+          type: number
+      required:
+      - key
+      - status
+      - unit
+      - value
+      type: object
+    OpsOrderListItem:
+      properties:
+        country_code:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: integer
+        package_title:
+          type: string
+        retail_price_usd:
+          nullable: true
+          type: string
+        status:
+          type: string
+        user_email:
+          format: email
+          type: string
+        user_id:
+          type: integer
+      required:
+      - country_code
+      - created_at
+      - id
+      - package_title
+      - retail_price_usd
+      - status
+      - user_email
+      - user_id
+      type: object
+    OpsSearchHitDeposit:
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        match:
+          type: string
+        status:
+          type: string
+        user_email:
+          format: email
+          type: string
+        user_id:
+          type: integer
+      required:
+      - id
+      - label
+      - match
+      - status
+      - user_email
+      - user_id
+      type: object
+    OpsSearchHitEsim:
+      properties:
+        id:
+          type: integer
+        label:
+          type: string
+        match:
+          type: string
+        status:
+          type: string
+        user_email:
+          format: email
+          type: string
+        user_id:
+          type: integer
+      required:
+      - id
+      - label
+      - match
+      - status
+      - user_email
+      - user_id
+      type: object
+    OpsSearchHitOrder:
+      properties:
+        id:
+          type: integer
+        label:
+          type: string
+        match:
+          type: string
+        status:
+          type: string
+        user_email:
+          format: email
+          type: string
+        user_id:
+          type: integer
+      required:
+      - id
+      - label
+      - match
+      - status
+      - user_email
+      - user_id
+      type: object
+    OpsSearchHitUser:
+      properties:
+        id:
+          type: integer
+        label:
+          type: string
+        match:
+          type: string
+      required:
+      - id
+      - label
+      - match
+      type: object
+    OpsSearchHitVoucher:
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        match:
+          type: string
+        status:
+          type: string
+      required:
+      - id
+      - label
+      - match
+      - status
+      type: object
+    OpsSearchResponse:
+      properties:
+        deposits:
+          items:
+            $ref: '#/components/schemas/OpsSearchHitDeposit'
+          type: array
+        esims:
+          items:
+            $ref: '#/components/schemas/OpsSearchHitEsim'
+          type: array
+        orders:
+          items:
+            $ref: '#/components/schemas/OpsSearchHitOrder'
+          type: array
+        query:
+          type: string
+        schema_version:
+          type: integer
+        users:
+          items:
+            $ref: '#/components/schemas/OpsSearchHitUser'
+          type: array
+        vouchers:
+          items:
+            $ref: '#/components/schemas/OpsSearchHitVoucher'
+          type: array
+      required:
+      - deposits
+      - esims
+      - orders
+      - query
+      - schema_version
+      - users
+      - vouchers
+      type: object
+    OpsUserDetail:
+      properties:
+        account:
+          additionalProperties: {}
+          nullable: true
+          type: object
+        badges:
+          items:
+            type: string
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        device_hints:
+          additionalProperties: {}
+          type: object
+        email:
+          format: email
+          type: string
+        esims:
+          items: {}
+          type: array
+        id:
+          type: integer
+        is_active:
+          type: boolean
+        is_staff:
+          type: boolean
+        last_login:
+          format: date-time
+          nullable: true
+          type: string
+        schema_version:
+          type: integer
+        timeline:
+          items:
+            $ref: '#/components/schemas/OpsEvent'
+          type: array
+        wallet:
+          additionalProperties: {}
+          nullable: true
+          type: object
+      required:
+      - account
+      - badges
+      - created_at
+      - device_hints
+      - email
+      - esims
+      - id
+      - is_active
+      - is_staff
+      - last_login
+      - schema_version
+      - timeline
+      - wallet
+      type: object
+    OpsUserListItem:
+      properties:
+        badges:
+          items:
+            type: string
+          type: array
+        balance:
+          nullable: true
+          type: string
+        email:
+          format: email
+          type: string
+        id:
+          type: integer
+        is_active:
+          type: boolean
+        is_staff:
+          type: boolean
+        last_login:
+          format: date-time
+          nullable: true
+          type: string
+      required:
+      - badges
+      - balance
+      - email
+      - id
+      - is_active
+      - is_staff
+      - last_login
+      type: object
     Order:
       description: 'Order response including provisioned eSIMs when fulfilled.
 
@@ -1831,8 +2655,21 @@ components:
       - failed
       - cancelled
       type: string
+    OrderTypeEnum:
+      description: '* `package` - package
+
+        * `topup` - topup'
+      enum:
+      - package
+      - topup
+      type: string
     Package:
-      description: Public package representation for the catalog API.
+      description: 'Public package representation for the catalog API.
+
+
+        Additive pricing (ADR 019): ``price_usd`` is the customer charge;
+
+        ``list_price_usd`` is provider list. Anonymous / flag-off → retail.'
       properties:
         activation_policy:
           description: first_usage | installation | unknown (synced from provider).
@@ -1844,12 +2681,18 @@ components:
         data_allowance:
           readOnly: true
           type: string
+        discount_percent:
+          readOnly: true
+          type: string
         id:
           readOnly: true
           type: string
         is_unlimited:
           readOnly: true
           type: boolean
+        list_price_usd:
+          readOnly: true
+          type: string
         operator_title:
           readOnly: true
           type: string
@@ -1857,8 +2700,9 @@ components:
           readOnly: true
           type: string
         price_usd:
-          format: decimal
-          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          readOnly: true
+          type: string
+        pricing_reason:
           readOnly: true
           type: string
         text_sms:
@@ -1879,11 +2723,14 @@ components:
       - activation_policy
       - country_code
       - data_allowance
+      - discount_percent
       - id
       - is_unlimited
+      - list_price_usd
       - operator_title
       - plan_type
       - price_usd
+      - pricing_reason
       - text_sms
       - title
       - validity_days
@@ -1958,6 +2805,75 @@ components:
       - count
       - results
       type: object
+    PaginatedOpsDepositListItemList:
+      properties:
+        count:
+          example: 123
+          type: integer
+        next:
+          example: http://api.example.org/accounts/?page=4
+          format: uri
+          nullable: true
+          type: string
+        previous:
+          example: http://api.example.org/accounts/?page=2
+          format: uri
+          nullable: true
+          type: string
+        results:
+          items:
+            $ref: '#/components/schemas/OpsDepositListItem'
+          type: array
+      required:
+      - count
+      - results
+      type: object
+    PaginatedOpsOrderListItemList:
+      properties:
+        count:
+          example: 123
+          type: integer
+        next:
+          example: http://api.example.org/accounts/?page=4
+          format: uri
+          nullable: true
+          type: string
+        previous:
+          example: http://api.example.org/accounts/?page=2
+          format: uri
+          nullable: true
+          type: string
+        results:
+          items:
+            $ref: '#/components/schemas/OpsOrderListItem'
+          type: array
+      required:
+      - count
+      - results
+      type: object
+    PaginatedOpsUserListItemList:
+      properties:
+        count:
+          example: 123
+          type: integer
+        next:
+          example: http://api.example.org/accounts/?page=4
+          format: uri
+          nullable: true
+          type: string
+        previous:
+          example: http://api.example.org/accounts/?page=2
+          format: uri
+          nullable: true
+          type: string
+        results:
+          items:
+            $ref: '#/components/schemas/OpsUserListItem'
+          type: array
+      required:
+      - count
+      - results
+      type: object
     PaginatedPackageList:
       properties:
         count:
@@ -1976,6 +2892,29 @@ components:
         results:
           items:
             $ref: '#/components/schemas/Package'
+          type: array
+      required:
+      - count
+      - results
+      type: object
+    PaginatedTopupPackageList:
+      properties:
+        count:
+          example: 123
+          type: integer
+        next:
+          example: http://api.example.org/accounts/?page=4
+          format: uri
+          nullable: true
+          type: string
+        previous:
+          example: http://api.example.org/accounts/?page=2
+          format: uri
+          nullable: true
+          type: string
+        results:
+          items:
+            $ref: '#/components/schemas/TopupPackage'
           type: array
       required:
       - count
@@ -2030,6 +2969,80 @@ components:
           maxLength: 255
           type: string
       type: object
+    PricingPreviewRequestRequest:
+      description: Preview inputs — package catalog id and/or explicit prices for topup.
+      properties:
+        account_id:
+          format: uuid
+          nullable: true
+          type: string
+        list_price_usd:
+          format: decimal
+          nullable: true
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          type: string
+        net_price_usd:
+          format: decimal
+          nullable: true
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          type: string
+        order_type:
+          allOf:
+          - $ref: '#/components/schemas/OrderTypeEnum'
+          default: package
+        package_id:
+          description: Catalog ``Package.external_id`` when order_type=package.
+          maxLength: 64
+          type: string
+      type: object
+    PricingPreviewResponse:
+      description: Internal preview response (may include ops-only fields).
+      properties:
+        discount_percent:
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          type: string
+        floor_reason:
+          type: string
+        list_price_usd:
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          type: string
+        price_usd:
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          type: string
+        pricing_context_hash:
+          type: string
+        pricing_profile_id:
+          format: uuid
+          nullable: true
+          type: string
+        pricing_profile_slug:
+          nullable: true
+          type: string
+        pricing_profile_version:
+          nullable: true
+          type: integer
+        pricing_reason:
+          type: string
+        quote_fingerprint:
+          type: string
+        snapshot_schema_version:
+          type: integer
+      required:
+      - discount_percent
+      - floor_reason
+      - list_price_usd
+      - price_usd
+      - pricing_context_hash
+      - pricing_profile_id
+      - pricing_profile_slug
+      - pricing_profile_version
+      - pricing_reason
+      - quote_fingerprint
+      - snapshot_schema_version
+      type: object
     PurchaseTopupRequest:
       description: Request body for POST /api/v1/me/esims/{id}/topups/.
       properties:
@@ -2054,6 +3067,17 @@ components:
       required:
       - email
       type: object
+    SeverityEnum:
+      description: '* `info` - info
+
+        * `warning` - warning
+
+        * `error` - error'
+      enum:
+      - info
+      - warning
+      - error
+      type: string
     SourceEnum:
       description: '* `client` - Client
 
@@ -2152,6 +3176,47 @@ components:
       - status
       - updated_at
       type: object
+    TopupPackage:
+      description: Available top-up package for an eSIM (additive pricing — ADR 019).
+      properties:
+        data_allowance:
+          type: string
+        discount_percent:
+          default: '0.00'
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+          type: string
+        id:
+          type: string
+        is_unlimited:
+          type: boolean
+        list_price_usd:
+          default: '0.00'
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          type: string
+        plan_type:
+          type: string
+        price_usd:
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          type: string
+        pricing_reason:
+          default: retail
+          type: string
+        title:
+          type: string
+        validity_days:
+          type: integer
+      required:
+      - data_allowance
+      - id
+      - is_unlimited
+      - plan_type
+      - price_usd
+      - title
+      - validity_days
+      type: object
     TopupStatusEnum:
       description: '* `fulfilling` - Fulfilling
 
@@ -2210,6 +3275,9 @@ components:
         id:
           readOnly: true
           type: integer
+        is_staff:
+          readOnly: true
+          type: boolean
         updated_at:
           format: date-time
           readOnly: true
@@ -2218,6 +3286,7 @@ components:
       - created_at
       - email
       - id
+      - is_staff
       - updated_at
       type: object
     VerifyDepositRequest:

@@ -46,6 +46,7 @@ class Order(models.Model):
         db_index=True,
     )
     # Immutable purchase-time product snapshot (not live catalog).
+    package_external_id = models.CharField(max_length=64, blank=True, default="")
     package_title = models.CharField(max_length=255, blank=True, default="")
     operator_title = models.CharField(max_length=255, blank=True, default="")
     location_title = models.CharField(max_length=255, blank=True, default="")
@@ -59,6 +60,27 @@ class Order(models.Model):
         blank=True,
         help_text="What the customer paid (credits). Immutable after create.",
     )
+    list_price_usd = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Provider list / recommended retail at purchase (ADR 019).",
+    )
+    discount_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    pricing_reason = models.CharField(max_length=32, blank=True, default="")
+    floor_reason = models.CharField(max_length=32, blank=True, default="")
+    pricing_profile_id = models.UUIDField(null=True, blank=True)
+    pricing_profile_version = models.PositiveIntegerField(null=True, blank=True)
+    pricing_profile_slug = models.CharField(max_length=128, blank=True, default="")
+    pricing_profile_name = models.CharField(max_length=128, blank=True, default="")
+    pricing_context_hash = models.CharField(max_length=64, blank=True, default="")
+    snapshot_schema_version = models.PositiveSmallIntegerField(null=True, blank=True)
     currency = models.CharField(
         max_length=3,
         blank=True,

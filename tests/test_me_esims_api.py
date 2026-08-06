@@ -344,6 +344,10 @@ def test_topups_lists_packages_without_purchase(
     assert payload["results"][0]["id"] == "topup-1gb"
     assert payload["results"][0]["title"] == "1 GB Top-up"
     assert payload["results"][0]["price_usd"] == "5.00"
+    assert payload["results"][0]["list_price_usd"] == "5.00"
+    assert payload["results"][0]["discount_percent"] == "0.00"
+    assert payload["results"][0]["pricing_reason"] == "retail"
+    assert "net_price_usd" not in payload["results"][0]
     assert provider.topup_calls == [alice_esim.iccid]
 
 

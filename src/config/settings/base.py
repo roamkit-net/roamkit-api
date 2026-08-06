@@ -32,11 +32,14 @@ INSTALLED_APPS = [
     "core.apps.CoreConfig",
     "apps.accounts",
     "apps.billing",
+    "apps.pricing",
+    "apps.wallet",
     "apps.catalog",
     "apps.orders",
     "apps.esims",
     "apps.notifications",
     "apps.integrations",
+    "apps.ops",
 ]
 
 MIDDLEWARE = [
@@ -209,6 +212,8 @@ SPECTACULAR_SETTINGS = {
     "TITLE": "RoamKit API",
     "DESCRIPTION": (
         "Self-service eSIM API. Public REST under `/api/v1/`. "
+        "Staff Operations Dashboard under `/api/v1/admin/` (read-only). "
+        "Staff internal tools under `/api/internal/`. "
         "Authenticate with JWT Bearer tokens from `/api/v1/auth/token/`."
     ),
     "VERSION": "1.0.0",
@@ -233,6 +238,20 @@ SPECTACULAR_SETTINGS = {
         {"name": "Catalog", "description": "Packages and locations"},
         {"name": "eSIM", "description": "User eSIM inventory, usage, and top-ups"},
         {"name": "Users", "description": "Authenticated user profile"},
+        {
+            "name": "Ops",
+            "description": (
+                "Staff-only read-only Operations Dashboard "
+                "(members, search, aggregates)"
+            ),
+        },
+        {
+            "name": "Internal",
+            "description": (
+                "Staff-only internal tools under `/api/internal/` "
+                "(pricing preview; not public catalog)"
+            ),
+        },
     ],
     "SERVERS": [
         {"url": "https://api.staging.roamkit.net", "description": "Staging"},
@@ -254,6 +273,25 @@ BLOCKCHAIN_PROVIDER = os.environ.get(
     "BLOCKCHAIN_PROVIDER",
     "apps.integrations.polygon.providers.PolygonProvider",
 )
+MEXC_FUNDING_PROVIDER = os.environ.get(
+    "MEXC_FUNDING_PROVIDER",
+    "apps.integrations.mexc.providers.MexcFundingProvider",
+)
+MEXC_WITHDRAW_URL = os.environ.get(
+    "MEXC_WITHDRAW_URL",
+    "https://www.mexc.com/assets/withdraw/USDT",
+)
+MEXC_POLYGON_NETWORK_LABEL = os.environ.get("MEXC_POLYGON_NETWORK_LABEL", "MATIC")
+
+BINANCE_FUNDING_PROVIDER = os.environ.get(
+    "BINANCE_FUNDING_PROVIDER",
+    "apps.integrations.binance.providers.BinanceFundingProvider",
+)
+BINANCE_WITHDRAW_URL = os.environ.get(
+    "BINANCE_WITHDRAW_URL",
+    "https://www.binance.com/en/my/wallet/account/main/withdrawal/crypto/USDT",
+)
+BINANCE_POLYGON_NETWORK_LABEL = os.environ.get("BINANCE_POLYGON_NETWORK_LABEL", "MATIC")
 
 AIRALO_CLIENT_ID = os.environ.get("AIRALO_CLIENT_ID", "")
 AIRALO_CLIENT_SECRET = os.environ.get("AIRALO_CLIENT_SECRET", "")
@@ -271,6 +309,10 @@ SUBSCRIPTIONS_ENABLED = (
     os.environ.get("SUBSCRIPTIONS_ENABLED", "false").lower() == "true"
 )
 VOUCHERS_ENABLED = os.environ.get("VOUCHERS_ENABLED", "false").lower() == "true"
+# ADR 019 — when false, PricingService always returns retail (list == customer).
+PRICING_PROFILES_ENABLED = (
+    os.environ.get("PRICING_PROFILES_ENABLED", "false").lower() == "true"
+)
 WALLETCONNECT_ENABLED = (
     os.environ.get("WALLETCONNECT_ENABLED", "false").lower() == "true"
 )
@@ -295,6 +337,24 @@ GOOGLE_OAUTH_VERIFY_TIMEOUT = float(
 )
 GOOGLE_OAUTH_CLOCK_SKEW_SECONDS = int(
     os.environ.get("GOOGLE_OAUTH_CLOCK_SKEW_SECONDS", "60")
+)
+
+# Platform Wallet Infrastructure (ADR 017 / RFC 004). BIP39 mnemonic for HD
+# receive addresses; empty until allocate — never commit a real seed.
+WALLET_HD_MNEMONIC = os.environ.get("WALLET_HD_MNEMONIC", "")
+
+# Wallet Product Activation flags (ADR 018). Default off — shared ADR 010
+# path remains primary until Phase 3 cutover GO.
+WALLET_ADDRESS_ENABLED = (
+    os.environ.get("WALLET_ADDRESS_ENABLED", "false").lower() == "true"
+)
+OBSERVATION_ENABLED = os.environ.get("OBSERVATION_ENABLED", "false").lower() == "true"
+CREDIT_CONVERSION_V2 = os.environ.get("CREDIT_CONVERSION_V2", "false").lower() == "true"
+SHADOW_MODE = os.environ.get("SHADOW_MODE", "false").lower() == "true"
+# Explicit Account UUID allowlist for Phase 2 Limited Traffic (comma-separated).
+# Empty = instant rollback to legacy ADR 010 for all accounts (no deploy).
+WALLET_CUTOVER_COHORT_ACCOUNT_IDS = os.environ.get(
+    "WALLET_CUTOVER_COHORT_ACCOUNT_IDS", ""
 )
 
 # Polygon USDT deposits (ADR-010). Defaults match mainnet; set wallet in env.
@@ -352,8 +412,10 @@ LOGGING = {
     },
 }
 
-# Release metadata — consumed by GET /version (ADR 013).
+# Release metadata — consumed by GET /version and ops health (ADR 013).
 ROAMKIT_GIT_SHA = os.environ.get("ROAMKIT_GIT_SHA", "")
 ROAMKIT_BUILD_DATE = os.environ.get("ROAMKIT_BUILD_DATE", "")
 ROAMKIT_IMAGE_TAG = os.environ.get("ROAMKIT_IMAGE_TAG", "")
 ROAMKIT_ENVIRONMENT = os.environ.get("ROAMKIT_ENVIRONMENT", "")
+ROAMKIT_RELEASE = os.environ.get("ROAMKIT_RELEASE", "")
+ROAMKIT_DEPLOYMENT_ID = os.environ.get("ROAMKIT_DEPLOYMENT_ID", "")

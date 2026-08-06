@@ -89,6 +89,16 @@ class Account(models.Model):
         default=Decimal("0"),
     )
     version = models.PositiveIntegerField(default=0)
+    pricing_profile = models.ForeignKey(
+        "pricing.PricingProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="accounts",
+        help_text=(
+            "Optional shared pricing profile (ADR 019). " "Null = retail list price."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

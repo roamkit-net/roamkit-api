@@ -110,6 +110,7 @@ def test_product_snapshot_kwargs_uses_ledger_currency(package: Package) -> None:
     assert snap["location_title"] == "Croatia"
     assert snap["country_code"] == "HR"
     assert snap["package_title"] == "1 GB - 7 days"
+    assert snap["package_external_id"] == package.external_id
     assert snap["validity_days"] == 7
     assert snap["data_allowance"] == "1 GB"
 

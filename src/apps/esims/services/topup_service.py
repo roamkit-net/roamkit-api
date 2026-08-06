@@ -1,4 +1,4 @@
-"""Top-up listing and prepaid purchase (ADR-010)."""
+"""Top-up listing and prepaid purchase (ADR-010 / ADR-019)."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from apps.orders.exceptions import (
     ProviderFulfillmentError,
     SpendInProgressError,
 )
+from apps.pricing.charge import resolve_topup_charge
 from shared.events.billing_events import (
     CreditDebited,
     CreditGranted,
@@ -55,27 +56,25 @@ class TopupService:
     ) -> Topup:
         """Debit credits, reserve Topup, then submit via provider.
 
-        Price is taken from the provider catalog (never from the client).
-        Provider failure → compensating REFUND + FAILED + snapshot events.
-        Idempotent on ``idempotency_key`` like deposits / orders.
+        Price is resolved once (never from the client), snapshotted on Topup,
+        then debit/refund use the snapshot only.
         """
         if not idempotency_key:
             raise IdempotencyKeyRequiredError("idempotency_key is required")
 
         package = self._resolve_package(esim, package_id)
         account = ensure_billing_account(esim.user)
-        amount = package.price_usd
 
         topup, debit_entry, replay = self._reserve_and_debit(
             account=account,
             esim=esim,
-            package_external_id=package.external_id,
-            amount=amount,
+            package=package,
             idempotency_key=idempotency_key,
         )
         if replay:
             return topup
 
+        amount = topup.amount
         event_bus.publish(
             CreditDebited(
                 account_id=str(account.pk),
@@ -91,7 +90,7 @@ class TopupService:
         try:
             result = self.provider.submit_topup(esim.iccid, package.external_id)
         except Exception as exc:
-            self._compensate_failed(topup=topup, account=account, amount=amount)
+            self._compensate_failed(topup=topup, account=account)
             logger.exception("Topup %s provider fulfillment failed", topup.pk)
             raise ProviderFulfillmentError("Provider fulfillment failed") from exc
 
@@ -116,8 +115,7 @@ class TopupService:
         *,
         account: Account,
         esim: Esim,
-        package_external_id: str,
-        amount: Decimal,
+        package: TopupPackage,
         idempotency_key: str,
     ) -> tuple[Topup, CreditLedgerEntry | None, bool]:
         if not settings.BILLING_ENABLED:
@@ -134,14 +132,20 @@ class TopupService:
                     raise SpendInProgressError("Top-up request is still in progress")
                 return existing, None, True
 
+            _charge, pricing_kwargs = resolve_topup_charge(
+                account=account, package=package
+            )
+            amount = pricing_kwargs.get("amount", package.price_usd)
+
             try:
                 topup = Topup.objects.create(
                     account=account,
                     esim=esim,
-                    package_external_id=package_external_id,
+                    package_external_id=package.external_id,
                     amount=amount,
                     status=Topup.Status.FULFILLING,
                     idempotency_key=idempotency_key,
+                    **{k: v for k, v in pricing_kwargs.items() if k != "amount"},
                 )
             except IntegrityError:
                 existing = Topup.objects.filter(idempotency_key=idempotency_key).first()
@@ -153,9 +157,10 @@ class TopupService:
                     ) from None
                 return existing, None, True
 
+            # Debit from snapshotted amount only.
             entry = credit_service.debit(
                 account,
-                amount,
+                topup.amount,
                 reference_type=LedgerReferenceType.TOPUP,
                 reference_id=str(topup.pk),
                 idempotency_key=f"topup-debit:{topup.pk}",
@@ -167,7 +172,6 @@ class TopupService:
         *,
         topup: Topup,
         account: Account,
-        amount: Decimal,
     ) -> None:
         events: list[CreditGranted | FulfillmentRefunded] = []
         with transaction.atomic():
@@ -177,6 +181,7 @@ class TopupService:
             locked.status = Topup.Status.FAILED
             locked.save(update_fields=["status", "updated_at"])
 
+            amount = locked.amount
             entry = credit_service.credit(
                 account,
                 amount,
