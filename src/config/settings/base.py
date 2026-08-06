@@ -160,6 +160,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "billing.reconcile_balances",
         "schedule": 86400.0,
     },
+    "esims-evaluate-auto-topups": {
+        "task": "esims.evaluate_auto_topups",
+        "schedule": 300.0,
+    },
 }
 
 AUTH_TOKEN_RATE = os.environ.get("AUTH_TOKEN_RATE", "10/min")
@@ -309,6 +313,22 @@ SUBSCRIPTIONS_ENABLED = (
     os.environ.get("SUBSCRIPTIONS_ENABLED", "false").lower() == "true"
 )
 VOUCHERS_ENABLED = os.environ.get("VOUCHERS_ENABLED", "false").lower() == "true"
+# eSIM Auto Top-up v1 (design lock) — master + rollout; spend still via TopupService.
+AUTO_TOPUP_ENABLED = os.environ.get("AUTO_TOPUP_ENABLED", "false").lower() == "true"
+AUTO_TOPUP_COOLDOWN_SECONDS = int(os.environ.get("AUTO_TOPUP_COOLDOWN_SECONDS", "900"))
+AUTO_TOPUP_USAGE_MAX_AGE_SECONDS = int(
+    os.environ.get("AUTO_TOPUP_USAGE_MAX_AGE_SECONDS", "600")
+)
+AUTO_TOPUP_MINIMUM_AGE_SECONDS = int(
+    os.environ.get("AUTO_TOPUP_MINIMUM_AGE_SECONDS", "600")
+)
+AUTO_TOPUP_ROLLOUT_MODE = os.environ.get("AUTO_TOPUP_ROLLOUT_MODE", "off").lower()
+AUTO_TOPUP_ALLOWLIST_ACCOUNT_IDS = [
+    item.strip()
+    for item in os.environ.get("AUTO_TOPUP_ALLOWLIST_ACCOUNT_IDS", "").split(",")
+    if item.strip()
+]
+AUTO_TOPUP_ROLLOUT_PERCENT = int(os.environ.get("AUTO_TOPUP_ROLLOUT_PERCENT", "0"))
 # ADR 019 — when false, PricingService always returns retail (list == customer).
 PRICING_PROFILES_ENABLED = (
     os.environ.get("PRICING_PROFILES_ENABLED", "false").lower() == "true"
