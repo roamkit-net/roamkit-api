@@ -37,4 +37,6 @@ class TransferResult:
 class BlockchainProvider(Protocol):
     """Fetches on-chain USDT transfers for deposit verification."""
 
-    def fetch_usdt_transfer(self, tx_hash: str) -> TransferResult: ...
+    def fetch_usdt_transfer(
+        self, tx_hash: str, *, to_address: str | None = None
+    ) -> TransferResult: ...

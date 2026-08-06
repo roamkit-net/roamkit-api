@@ -12,6 +12,7 @@ from django.test import override_settings
 
 from apps.accounts.models import User
 from apps.billing.exceptions import (
+    AmountMismatchError,
     BillingDisabledError,
     DepositVerificationError,
     DepositVerificationFailedError,
@@ -43,7 +44,9 @@ class _FakeBlockchainProvider:
         self._result = result
         self.calls: list[str] = []
 
-    def fetch_usdt_transfer(self, tx_hash: str) -> TransferResult:
+    def fetch_usdt_transfer(
+        self, tx_hash: str, *, to_address: str | None = None
+    ) -> TransferResult:
         self.calls.append(tx_hash)
         if isinstance(self._result, Exception):
             raise self._result
@@ -327,7 +330,7 @@ def test_verify_amount_mismatch_marks_failed(account: Account) -> None:
     provider = _FakeBlockchainProvider(_transfer(amount=Decimal("9.000000")))
     service = _service(provider)
 
-    with pytest.raises(DepositVerificationFailedError, match="Amount mismatch"):
+    with pytest.raises(AmountMismatchError) as exc_info:
         service.verify(
             account,
             tx_hash=TX_HASH,
@@ -336,12 +339,127 @@ def test_verify_amount_mismatch_marks_failed(account: Account) -> None:
             idempotency_key="amt-mismatch",
         )
 
+    assert exc_info.value.on_chain_amount == Decimal("9.000000")
+    assert exc_info.value.requested_amount == Decimal("10.000000")
+    assert AmountMismatchError.code == "AMOUNT_MISMATCH"
+
     deposit = DepositRequest.objects.get(idempotency_key="amt-mismatch")
     assert deposit.status == DepositRequest.Status.FAILED
     assert "Amount mismatch" in deposit.failure_reason
     assert deposit.raw_rpc_response is not None
     account.refresh_from_db()
     assert account.balance == Decimal("0")
+
+
+@pytest.mark.django_db
+@override_settings(BILLING_ENABLED=True)
+def test_verify_amount_mismatch_retry_credits_once(
+    account: Account, collected_events: list[object]
+) -> None:
+    """FAILED mismatch → correct amount → PENDING → COMPLETED; one ledger row."""
+    on_chain = Decimal("9.000000")
+    # Confirmations must pass before amount check can mark FAILED.
+    provider = _FakeBlockchainProvider(_transfer(amount=on_chain, confirmations=30))
+    service = _service(provider, min_confirmations=20)
+
+    with pytest.raises(AmountMismatchError):
+        service.verify(
+            account,
+            tx_hash=TX_HASH,
+            payment_method=DepositRequest.PaymentMethod.CEX_MANUAL,
+            amount_requested=Decimal("10.000000"),
+            idempotency_key="mismatch-retry-1",
+        )
+
+    failed = DepositRequest.objects.get(idempotency_key="mismatch-retry-1")
+    assert failed.status == DepositRequest.Status.FAILED
+    assert CreditLedgerEntry.objects.filter(account=account).count() == 0
+
+    # Still under-confirmed after amount correction → PENDING (no credit yet).
+    provider._result = _transfer(amount=on_chain, confirmations=5)
+    with pytest.raises(InsufficientConfirmationsError):
+        service.verify(
+            account,
+            tx_hash=TX_HASH,
+            payment_method=DepositRequest.PaymentMethod.CEX_MANUAL,
+            amount_requested=on_chain,
+            idempotency_key="mismatch-retry-2",
+        )
+
+    pending = DepositRequest.objects.get(pk=failed.pk)
+    assert pending.status == DepositRequest.Status.PENDING
+    assert pending.amount_requested == on_chain
+    assert pending.idempotency_key == "mismatch-retry-2"
+    assert CreditLedgerEntry.objects.filter(account=account).count() == 0
+
+    # Confirmations satisfied → single credit.
+    provider._result = _transfer(amount=on_chain, confirmations=30)
+    completed = service.verify(
+        account,
+        tx_hash=TX_HASH,
+        payment_method=DepositRequest.PaymentMethod.CEX_MANUAL,
+        amount_requested=on_chain,
+        idempotency_key="mismatch-retry-2",
+    )
+
+    assert completed.status == DepositRequest.Status.COMPLETED
+    assert completed.amount_credited == on_chain
+    account.refresh_from_db()
+    assert account.balance == on_chain
+    assert (
+        CreditLedgerEntry.objects.filter(
+            account=account,
+            reference_type=LedgerReferenceType.DEPOSIT,
+            reference_id=str(completed.pk),
+        ).count()
+        == 1
+    )
+    # Repeat verify must not double-credit.
+    again = service.verify(
+        account,
+        tx_hash=TX_HASH,
+        payment_method=DepositRequest.PaymentMethod.CEX_MANUAL,
+        amount_requested=on_chain,
+        idempotency_key="mismatch-retry-2",
+    )
+    assert again.status == DepositRequest.Status.COMPLETED
+    assert CreditLedgerEntry.objects.filter(account=account).count() == 1
+    account.refresh_from_db()
+    assert account.balance == on_chain
+
+
+@pytest.mark.django_db
+@override_settings(BILLING_ENABLED=True)
+def test_verify_failed_tx_cannot_be_stolen_by_other_account(account: Account) -> None:
+    other_user = User.objects.create_user(
+        email="other-deposit@example.com", password="secret123"
+    )
+    other = other_user.billing_account
+
+    provider = _FakeBlockchainProvider(_transfer(amount=Decimal("9.000000")))
+    service = _service(provider)
+
+    with pytest.raises(AmountMismatchError):
+        service.verify(
+            account,
+            tx_hash=TX_HASH,
+            payment_method=DepositRequest.PaymentMethod.CEX_MANUAL,
+            amount_requested=Decimal("10.000000"),
+            idempotency_key="owner-mismatch",
+        )
+
+    with pytest.raises(DuplicateTransactionError, match="already submitted"):
+        service.verify(
+            other,
+            tx_hash=TX_HASH,
+            payment_method=DepositRequest.PaymentMethod.CEX_MANUAL,
+            amount_requested=Decimal("9.000000"),
+            idempotency_key="thief-retry",
+        )
+
+    assert DepositRequest.objects.filter(tx_hash=TX_HASH).count() == 1
+    other.refresh_from_db()
+    assert other.balance == Decimal("0")
 
 
 @pytest.mark.django_db

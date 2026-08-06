@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 from typing import Any
 
@@ -10,6 +11,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.billing.exceptions import (
+    AmountMismatchError,
     BillingDisabledError,
     DepositVerificationError,
     DepositVerificationFailedError,
@@ -28,6 +30,8 @@ from shared.providers.blockchain import (
     TransferResult,
 )
 from shared.providers.factory import get_blockchain_provider
+
+logger = logging.getLogger(__name__)
 
 
 class DepositVerificationService:
@@ -97,9 +101,11 @@ class DepositVerificationService:
     ) -> DepositRequest:
         """Verify ``tx_hash`` and credit ``account`` when on-chain checks pass.
 
-        Idempotent on ``idempotency_key``: a completed (or failed) prior result
-        is returned without a second ledger credit. Completed ``tx_hash`` values
-        cannot be credited twice.
+        Idempotent on ``idempotency_key`` for ``COMPLETED`` results (no second
+        ledger credit). ``FAILED`` deposits for the **same account** may be
+        recovered by correcting ``amount_requested`` and re-running verification
+        (exact-match rule unchanged). Completed ``tx_hash`` values cannot be
+        credited twice.
 
         Raises:
             BillingDisabledError: ``BILLING_ENABLED`` is false.
@@ -108,6 +114,7 @@ class DepositVerificationService:
             DuplicateTransactionError: ``tx_hash`` already credited elsewhere.
             InsufficientConfirmationsError: transfer found but under-confirmed
                 (deposit stays ``PENDING`` for retry).
+            AmountMismatchError: on-chain amount != requested (deposit ``FAILED``).
             DepositVerificationFailedError: permanent verification failure
                 (deposit marked ``FAILED``).
             BlockchainRPCError: RPC failed after retries (deposit marked
@@ -126,21 +133,102 @@ class DepositVerificationService:
             idempotency_key=idempotency_key
         ).first()
         if existing is not None:
-            if existing.status != DepositRequest.Status.PENDING:
+            if existing.status == DepositRequest.Status.COMPLETED:
                 return existing
-            deposit = existing
+            if existing.status == DepositRequest.Status.FAILED:
+                if existing.account_id != account.id:
+                    return existing
+                # Same amount → permanent failure stays failed (no RPC burn).
+                # Corrected amount → self-service recovery (exact-match still applies).
+                if existing.amount_requested == amount:
+                    return existing
+                deposit = self._recover_failed_deposit(
+                    existing,
+                    account=account,
+                    amount_requested=amount,
+                    idempotency_key=idempotency_key,
+                )
+            else:
+                deposit = existing
         else:
-            deposit = self._create_pending_deposit(
-                account=account,
-                tx_hash=normalized_hash,
-                payment_method=method,
-                amount_requested=amount,
-                idempotency_key=idempotency_key,
+            failed_for_tx = (
+                DepositRequest.objects.filter(
+                    tx_hash=normalized_hash,
+                    status=DepositRequest.Status.FAILED,
+                )
+                .select_related("account")
+                .first()
             )
-            if deposit.status != DepositRequest.Status.PENDING:
-                return deposit
+            if failed_for_tx is not None:
+                if failed_for_tx.account_id != account.id:
+                    raise DuplicateTransactionError(
+                        f"Transaction already submitted: {normalized_hash}"
+                    )
+                if failed_for_tx.amount_requested == amount:
+                    return failed_for_tx
+                deposit = self._recover_failed_deposit(
+                    failed_for_tx,
+                    account=account,
+                    amount_requested=amount,
+                    idempotency_key=idempotency_key,
+                )
+            else:
+                deposit = self._create_pending_deposit(
+                    account=account,
+                    tx_hash=normalized_hash,
+                    payment_method=method,
+                    amount_requested=amount,
+                    idempotency_key=idempotency_key,
+                )
+                if deposit.status != DepositRequest.Status.PENDING:
+                    return deposit
 
         return self._verify_pending(deposit)
+
+    def _recover_failed_deposit(
+        self,
+        deposit: DepositRequest,
+        *,
+        account: Account,
+        amount_requested: Decimal,
+        idempotency_key: str,
+    ) -> DepositRequest:
+        """Reset a same-account FAILED deposit for amount-correction retry."""
+        if deposit.account_id != account.id:
+            raise DuplicateTransactionError(
+                f"Transaction already submitted: {deposit.tx_hash}"
+            )
+        if not deposit.tx_hash:
+            raise DepositVerificationError(
+                "Cannot recover a failed deposit without tx_hash"
+            )
+
+        with transaction.atomic():
+            locked = DepositRequest.objects.select_for_update().get(pk=deposit.pk)
+            if locked.status == DepositRequest.Status.COMPLETED:
+                return locked
+            if locked.status != DepositRequest.Status.FAILED:
+                return locked
+            if locked.account_id != account.id:
+                raise DuplicateTransactionError(
+                    f"Transaction already submitted: {locked.tx_hash}"
+                )
+
+            locked.amount_requested = amount_requested
+            locked.status = DepositRequest.Status.PENDING
+            locked.failure_reason = ""
+            update_fields = [
+                "amount_requested",
+                "status",
+                "failure_reason",
+                "updated_at",
+            ]
+            if locked.idempotency_key != idempotency_key:
+                # Client issued a fresh key after FAILED — bind it to this row.
+                locked.idempotency_key = idempotency_key
+                update_fields.append("idempotency_key")
+            locked.save(update_fields=update_fields)
+            return locked
 
     def _create_pending_deposit(
         self,
@@ -186,6 +274,13 @@ class DepositVerificationService:
             raise
 
     def _verify_pending(self, deposit: DepositRequest) -> DepositRequest:
+        from apps.wallet.services.flags import should_use_wallet_money_path
+
+        if should_use_wallet_money_path(deposit.account_id):
+            return self._verify_pending_wallet_path(deposit)
+        return self._verify_pending_legacy(deposit)
+
+    def _verify_pending_legacy(self, deposit: DepositRequest) -> DepositRequest:
         tx_hash = deposit.tx_hash
         if not tx_hash:
             reason = "Deposit is missing tx_hash"
@@ -204,6 +299,48 @@ class DepositVerificationService:
             self._mark_failed(deposit, str(exc))
             raise DepositVerificationFailedError(str(exc)) from exc
 
+        return self._apply_transfer_gates(deposit, transfer, complete=self._complete)
+
+    def _verify_pending_wallet_path(self, deposit: DepositRequest) -> DepositRequest:
+        """ADR 018 Phase 2: WalletAddress → Observation → Credit Conversion."""
+        from apps.wallet.services.allocation import WalletAllocationService
+
+        tx_hash = deposit.tx_hash
+        if not tx_hash:
+            reason = "Deposit is missing tx_hash"
+            self._mark_failed(deposit, reason)
+            raise DepositVerificationFailedError(reason)
+
+        wallet_address = WalletAllocationService().ensure_active_address(
+            deposit.account
+        )
+        try:
+            transfer = self.provider.fetch_usdt_transfer(
+                tx_hash, to_address=wallet_address.address
+            )
+        except TransferNotFoundError as exc:
+            self._mark_failed(deposit, str(exc))
+            raise DepositVerificationFailedError(str(exc)) from exc
+        except BlockchainRPCError as exc:
+            self._mark_failed(deposit, f"RPC error: {exc}")
+            raise
+        except BlockchainProviderError as exc:
+            self._mark_failed(deposit, str(exc))
+            raise DepositVerificationFailedError(str(exc)) from exc
+
+        return self._apply_transfer_gates(
+            deposit,
+            transfer,
+            complete=lambda d, t: self._complete_wallet_path(d, t, wallet_address),
+        )
+
+    def _apply_transfer_gates(
+        self,
+        deposit: DepositRequest,
+        transfer: TransferResult,
+        *,
+        complete,
+    ) -> DepositRequest:
         deposit.raw_rpc_response = transfer.raw_rpc_response
         deposit.save(update_fields=["raw_rpc_response", "updated_at"])
 
@@ -223,9 +360,127 @@ class DepositVerificationService:
                 f"{transfer.amount} != requested {deposit.amount_requested}"
             )
             self._mark_failed(deposit, reason, raw=transfer.raw_rpc_response)
-            raise DepositVerificationFailedError(reason)
+            raise AmountMismatchError(transfer.amount, deposit.amount_requested)
 
-        return self._complete(deposit, transfer)
+        return complete(deposit, transfer)
+
+    def _complete_wallet_path(
+        self,
+        deposit: DepositRequest,
+        transfer: TransferResult,
+        wallet_address,
+    ) -> DepositRequest:
+        """Credit via Observation + Conversion only (no legacy deposit: ledger key)."""
+        from apps.wallet.models import ObservationStatus, WalletChain
+        from apps.wallet.services.conversion import CreditConversionService
+        from apps.wallet.services.observation import (
+            DepositObservationService,
+            ObservationSignal,
+        )
+
+        events: list[DepositVerified | CreditGranted] = []
+
+        with transaction.atomic():
+            locked = (
+                DepositRequest.objects.select_for_update()
+                .select_related("account")
+                .get(pk=deposit.pk)
+            )
+            if locked.status == DepositRequest.Status.COMPLETED:
+                return locked
+            if locked.status == DepositRequest.Status.FAILED:
+                return locked
+
+            other_completed = (
+                DepositRequest.objects.select_for_update()
+                .filter(
+                    tx_hash=locked.tx_hash,
+                    status=DepositRequest.Status.COMPLETED,
+                )
+                .exclude(pk=locked.pk)
+                .exists()
+            )
+            if other_completed:
+                locked.status = DepositRequest.Status.FAILED
+                locked.failure_reason = (
+                    f"Transaction already credited: {locked.tx_hash}"
+                )
+                locked.raw_rpc_response = transfer.raw_rpc_response
+                locked.save(
+                    update_fields=[
+                        "status",
+                        "failure_reason",
+                        "raw_rpc_response",
+                        "updated_at",
+                    ]
+                )
+                raise DuplicateTransactionError(locked.failure_reason)
+
+            log_index = _log_index_from_transfer(transfer)
+            signal = ObservationSignal(
+                chain=WalletChain.POLYGON,
+                tx_hash=locked.tx_hash or transfer.tx_hash,
+                log_index=log_index,
+                to_address=wallet_address.address,
+                amount=transfer.amount,
+                token_contract=transfer.token_contract,
+                confirmations=int(transfer.confirmations),
+                from_address=transfer.from_address or "",
+                block_number=transfer.block_number,
+            )
+            observation = DepositObservationService().ingest(signal, shadow_only=False)
+            if observation.status != ObservationStatus.CONFIRMED:
+                raise DepositVerificationFailedError(
+                    f"Observation not confirmed: {observation.status} "
+                    f"({observation.status_reason})"
+                )
+
+            entry = CreditConversionService().convert(observation)
+
+            locked.amount_credited = transfer.amount
+            locked.status = DepositRequest.Status.COMPLETED
+            locked.verified_at = timezone.now()
+            locked.failure_reason = ""
+            locked.raw_rpc_response = transfer.raw_rpc_response
+            locked.save(
+                update_fields=[
+                    "amount_credited",
+                    "status",
+                    "verified_at",
+                    "failure_reason",
+                    "raw_rpc_response",
+                    "updated_at",
+                ]
+            )
+
+            events.append(
+                DepositVerified(
+                    deposit_id=str(locked.pk),
+                    account_id=str(locked.account_id),
+                    amount=transfer.amount,
+                    balance_after=entry.balance_after,
+                    tx_hash=locked.tx_hash or transfer.tx_hash,
+                    payment_method=locked.payment_method,
+                    ledger_entry_id=str(entry.pk),
+                    verified_at=locked.verified_at,
+                )
+            )
+            events.append(
+                CreditGranted(
+                    account_id=str(locked.account_id),
+                    amount=transfer.amount,
+                    balance_after=entry.balance_after,
+                    reference_type=LedgerReferenceType.DEPOSIT,
+                    reference_id=str(observation.pk),
+                    ledger_entry_id=str(entry.pk),
+                    created_at=entry.created_at,
+                )
+            )
+            deposit = locked
+
+        for event in events:
+            event_bus.publish(event)
+        return deposit
 
     def _complete(
         self, deposit: DepositRequest, transfer: TransferResult
@@ -320,6 +575,18 @@ class DepositVerificationService:
 
         for event in events:
             event_bus.publish(event)
+
+        # ADR 018 Phase 1: shadow dual-path after legacy Credits are final.
+        # Failures must never affect ADR 010 success / latency path.
+        try:
+            from apps.wallet.services.shadow import safe_compare_legacy_deposit
+
+            safe_compare_legacy_deposit(deposit=deposit, transfer=transfer)
+        except Exception:  # noqa: BLE001 — never break production money path
+            logger.exception(
+                "wallet shadow hook failed deposit_id=%s",
+                deposit.pk,
+            )
         return deposit
 
     def _mark_failed(
@@ -357,6 +624,17 @@ class DepositVerificationService:
 
 
 deposit_verification_service = DepositVerificationService()
+
+
+def _log_index_from_transfer(transfer: TransferResult) -> int:
+    matched = (transfer.raw_rpc_response or {}).get("matched_log") or {}
+    raw = matched.get("logIndex", matched.get("index", 0))
+    if isinstance(raw, str):
+        text = raw.strip().lower()
+        if text.startswith("0x"):
+            return int(text, 16)
+        return int(text)
+    return int(raw or 0)
 
 
 def _normalize_tx_hash(value: str) -> str:

@@ -474,6 +474,51 @@ def test_verify_cex_failed_returns_400(client: Client, user: User, monkeypatch) 
 
 @pytest.mark.django_db
 @override_settings(BILLING_ENABLED=True)
+def test_verify_cex_amount_mismatch_returns_structured_400(
+    client: Client, user: User, monkeypatch
+) -> None:
+    from apps.billing.exceptions import AmountMismatchError
+
+    failed = DepositRequest.objects.create(
+        account=user.billing_account,
+        amount_requested=Decimal("10.000000"),
+        payment_method=DepositRequest.PaymentMethod.CEX_MANUAL,
+        tx_hash=TX_HASH,
+        idempotency_key="cex-amt-mismatch",
+        status=DepositRequest.Status.FAILED,
+        failure_reason="Amount mismatch: on-chain 9.000000 != requested 10.000000",
+    )
+
+    monkeypatch.setattr(
+        "apps.billing.views.deposit_verification_service.verify",
+        MagicMock(
+            side_effect=AmountMismatchError(Decimal("9.000000"), Decimal("10.000000"))
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/billing/verify-cex/",
+        data=json.dumps(
+            {
+                "tx_hash": TX_HASH,
+                "amount_requested": "10.000000",
+                "idempotency_key": "cex-amt-mismatch",
+            }
+        ),
+        content_type="application/json",
+        **_auth_headers(client, user),
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["id"] == str(failed.pk)
+    assert payload["status"] == "failed"
+    assert payload["code"] == "AMOUNT_MISMATCH"
+    assert payload["on_chain_amount"] == "9.000000"
+
+
+@pytest.mark.django_db
+@override_settings(BILLING_ENABLED=True)
 def test_verify_cex_rpc_error_returns_502(
     client: Client, user: User, monkeypatch
 ) -> None:

@@ -19,6 +19,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.billing.exceptions import (
+    AmountMismatchError,
     BillingDisabledError,
     DepositVerificationError,
     DepositVerificationFailedError,
@@ -173,7 +174,8 @@ class DepositInfoView(BillingAPIView):
     """GET /api/v1/billing/deposit-info/ — full Polygon USDT meta + EIP-681 URI."""
 
     def get(self, request: Request) -> Response:
-        return Response(DepositInfoSerializer(get_deposit_info()).data)
+        account = ensure_billing_account(request.user)
+        return Response(DepositInfoSerializer(get_deposit_info(account=account)).data)
 
 
 @extend_schema_view(
@@ -301,6 +303,20 @@ def _verify_deposit(request: Request, *, payment_method: str) -> Response:
         return Response(payload, status=status.HTTP_202_ACCEPTED)
     except DuplicateTransactionError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+    except AmountMismatchError as exc:
+        deposit = DepositRequest.objects.filter(idempotency_key=idempotency_key).first()
+        if deposit is not None:
+            return Response(
+                {
+                    **DepositRequestSerializer(deposit).data,
+                    **exc.to_api_extras(),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            {"detail": str(exc), **exc.to_api_extras()},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     except (DepositVerificationFailedError, InvalidAmountError) as exc:
         deposit = DepositRequest.objects.filter(idempotency_key=idempotency_key).first()
         if deposit is not None:
