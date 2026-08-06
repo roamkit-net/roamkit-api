@@ -209,3 +209,123 @@ class Topup(models.Model):
 
     def __str__(self) -> str:
         return f"Topup {self.pk} ({self.status})"
+
+
+class EsimAutoTopupPolicy(models.Model):
+    """User policy to auto-purchase Available top-ups from usage/expiry triggers.
+
+    eSIM-domain only — not ``billing.Subscription`` (calendar renew). Spend still
+    goes through ``TopupService.purchase`` / ``CreditService`` (design lock).
+    """
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        PAUSED = "paused", "Paused"
+        BLOCKED = "blocked", "Blocked"
+        DISABLED = "disabled", "Disabled"
+
+    class Reason(models.TextChoices):
+        INSUFFICIENT_FUNDS = "insufficient_funds", "Insufficient funds"
+        PACKAGE_UNAVAILABLE = "package_unavailable", "Package unavailable"
+        USAGE_UNKNOWN = "usage_unknown", "Usage unknown"
+        PROVIDER_ERROR = "provider_error", "Provider error"
+        MANUAL_PAUSE = "manual_pause", "Manual pause"
+        COUNT_EXHAUSTED = "count_exhausted", "Count exhausted"
+
+    class TriggerMode(models.TextChoices):
+        USAGE_ZERO = "usage_zero", "Usage zero"
+        USAGE_THRESHOLD = "usage_threshold", "Usage threshold"
+        EXPIRY = "expiry", "Expiry"
+
+    class RenewMode(models.TextChoices):
+        UNTIL_FUNDS = "until_funds", "Until funds"
+        FIXED_COUNT = "fixed_count", "Fixed count"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(
+        "billing.Account",
+        on_delete=models.CASCADE,
+        related_name="auto_topup_policies",
+    )
+    esim = models.ForeignKey(
+        Esim,
+        on_delete=models.CASCADE,
+        related_name="auto_topup_policies",
+    )
+    package_id = models.CharField(max_length=64, db_index=True)
+    enabled = models.BooleanField(default=True, db_index=True)
+    status = models.CharField(
+        max_length=32,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        db_index=True,
+    )
+    reason = models.CharField(
+        max_length=32,
+        choices=Reason.choices,
+        blank=True,
+        default="",
+    )
+    trigger_mode = models.CharField(
+        max_length=32,
+        choices=TriggerMode.choices,
+    )
+    threshold_mb = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Required when trigger_mode is usage_threshold.",
+    )
+    renew_mode = models.CharField(
+        max_length=32,
+        choices=RenewMode.choices,
+    )
+    remaining_count = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Required when renew_mode is fixed_count.",
+    )
+    cooldown_until = models.DateTimeField(null=True, blank=True)
+    last_triggered_at = models.DateTimeField(null=True, blank=True)
+    last_topup = models.ForeignKey(
+        Topup,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    last_idempotency_key = models.CharField(max_length=128, blank=True, default="")
+    version = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "eSIM auto top-up policy"
+        verbose_name_plural = "eSIM auto top-up policies"
+        indexes = [
+            models.Index(fields=["status", "enabled"]),
+            models.Index(fields=["account", "status"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["esim"],
+                name="esims_auto_topup_policy_esim_uniq",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(trigger_mode="usage_threshold")
+                    | models.Q(threshold_mb__isnull=False)
+                ),
+                name="esims_auto_topup_threshold_required",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(renew_mode="fixed_count")
+                    | models.Q(remaining_count__isnull=False)
+                ),
+                name="esims_auto_topup_count_required",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"AutoTopupPolicy {self.pk} ({self.status})"
