@@ -241,7 +241,7 @@ class EsimAutoTopupPolicy(models.Model):
         UNTIL_FUNDS = "until_funds", "Until funds"
         FIXED_COUNT = "fixed_count", "Fixed count"
 
-    # Legacy v1 trigger_mode string values (me API until PR4; events).
+    # Fire-reason / idempotency strings (and best-effort event snapshots).
     LEGACY_TRIGGER_EXPIRY = "expiry"
     LEGACY_TRIGGER_USAGE_THRESHOLD = "usage_threshold"
     LEGACY_TRIGGER_USAGE_ZERO = "usage_zero"
@@ -360,9 +360,10 @@ class EsimAutoTopupPolicy(models.Model):
             self.threshold_mb = None
 
     def legacy_trigger_mode(self) -> str:
-        """Best-effort v1 trigger string for me API / events until PR4.
+        """Best-effort single fire-reason label for domain events.
 
-        Combo policies (expiry + usage) are not representable in v1; prefer expiry.
+        Combo policies (expiry + usage) are not representable as one v1 mode;
+        prefer expiry when both legs are configured.
         """
         if self.expiry_enabled and self.usage_mode == self.UsageMode.DISABLED:
             return self.LEGACY_TRIGGER_EXPIRY

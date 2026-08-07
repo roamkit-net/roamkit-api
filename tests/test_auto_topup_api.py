@@ -1,19 +1,24 @@
-"""HTTP tests for GET/PUT/DELETE /me/esims/{id}/auto-topup/ (PR4)."""
+"""HTTP tests for GET/PUT/DELETE /me/esims/{id}/auto-topup/ (v2 PR4)."""
 
 from __future__ import annotations
 
 import json
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
+import yaml
 from django.test import Client, override_settings
 from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.catalog.models import Package
-from apps.esims.models import Esim, EsimAutoTopupPolicy
+from apps.esims.models import Esim, EsimAutoTopupPolicy, Topup
 from apps.orders.models import Order
 from shared.providers.esim import TopupPackage
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+OPENAPI_PATH = REPO_ROOT / "openapi" / "openapi.yaml"
 
 
 class FakeTopupProvider:
@@ -121,7 +126,8 @@ def _put_body(**overrides):
     body = {
         "package_id": "topup-1gb",
         "enabled": True,
-        "trigger_mode": "usage_threshold",
+        "expiry_enabled": False,
+        "usage_mode": "threshold",
         "threshold_mb": 500,
         "renew_mode": "until_funds",
     }
@@ -158,16 +164,26 @@ def test_create_get_update_delete_policy(
     payload = create.json()
     assert payload["package_id"] == "topup-1gb"
     assert payload["version"] == 0
-    assert payload["trigger_mode"] == "usage_threshold"
+    assert payload["expiry_enabled"] is False
+    assert payload["usage_mode"] == "threshold"
     assert payload["threshold_mb"] == 500
+    assert "trigger_mode" not in payload
 
     got = client.get(f"/api/v1/me/esims/{esim.pk}/auto-topup/", **headers)
     assert got.status_code == 200
     assert got.json()["id"] == payload["id"]
+    assert "trigger_mode" not in got.json()
 
     update = client.put(
         f"/api/v1/me/esims/{esim.pk}/auto-topup/",
-        data=json.dumps(_put_body(renew_mode="fixed_count", remaining_count=3)),
+        data=json.dumps(
+            _put_body(
+                expiry_enabled=True,
+                usage_mode="threshold",
+                renew_mode="fixed_count",
+                remaining_count=3,
+            )
+        ),
         content_type="application/json",
         HTTP_IF_MATCH='"0"',
         **headers,
@@ -175,6 +191,8 @@ def test_create_get_update_delete_policy(
     assert update.status_code == 200, update.content
     assert update.json()["version"] == 1
     assert update.json()["remaining_count"] == 3
+    assert update.json()["expiry_enabled"] is True
+    assert "trigger_mode" not in update.json()
 
     conflict = client.put(
         f"/api/v1/me/esims/{esim.pk}/auto-topup/",
@@ -191,6 +209,65 @@ def test_create_get_update_delete_policy(
     )
     assert deleted.status_code == 204
     assert not EsimAutoTopupPolicy.objects.filter(esim=esim).exists()
+
+
+@pytest.mark.django_db
+@override_settings(
+    BILLING_ENABLED=True,
+    AUTO_TOPUP_ENABLED=True,
+    AUTO_TOPUP_ROLLOUT_MODE="all",
+)
+def test_enabled_without_triggers_400(
+    client: Client, user: User, esim: Esim, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "apps.esims.views.get_topup_provider", lambda: FakeTopupProvider()
+    )
+    headers = _auth(client, user)
+    response = client.put(
+        f"/api/v1/me/esims/{esim.pk}/auto-topup/",
+        data=json.dumps(
+            _put_body(
+                expiry_enabled=False,
+                usage_mode="disabled",
+                threshold_mb=None,
+            )
+        ),
+        content_type="application/json",
+        **headers,
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+@override_settings(
+    BILLING_ENABLED=True,
+    AUTO_TOPUP_ENABLED=True,
+    AUTO_TOPUP_ROLLOUT_MODE="all",
+)
+def test_put_409_when_spend_in_progress(
+    client: Client, user: User, esim: Esim, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "apps.esims.views.get_topup_provider", lambda: FakeTopupProvider()
+    )
+    Topup.objects.create(
+        account=user.billing_account,
+        esim=esim,
+        package_external_id="topup-1gb",
+        amount=Decimal("5.00"),
+        status=Topup.Status.FULFILLING,
+        idempotency_key="api-inflight-auto-topup",
+    )
+    headers = _auth(client, user)
+    response = client.put(
+        f"/api/v1/me/esims/{esim.pk}/auto-topup/",
+        data=json.dumps(_put_body()),
+        content_type="application/json",
+        **headers,
+    )
+    assert response.status_code == 409
+    assert response.json()["code"] == "SPEND_IN_PROGRESS"
 
 
 @pytest.mark.django_db
@@ -257,3 +334,14 @@ def test_unknown_package_404(
         **headers,
     )
     assert response.status_code == 404
+
+
+def test_openapi_auto_topup_has_no_trigger_mode() -> None:
+    doc = yaml.safe_load(OPENAPI_PATH.read_text(encoding="utf-8"))
+    schemas = doc["components"]["schemas"]
+    for name in ("AutoTopupPolicy", "AutoTopupPolicyWriteRequest"):
+        props = schemas[name]["properties"]
+        assert "trigger_mode" not in props, name
+        assert "expiry_enabled" in props, name
+        assert "usage_mode" in props, name
+    assert "TriggerModeEnum" not in schemas

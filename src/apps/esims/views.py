@@ -439,9 +439,10 @@ def _resolve_expected_version(
         operation_id="esim_auto_topup_upsert",
         summary="Create or update auto top-up policy",
         description=(
-            "Upsert auto top-up policy. ``package_id`` must be in Available top-ups. "
-            "Optimistic concurrency via body ``version`` and/or ``If-Match`` header "
-            "(required when updating an existing policy)."
+            "Upsert auto top-up policy (v2: ``expiry_enabled`` + ``usage_mode``). "
+            "``package_id`` must be in Available top-ups. Optimistic concurrency via "
+            "body ``version`` and/or ``If-Match`` header (required when updating). "
+            "Returns 409 if a purchase for this eSIM is still in progress."
         ),
         request=AutoTopupPolicyWriteSerializer,
         responses={
@@ -465,7 +466,8 @@ def _resolve_expected_version(
                 description="eSIM/package not found or auto top-up disabled",
             ),
             409: OpenApiResponse(
-                response=ErrorDetailSerializer, description="Version conflict"
+                response=ErrorDetailSerializer,
+                description="Version conflict or spend in progress",
             ),
         },
     ),
@@ -540,7 +542,8 @@ class EsimAutoTopupView(OwnedEsimMixin, GenericAPIView):
                 esim=esim,
                 account=account,
                 package_id=data["package_id"],
-                trigger_mode=data["trigger_mode"],
+                expiry_enabled=data["expiry_enabled"],
+                usage_mode=data["usage_mode"],
                 renew_mode=data["renew_mode"],
                 threshold_mb=data.get("threshold_mb"),
                 remaining_count=data.get("remaining_count"),
@@ -562,6 +565,14 @@ class EsimAutoTopupView(OwnedEsimMixin, GenericAPIView):
             return Response(
                 {"detail": str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+        except SpendInProgressError as exc:
+            return Response(
+                {
+                    "detail": str(exc),
+                    "code": "SPEND_IN_PROGRESS",
+                },
+                status=status.HTTP_409_CONFLICT,
             )
         except LookupError:
             return Response(

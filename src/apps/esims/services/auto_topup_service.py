@@ -422,7 +422,8 @@ class AutoTopupService:
         esim: Esim,
         account,
         package_id: str,
-        trigger_mode: str,
+        expiry_enabled: bool,
+        usage_mode: str,
         renew_mode: str,
         threshold_mb: int | None,
         remaining_count: int | None,
@@ -442,18 +443,28 @@ class AutoTopupService:
             raise TopupPackageNotFoundError(
                 f"Top-up package {package_id!r} is not available for this eSIM"
             )
-        if trigger_mode in (
-            EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_ZERO,
-            EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_THRESHOLD,
+        if usage_mode in (
+            EsimAutoTopupPolicy.UsageMode.ZERO,
+            EsimAutoTopupPolicy.UsageMode.THRESHOLD,
         ) and (package.is_unlimited or esim.usage_is_unlimited):
             raise ValueError(
-                "usage_zero/usage_threshold cannot be used with unlimited packages"
+                "usage_mode zero/threshold cannot be used with unlimited packages"
             )
         if (
-            trigger_mode == EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_THRESHOLD
+            usage_mode == EsimAutoTopupPolicy.UsageMode.THRESHOLD
             and threshold_mb is None
         ):
-            raise ValueError("threshold_mb is required for usage_threshold")
+            raise ValueError("threshold_mb is required when usage_mode is threshold")
+        if usage_mode != EsimAutoTopupPolicy.UsageMode.THRESHOLD:
+            threshold_mb = None
+        if (
+            enabled
+            and not expiry_enabled
+            and usage_mode == EsimAutoTopupPolicy.UsageMode.DISABLED
+        ):
+            raise ValueError(
+                "enabled policy requires expiry_enabled and/or a usage_mode"
+            )
         if (
             renew_mode == EsimAutoTopupPolicy.RenewMode.FIXED_COUNT
             and remaining_count is None
@@ -476,6 +487,9 @@ class AutoTopupService:
                     account=account,
                     esim=esim,
                     package_id=package_id,
+                    expiry_enabled=expiry_enabled,
+                    usage_mode=usage_mode,
+                    threshold_mb=threshold_mb,
                     renew_mode=renew_mode,
                     remaining_count=remaining_count,
                     enabled=enabled,
@@ -483,17 +497,6 @@ class AutoTopupService:
                     reason="",
                     version=0,
                 )
-                policy.apply_legacy_trigger_mode(
-                    trigger_mode, threshold_mb=threshold_mb
-                )
-                if (
-                    enabled
-                    and not policy.expiry_enabled
-                    and policy.usage_mode == EsimAutoTopupPolicy.UsageMode.DISABLED
-                ):
-                    raise ValueError(
-                        "enabled policy requires expiry_enabled and/or a usage_mode"
-                    )
                 policy.save()
                 created = True
                 config_changed = False
@@ -507,22 +510,14 @@ class AutoTopupService:
                     existing.threshold_mb,
                 )
                 existing.package_id = package_id
-                existing.apply_legacy_trigger_mode(
-                    trigger_mode, threshold_mb=threshold_mb
-                )
+                existing.expiry_enabled = expiry_enabled
+                existing.usage_mode = usage_mode
+                existing.threshold_mb = threshold_mb
                 after_config = (
                     existing.expiry_enabled,
                     existing.usage_mode,
                     existing.threshold_mb,
                 )
-                if (
-                    enabled
-                    and not existing.expiry_enabled
-                    and existing.usage_mode == EsimAutoTopupPolicy.UsageMode.DISABLED
-                ):
-                    raise ValueError(
-                        "enabled policy requires expiry_enabled and/or a usage_mode"
-                    )
                 config_changed = before_config != after_config
                 if config_changed:
                     existing.cooldown_until = None
