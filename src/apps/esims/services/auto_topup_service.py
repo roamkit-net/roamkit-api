@@ -173,10 +173,12 @@ class AutoTopupService:
             if not self._trigger_met(policy, esim, now=now):
                 return "skipped"
 
+            reason = self._select_fire_reason(policy, esim, now=now)
+            assert reason is not None
             return (
                 esim,
                 policy.package_id,
-                self._idempotency_key(policy, esim),
+                self._idempotency_key(policy, esim, reason=reason),
             )
 
     def _ensure_fresh_usage(self, esim: Esim) -> bool:
@@ -213,47 +215,67 @@ class AutoTopupService:
         return (now - anchor) >= min_age
 
     @staticmethod
-    def _trigger_met(policy: EsimAutoTopupPolicy, esim: Esim, *, now) -> bool:
-        mode = policy.trigger_mode
-        if mode in (
-            EsimAutoTopupPolicy.TriggerMode.USAGE_ZERO,
-            EsimAutoTopupPolicy.TriggerMode.USAGE_THRESHOLD,
-        ):
-            if esim.usage_is_unlimited:
-                return False
-            remaining = esim.usage_remaining_mb
-            if remaining is None:
-                return False
-            if mode == EsimAutoTopupPolicy.TriggerMode.USAGE_ZERO:
-                return remaining <= 0
-            threshold = policy.threshold_mb or 0
-            return remaining < threshold
-
-        if mode == EsimAutoTopupPolicy.TriggerMode.EXPIRY:
-            if esim.status == Esim.Status.EXPIRED:
-                return True
-            if (esim.usage_status or "").upper() == "EXPIRED":
-                return True
-            if esim.usage_expired_at is not None and esim.usage_expired_at <= now:
-                return True
-            return False
+    def _expiry_met(esim: Esim, *, now) -> bool:
+        if esim.status == Esim.Status.EXPIRED:
+            return True
+        if (esim.usage_status or "").upper() == "EXPIRED":
+            return True
+        if esim.usage_expired_at is not None and esim.usage_expired_at <= now:
+            return True
         return False
 
+    @classmethod
+    def _select_fire_reason(
+        cls, policy: EsimAutoTopupPolicy, esim: Esim, *, now
+    ) -> str | None:
+        """OR evaluation: expiry first, then usage (v2). No pending queue."""
+        if policy.expiry_enabled and cls._expiry_met(esim, now=now):
+            return EsimAutoTopupPolicy.LEGACY_TRIGGER_EXPIRY
+
+        if policy.usage_mode == EsimAutoTopupPolicy.UsageMode.THRESHOLD:
+            if esim.usage_is_unlimited:
+                return None
+            remaining = esim.usage_remaining_mb
+            if remaining is None:
+                return None
+            threshold = policy.threshold_mb or 0
+            if remaining < threshold:
+                return EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_THRESHOLD
+            return None
+
+        if policy.usage_mode == EsimAutoTopupPolicy.UsageMode.ZERO:
+            if esim.usage_is_unlimited:
+                return None
+            remaining = esim.usage_remaining_mb
+            if remaining is None:
+                return None
+            if remaining <= 0:
+                return EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_ZERO
+            return None
+
+        return None
+
+    @classmethod
+    def _trigger_met(cls, policy: EsimAutoTopupPolicy, esim: Esim, *, now) -> bool:
+        return cls._select_fire_reason(policy, esim, now=now) is not None
+
     @staticmethod
-    def _idempotency_key(policy: EsimAutoTopupPolicy, esim: Esim) -> str:
-        if policy.trigger_mode == EsimAutoTopupPolicy.TriggerMode.EXPIRY:
+    def _idempotency_key(
+        policy: EsimAutoTopupPolicy, esim: Esim, *, reason: str
+    ) -> str:
+        if reason == EsimAutoTopupPolicy.LEGACY_TRIGGER_EXPIRY:
             stamp = (
                 esim.usage_expired_at.isoformat()
                 if esim.usage_expired_at is not None
                 else "unknown"
             )
-            return f"auto-topup:{policy.pk}:expiry:{stamp}"
+            return f"auto-topup:{policy.pk}:{reason}:{stamp}"
         stamp = (
             esim.usage_synced_at.isoformat()
             if esim.usage_synced_at is not None
             else "unknown"
         )
-        return f"auto-topup:{policy.pk}:{policy.trigger_mode}:{stamp}"
+        return f"auto-topup:{policy.pk}:{reason}:{stamp}"
 
     def _on_success(self, policy_id, topup, idempotency_key: str) -> str:
         with transaction.atomic():
@@ -415,14 +437,14 @@ class AutoTopupService:
                 f"Top-up package {package_id!r} is not available for this eSIM"
             )
         if trigger_mode in (
-            EsimAutoTopupPolicy.TriggerMode.USAGE_ZERO,
-            EsimAutoTopupPolicy.TriggerMode.USAGE_THRESHOLD,
+            EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_ZERO,
+            EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_THRESHOLD,
         ) and (package.is_unlimited or esim.usage_is_unlimited):
             raise ValueError(
                 "usage_zero/usage_threshold cannot be used with unlimited packages"
             )
         if (
-            trigger_mode == EsimAutoTopupPolicy.TriggerMode.USAGE_THRESHOLD
+            trigger_mode == EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_THRESHOLD
             and threshold_mb is None
         ):
             raise ValueError("threshold_mb is required for usage_threshold")
@@ -445,14 +467,15 @@ class AutoTopupService:
                     account=account,
                     esim=esim,
                     package_id=package_id,
-                    trigger_mode=trigger_mode,
                     renew_mode=renew_mode,
-                    threshold_mb=threshold_mb,
                     remaining_count=remaining_count,
                     enabled=enabled,
                     status=EsimAutoTopupPolicy.Status.ACTIVE,
                     reason="",
                     version=0,
+                )
+                policy.apply_legacy_trigger_mode(
+                    trigger_mode, threshold_mb=threshold_mb
                 )
                 policy.save()
                 created = True
@@ -460,9 +483,10 @@ class AutoTopupService:
                 if expected_version is None or existing.version != expected_version:
                     raise LookupError("version_conflict")
                 existing.package_id = package_id
-                existing.trigger_mode = trigger_mode
+                existing.apply_legacy_trigger_mode(
+                    trigger_mode, threshold_mb=threshold_mb
+                )
                 existing.renew_mode = renew_mode
-                existing.threshold_mb = threshold_mb
                 existing.remaining_count = remaining_count
                 existing.enabled = enabled
                 if enabled:
@@ -526,7 +550,7 @@ class AutoTopupService:
             enabled=policy.enabled,
             status=policy.status,
             reason=policy.reason or "",
-            trigger_mode=policy.trigger_mode,
+            trigger_mode=policy.legacy_trigger_mode(),
             renew_mode=policy.renew_mode,
             version=policy.version,
             actor=actor,
@@ -545,7 +569,7 @@ class AutoTopupService:
             enabled=policy.enabled,
             status=policy.status,
             reason=policy.reason or "",
-            trigger_mode=policy.trigger_mode,
+            trigger_mode=policy.legacy_trigger_mode(),
             renew_mode=policy.renew_mode,
             version=policy.version,
             actor=actor,

@@ -166,7 +166,8 @@ def _policy(user: User, esim: Esim, **kwargs) -> EsimAutoTopupPolicy:
         "package_id": "topup-1gb",
         "enabled": True,
         "status": EsimAutoTopupPolicy.Status.ACTIVE,
-        "trigger_mode": EsimAutoTopupPolicy.TriggerMode.USAGE_ZERO,
+        "expiry_enabled": False,
+        "usage_mode": EsimAutoTopupPolicy.UsageMode.ZERO,
         "renew_mode": EsimAutoTopupPolicy.RenewMode.UNTIL_FUNDS,
         "reason": "",
         "threshold_mb": None,
@@ -327,7 +328,8 @@ def test_threshold_fires_once_per_epoch(user: User, esim: Esim) -> None:
     policy = _policy(
         user,
         esim,
-        trigger_mode=EsimAutoTopupPolicy.TriggerMode.USAGE_THRESHOLD,
+        expiry_enabled=False,
+        usage_mode=EsimAutoTopupPolicy.UsageMode.THRESHOLD,
         threshold_mb=500,
     )
     provider = FakeTopupProvider(

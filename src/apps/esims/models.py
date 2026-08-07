@@ -215,7 +215,7 @@ class EsimAutoTopupPolicy(models.Model):
     """User policy to auto-purchase Available top-ups from usage/expiry triggers.
 
     eSIM-domain only — not ``billing.Subscription`` (calendar renew). Spend still
-    goes through ``TopupService.purchase`` / ``CreditService`` (design lock).
+    goes through ``TopupService.purchase`` / ``CreditService`` (design lock v2).
     """
 
     class Status(models.TextChoices):
@@ -232,14 +232,19 @@ class EsimAutoTopupPolicy(models.Model):
         MANUAL_PAUSE = "manual_pause", "Manual pause"
         COUNT_EXHAUSTED = "count_exhausted", "Count exhausted"
 
-    class TriggerMode(models.TextChoices):
-        USAGE_ZERO = "usage_zero", "Usage zero"
-        USAGE_THRESHOLD = "usage_threshold", "Usage threshold"
-        EXPIRY = "expiry", "Expiry"
+    class UsageMode(models.TextChoices):
+        DISABLED = "disabled", "Disabled"
+        THRESHOLD = "threshold", "Threshold"
+        ZERO = "zero", "Zero"
 
     class RenewMode(models.TextChoices):
         UNTIL_FUNDS = "until_funds", "Until funds"
         FIXED_COUNT = "fixed_count", "Fixed count"
+
+    # Legacy v1 trigger_mode string values (me API until PR4; events).
+    LEGACY_TRIGGER_EXPIRY = "expiry"
+    LEGACY_TRIGGER_USAGE_THRESHOLD = "usage_threshold"
+    LEGACY_TRIGGER_USAGE_ZERO = "usage_zero"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     account = models.ForeignKey(
@@ -266,14 +271,16 @@ class EsimAutoTopupPolicy(models.Model):
         blank=True,
         default="",
     )
-    trigger_mode = models.CharField(
+    expiry_enabled = models.BooleanField(default=False)
+    usage_mode = models.CharField(
         max_length=32,
-        choices=TriggerMode.choices,
+        choices=UsageMode.choices,
+        default=UsageMode.DISABLED,
     )
     threshold_mb = models.PositiveIntegerField(
         null=True,
         blank=True,
-        help_text="Required when trigger_mode is usage_threshold.",
+        help_text="Required when usage_mode is threshold.",
     )
     renew_mode = models.CharField(
         max_length=32,
@@ -313,7 +320,7 @@ class EsimAutoTopupPolicy(models.Model):
             ),
             models.CheckConstraint(
                 condition=(
-                    ~models.Q(trigger_mode="usage_threshold")
+                    ~models.Q(usage_mode="threshold")
                     | models.Q(threshold_mb__isnull=False)
                 ),
                 name="esims_auto_topup_threshold_required",
@@ -329,3 +336,44 @@ class EsimAutoTopupPolicy(models.Model):
 
     def __str__(self) -> str:
         return f"AutoTopupPolicy {self.pk} ({self.status})"
+
+    @classmethod
+    def fields_from_legacy_trigger(cls, trigger_mode: str) -> tuple[bool, str]:
+        """Map v1 ``trigger_mode`` → ``(expiry_enabled, usage_mode)``."""
+        if trigger_mode == cls.LEGACY_TRIGGER_EXPIRY:
+            return True, cls.UsageMode.DISABLED
+        if trigger_mode == cls.LEGACY_TRIGGER_USAGE_THRESHOLD:
+            return False, cls.UsageMode.THRESHOLD
+        if trigger_mode == cls.LEGACY_TRIGGER_USAGE_ZERO:
+            return False, cls.UsageMode.ZERO
+        raise ValueError(f"Unknown legacy trigger_mode: {trigger_mode!r}")
+
+    def apply_legacy_trigger_mode(
+        self, trigger_mode: str, *, threshold_mb: int | None
+    ) -> None:
+        expiry_enabled, usage_mode = self.fields_from_legacy_trigger(trigger_mode)
+        self.expiry_enabled = expiry_enabled
+        self.usage_mode = usage_mode
+        if usage_mode == self.UsageMode.THRESHOLD:
+            self.threshold_mb = threshold_mb
+        else:
+            self.threshold_mb = None
+
+    def legacy_trigger_mode(self) -> str:
+        """Best-effort v1 trigger string for me API / events until PR4.
+
+        Combo policies (expiry + usage) are not representable in v1; prefer expiry.
+        """
+        if self.expiry_enabled and self.usage_mode == self.UsageMode.DISABLED:
+            return self.LEGACY_TRIGGER_EXPIRY
+        if not self.expiry_enabled and self.usage_mode == self.UsageMode.THRESHOLD:
+            return self.LEGACY_TRIGGER_USAGE_THRESHOLD
+        if not self.expiry_enabled and self.usage_mode == self.UsageMode.ZERO:
+            return self.LEGACY_TRIGGER_USAGE_ZERO
+        if self.expiry_enabled:
+            return self.LEGACY_TRIGGER_EXPIRY
+        if self.usage_mode == self.UsageMode.THRESHOLD:
+            return self.LEGACY_TRIGGER_USAGE_THRESHOLD
+        if self.usage_mode == self.UsageMode.ZERO:
+            return self.LEGACY_TRIGGER_USAGE_ZERO
+        return self.LEGACY_TRIGGER_EXPIRY
