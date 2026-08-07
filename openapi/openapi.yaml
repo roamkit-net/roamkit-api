@@ -3333,7 +3333,9 @@ components:
 
         * `manual_pause` - Manual pause
 
-        * `count_exhausted` - Count exhausted'
+        * `count_exhausted` - Count exhausted
+
+        * `schedule_ended` - Schedule ended'
       enum:
       - insufficient_funds
       - package_unavailable
@@ -3341,6 +3343,7 @@ components:
       - provider_error
       - manual_pause
       - count_exhausted
+      - schedule_ended
       type: string
     RegisterRequest:
       properties:
