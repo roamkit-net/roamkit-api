@@ -2,7 +2,7 @@
 
 from django.contrib import admin
 
-from apps.esims.models import Esim, EsimLifecycleEvent, Topup
+from apps.esims.models import Esim, EsimAutoTopupPolicy, EsimLifecycleEvent, Topup
 
 
 @admin.register(Esim)
@@ -95,3 +95,52 @@ class TopupAdmin(admin.ModelAdmin):
     )
     readonly_fields = ("id", "created_at", "updated_at")
     raw_id_fields = ("account", "esim")
+
+
+@admin.register(EsimAutoTopupPolicy)
+class EsimAutoTopupPolicyAdmin(admin.ModelAdmin):
+    """Support-oriented view; money still mutates only via CreditService."""
+
+    list_display = (
+        "id",
+        "esim",
+        "account",
+        "package_id",
+        "enabled",
+        "status",
+        "reason",
+        "expiry_enabled",
+        "usage_mode",
+        "threshold_mb",
+        "renew_mode",
+        "cooldown_until",
+        "last_triggered_at",
+        "version",
+        "updated_at",
+    )
+    list_filter = (
+        "status",
+        "enabled",
+        "expiry_enabled",
+        "usage_mode",
+        "renew_mode",
+        "reason",
+    )
+    search_fields = (
+        "id",
+        "package_id",
+        "last_idempotency_key",
+        "esim__iccid",
+        "account__user__email",
+    )
+    readonly_fields = (
+        "id",
+        "last_triggered_at",
+        "last_topup",
+        "last_idempotency_key",
+        "cooldown_until",
+        "version",
+        "created_at",
+        "updated_at",
+    )
+    raw_id_fields = ("account", "esim", "last_topup")
