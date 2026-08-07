@@ -360,6 +360,10 @@ class AutoTopupService:
             )
 
     def _rollout_allows(self, policy: EsimAutoTopupPolicy) -> bool:
+        return self.rollout_allows_account(policy.account)
+
+    def rollout_allows_account(self, account) -> bool:
+        """Whether ``account`` may use auto top-up under current flags/rollout."""
         if not self._master_enabled():
             return False
         mode = str(settings.AUTO_TOPUP_ROLLOUT_MODE).lower()
@@ -367,22 +371,139 @@ class AutoTopupService:
             return False
         if mode == "all":
             return True
-        user = policy.account.user
+        user = account.user
         if mode == "staff":
             return bool(user.is_staff)
         if mode == "allowlist":
             allow = {str(x) for x in settings.AUTO_TOPUP_ALLOWLIST_ACCOUNT_IDS}
-            return str(policy.account_id) in allow
+            return str(account.pk) in allow
         if mode == "percent":
             percent = int(settings.AUTO_TOPUP_ROLLOUT_PERCENT)
             if percent <= 0:
                 return False
             if percent >= 100:
                 return True
-            digest = hashlib.sha256(str(policy.account_id).encode()).hexdigest()
+            digest = hashlib.sha256(str(account.pk).encode()).hexdigest()
             bucket = int(digest[:8], 16) % 100
             return bucket < percent
         return False
+
+    def upsert_policy(
+        self,
+        *,
+        esim: Esim,
+        account,
+        package_id: str,
+        trigger_mode: str,
+        renew_mode: str,
+        threshold_mb: int | None,
+        remaining_count: int | None,
+        enabled: bool = True,
+        expected_version: int | None,
+        actor: str = "user",
+    ) -> EsimAutoTopupPolicy:
+        """Create or update policy with package validation and optimistic locking."""
+        from apps.esims.exceptions import TopupPackageNotFoundError
+
+        if not self.rollout_allows_account(account):
+            raise PermissionError("Auto top-up is not enabled for this account")
+
+        packages = self._topups.list_topups(esim)
+        package = next((p for p in packages if p.external_id == package_id), None)
+        if package is None:
+            raise TopupPackageNotFoundError(
+                f"Top-up package {package_id!r} is not available for this eSIM"
+            )
+        if trigger_mode in (
+            EsimAutoTopupPolicy.TriggerMode.USAGE_ZERO,
+            EsimAutoTopupPolicy.TriggerMode.USAGE_THRESHOLD,
+        ) and (package.is_unlimited or esim.usage_is_unlimited):
+            raise ValueError(
+                "usage_zero/usage_threshold cannot be used with unlimited packages"
+            )
+        if (
+            trigger_mode == EsimAutoTopupPolicy.TriggerMode.USAGE_THRESHOLD
+            and threshold_mb is None
+        ):
+            raise ValueError("threshold_mb is required for usage_threshold")
+        if (
+            renew_mode == EsimAutoTopupPolicy.RenewMode.FIXED_COUNT
+            and remaining_count is None
+        ):
+            raise ValueError("remaining_count is required for fixed_count")
+
+        with transaction.atomic():
+            existing = (
+                EsimAutoTopupPolicy.objects.select_for_update()
+                .filter(esim=esim)
+                .first()
+            )
+            if existing is None:
+                if expected_version is not None:
+                    raise LookupError("version_conflict")
+                policy = EsimAutoTopupPolicy(
+                    account=account,
+                    esim=esim,
+                    package_id=package_id,
+                    trigger_mode=trigger_mode,
+                    renew_mode=renew_mode,
+                    threshold_mb=threshold_mb,
+                    remaining_count=remaining_count,
+                    enabled=enabled,
+                    status=EsimAutoTopupPolicy.Status.ACTIVE,
+                    reason="",
+                    version=0,
+                )
+                policy.save()
+                created = True
+            else:
+                if expected_version is None or existing.version != expected_version:
+                    raise LookupError("version_conflict")
+                existing.package_id = package_id
+                existing.trigger_mode = trigger_mode
+                existing.renew_mode = renew_mode
+                existing.threshold_mb = threshold_mb
+                existing.remaining_count = remaining_count
+                existing.enabled = enabled
+                if enabled:
+                    existing.status = EsimAutoTopupPolicy.Status.ACTIVE
+                    existing.reason = ""
+                else:
+                    existing.status = EsimAutoTopupPolicy.Status.DISABLED
+                    existing.reason = EsimAutoTopupPolicy.Reason.MANUAL_PAUSE
+                existing.version = expected_version + 1
+                existing.save()
+                policy = existing
+                created = False
+
+        if created:
+            self.publish_policy_created(policy, actor=actor)
+        else:
+            self.publish_policy_updated(policy, actor=actor)
+        return policy
+
+    def delete_policy(
+        self,
+        *,
+        esim: Esim,
+        expected_version: int | None,
+        actor: str = "user",
+    ) -> None:
+        """Delete policy with optimistic locking."""
+        with transaction.atomic():
+            existing = (
+                EsimAutoTopupPolicy.objects.select_for_update()
+                .filter(esim=esim)
+                .first()
+            )
+            if existing is None:
+                raise EsimAutoTopupPolicy.DoesNotExist
+            if expected_version is None or existing.version != expected_version:
+                raise LookupError("version_conflict")
+            # Snapshot for audit before delete.
+            snapshot = existing
+            existing.delete()
+        self.publish_policy_updated(snapshot, actor=actor)
 
     @staticmethod
     def _master_enabled() -> bool:

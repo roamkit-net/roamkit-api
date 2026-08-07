@@ -6,7 +6,7 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from apps.esims.models import Esim, EsimLifecycleEvent, Topup
+from apps.esims.models import Esim, EsimAutoTopupPolicy, EsimLifecycleEvent, Topup
 
 # Lifecycle event written by LifecycleService.transition(..., ACTIVATED).
 ACTIVATED_EVENT_TYPE = "system.status.activated"
@@ -251,3 +251,69 @@ class TopupSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = fields
+
+
+class AutoTopupPolicySerializer(serializers.ModelSerializer):
+    """Persisted auto top-up policy response."""
+
+    class Meta:
+        model = EsimAutoTopupPolicy
+        fields = [
+            "id",
+            "package_id",
+            "enabled",
+            "status",
+            "reason",
+            "trigger_mode",
+            "threshold_mb",
+            "renew_mode",
+            "remaining_count",
+            "cooldown_until",
+            "last_triggered_at",
+            "version",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class AutoTopupPolicyWriteSerializer(serializers.Serializer):
+    """Request body for PUT /api/v1/me/esims/{id}/auto-topup/."""
+
+    package_id = serializers.CharField(max_length=64)
+    enabled = serializers.BooleanField(default=True)
+    trigger_mode = serializers.ChoiceField(
+        choices=EsimAutoTopupPolicy.TriggerMode.choices
+    )
+    threshold_mb = serializers.IntegerField(
+        required=False, allow_null=True, min_value=1
+    )
+    renew_mode = serializers.ChoiceField(choices=EsimAutoTopupPolicy.RenewMode.choices)
+    remaining_count = serializers.IntegerField(
+        required=False, allow_null=True, min_value=0
+    )
+    version = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        min_value=0,
+        help_text="Expected version for optimistic concurrency (or use If-Match).",
+    )
+
+    def validate(self, attrs):
+        trigger = attrs.get("trigger_mode")
+        renew = attrs.get("renew_mode")
+        if trigger == EsimAutoTopupPolicy.TriggerMode.USAGE_THRESHOLD:
+            if attrs.get("threshold_mb") is None:
+                raise serializers.ValidationError(
+                    {"threshold_mb": "Required when trigger_mode is usage_threshold."}
+                )
+        else:
+            attrs["threshold_mb"] = attrs.get("threshold_mb")
+        if renew == EsimAutoTopupPolicy.RenewMode.FIXED_COUNT:
+            if attrs.get("remaining_count") is None:
+                raise serializers.ValidationError(
+                    {"remaining_count": "Required when renew_mode is fixed_count."}
+                )
+        else:
+            attrs["remaining_count"] = attrs.get("remaining_count")
+        return attrs

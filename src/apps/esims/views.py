@@ -22,13 +22,16 @@ from apps.billing.exceptions import (
     InsufficientFundsError,
     InvalidAmountError,
 )
+from apps.billing.services import ensure_billing_account
 from apps.esims.exceptions import (
     TopupPackageNotFoundError,
     UnknownLifecycleEventTypeError,
 )
-from apps.esims.models import Esim, EsimLifecycleEvent
+from apps.esims.models import Esim, EsimAutoTopupPolicy, EsimLifecycleEvent
 from apps.esims.serializers import (
     ACTIVATED_EVENT_TYPE,
+    AutoTopupPolicySerializer,
+    AutoTopupPolicyWriteSerializer,
     EsimSerializer,
     LifecycleEventCreateSerializer,
     LifecycleEventSerializer,
@@ -37,6 +40,7 @@ from apps.esims.serializers import (
     TopupSerializer,
     UsageSerializer,
 )
+from apps.esims.services.auto_topup_service import AutoTopupService
 from apps.esims.services.lifecycle_service import lifecycle_service
 from apps.esims.services.topup_service import TopupService
 from apps.esims.services.usage_service import UsageService
@@ -378,3 +382,245 @@ class EsimTopupsView(OwnedEsimMixin, GenericAPIView):
             )
 
         return Response(TopupSerializer(topup).data, status=status.HTTP_201_CREATED)
+
+
+def _parse_if_match_version(header: str | None) -> int | None:
+    """Parse ``If-Match`` as an integer policy version (optional quotes / W/)."""
+    if header is None or not str(header).strip():
+        return None
+    value = str(header).strip()
+    if value == "*":
+        return None
+    if value.upper().startswith("W/"):
+        value = value[2:].strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1]
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError("If-Match must be an integer version") from exc
+
+
+def _resolve_expected_version(
+    *,
+    body_version: int | None,
+    if_match: str | None,
+) -> int | None:
+    header_version = _parse_if_match_version(if_match)
+    if header_version is not None and body_version is not None:
+        if header_version != body_version:
+            raise ValueError("If-Match and body version disagree")
+        return header_version
+    if header_version is not None:
+        return header_version
+    return body_version
+
+
+@extend_schema_view(
+    get=extend_schema(
+        tags=["eSIM"],
+        operation_id="esim_auto_topup_retrieve",
+        summary="Get auto top-up policy",
+        description="Return the auto top-up policy for an owned eSIM, if any.",
+        responses={
+            200: OpenApiResponse(
+                response=AutoTopupPolicySerializer, description="Policy"
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="eSIM or policy not found"
+            ),
+        },
+    ),
+    put=extend_schema(
+        tags=["eSIM"],
+        operation_id="esim_auto_topup_upsert",
+        summary="Create or update auto top-up policy",
+        description=(
+            "Upsert auto top-up policy. ``package_id`` must be in Available top-ups. "
+            "Optimistic concurrency via body ``version`` and/or ``If-Match`` header "
+            "(required when updating an existing policy)."
+        ),
+        request=AutoTopupPolicyWriteSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=AutoTopupPolicySerializer, description="Policy updated"
+            ),
+            201: OpenApiResponse(
+                response=AutoTopupPolicySerializer, description="Policy created"
+            ),
+            400: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Invalid request"
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Rollout gate denied"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="eSIM/package not found or auto top-up disabled",
+            ),
+            409: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Version conflict"
+            ),
+        },
+    ),
+    delete=extend_schema(
+        tags=["eSIM"],
+        operation_id="esim_auto_topup_destroy",
+        summary="Delete auto top-up policy",
+        description=(
+            "Delete the auto top-up policy. Requires matching ``If-Match`` version "
+            "(or ``version`` query param)."
+        ),
+        responses={
+            204: OpenApiResponse(description="Policy deleted"),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="eSIM or policy not found"
+            ),
+            409: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Version conflict"
+            ),
+        },
+    ),
+)
+class EsimAutoTopupView(OwnedEsimMixin, GenericAPIView):
+    """GET/PUT/DELETE auto top-up policy for an owned eSIM."""
+
+    serializer_class = AutoTopupPolicyWriteSerializer
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        esim = self.get_object()
+        policy = EsimAutoTopupPolicy.objects.filter(esim=esim).first()
+        if policy is None:
+            raise NotFound(detail="Not found.")
+        return Response(AutoTopupPolicySerializer(policy).data)
+
+    def put(self, request: Request, *args, **kwargs) -> Response:
+        if not settings.AUTO_TOPUP_ENABLED or not settings.BILLING_ENABLED:
+            raise NotFound(detail="Not found.")
+
+        esim = self.get_object()
+        serializer = AutoTopupPolicyWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            expected = _resolve_expected_version(
+                body_version=data.get("version"),
+                if_match=request.headers.get("If-Match"),
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        existed = EsimAutoTopupPolicy.objects.filter(esim=esim).exists()
+        if existed and expected is None:
+            return Response(
+                {
+                    "detail": "version or If-Match is required when updating a policy",
+                    "code": "VERSION_REQUIRED",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        service = AutoTopupService(get_topup_provider())
+        account = ensure_billing_account(request.user)
+        try:
+            policy = service.upsert_policy(
+                esim=esim,
+                account=account,
+                package_id=data["package_id"],
+                trigger_mode=data["trigger_mode"],
+                renew_mode=data["renew_mode"],
+                threshold_mb=data.get("threshold_mb"),
+                remaining_count=data.get("remaining_count"),
+                enabled=data.get("enabled", True),
+                expected_version=expected,
+                actor=f"user:{request.user.pk}",
+            )
+        except PermissionError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        except TopupPackageNotFoundError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except LookupError:
+            return Response(
+                {"detail": "Policy version conflict", "code": "VERSION_CONFLICT"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        return Response(
+            AutoTopupPolicySerializer(policy).data,
+            status=status.HTTP_200_OK if existed else status.HTTP_201_CREATED,
+        )
+
+    def delete(self, request: Request, *args, **kwargs) -> Response:
+        if not settings.AUTO_TOPUP_ENABLED or not settings.BILLING_ENABLED:
+            raise NotFound(detail="Not found.")
+
+        esim = self.get_object()
+        version_raw = request.query_params.get("version")
+        body_version: int | None = None
+        if version_raw is not None and str(version_raw).strip() != "":
+            try:
+                body_version = int(version_raw)
+            except ValueError:
+                return Response(
+                    {"detail": "version must be an integer"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        try:
+            expected = _resolve_expected_version(
+                body_version=body_version,
+                if_match=request.headers.get("If-Match"),
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if expected is None:
+            return Response(
+                {
+                    "detail": "version query param or If-Match is required",
+                    "code": "VERSION_REQUIRED",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        service = AutoTopupService(get_topup_provider())
+        try:
+            service.delete_policy(
+                esim=esim,
+                expected_version=expected,
+                actor=f"user:{request.user.pk}",
+            )
+        except EsimAutoTopupPolicy.DoesNotExist as exc:
+            raise NotFound(detail="Not found.") from exc
+        except LookupError:
+            return Response(
+                {"detail": "Policy version conflict", "code": "VERSION_CONFLICT"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
