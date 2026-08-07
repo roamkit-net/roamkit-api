@@ -113,6 +113,7 @@ class EsimAutoTopupPolicyAdmin(admin.ModelAdmin):
         "usage_mode",
         "threshold_mb",
         "renew_mode",
+        "active_until",
         "cooldown_until",
         "last_triggered_at",
         "version",

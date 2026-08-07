@@ -1,8 +1,9 @@
-"""Model tests for EsimAutoTopupPolicy (auto top-up v2 schema PR2)."""
+"""Model tests for EsimAutoTopupPolicy schema (v2 triggers + v3 lifetime)."""
 
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -71,6 +72,7 @@ def test_create_policy_until_funds_usage_zero(user: User, esim: Esim) -> None:
     assert policy.version == 0
     assert policy.threshold_mb is None
     assert policy.remaining_count is None
+    assert policy.active_until is None
     assert policy.cooldown_until is None
     assert policy.legacy_trigger_mode() == "usage_zero"
 
@@ -200,3 +202,28 @@ def test_trigger_mode_column_removed() -> None:
     assert "trigger_mode" not in column_names
     assert "expiry_enabled" in column_names
     assert "usage_mode" in column_names
+    assert "active_until" in column_names
+
+
+@pytest.mark.django_db
+def test_active_until_optional_and_schedule_ended_reason(
+    user: User, esim: Esim
+) -> None:
+    bound = timezone.now() + timedelta(days=7)
+    policy = EsimAutoTopupPolicy.objects.create(
+        account=user.billing_account,
+        esim=esim,
+        package_id="topup-1gb",
+        expiry_enabled=True,
+        usage_mode=EsimAutoTopupPolicy.UsageMode.DISABLED,
+        renew_mode=EsimAutoTopupPolicy.RenewMode.UNTIL_FUNDS,
+        active_until=bound,
+        status=EsimAutoTopupPolicy.Status.PAUSED,
+        reason=EsimAutoTopupPolicy.Reason.SCHEDULE_ENDED,
+    )
+    policy.refresh_from_db()
+    assert policy.active_until == bound
+    assert policy.reason == EsimAutoTopupPolicy.Reason.SCHEDULE_ENDED
+    assert EsimAutoTopupPolicy.Reason.SCHEDULE_ENDED in {
+        choice for choice, _label in EsimAutoTopupPolicy.Reason.choices
+    }
