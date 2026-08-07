@@ -109,14 +109,23 @@ class EsimAutoTopupPolicyAdmin(admin.ModelAdmin):
         "enabled",
         "status",
         "reason",
-        "trigger_mode",
+        "expiry_enabled",
+        "usage_mode",
+        "threshold_mb",
         "renew_mode",
         "cooldown_until",
         "last_triggered_at",
         "version",
         "updated_at",
     )
-    list_filter = ("status", "enabled", "trigger_mode", "renew_mode", "reason")
+    list_filter = (
+        "status",
+        "enabled",
+        "expiry_enabled",
+        "usage_mode",
+        "renew_mode",
+        "reason",
+    )
     search_fields = (
         "id",
         "package_id",
