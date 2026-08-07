@@ -1548,7 +1548,7 @@ components:
       - unknown
       type: string
     AutoTopupPolicy:
-      description: Persisted auto top-up policy response.
+      description: Persisted auto top-up policy response (legacy trigger_mode until PR4).
       properties:
         cooldown_until:
           format: date-time
@@ -1592,14 +1592,13 @@ components:
           - $ref: '#/components/schemas/AutoTopupPolicyStatusEnum'
           readOnly: true
         threshold_mb:
-          description: Required when trigger_mode is usage_threshold.
+          description: Required when usage_mode is threshold.
           nullable: true
           readOnly: true
           type: integer
         trigger_mode:
-          allOf:
-          - $ref: '#/components/schemas/TriggerModeEnum'
           readOnly: true
+          type: string
         updated_at:
           format: date-time
           readOnly: true
@@ -1638,7 +1637,7 @@ components:
       - disabled
       type: string
     AutoTopupPolicyWriteRequest:
-      description: Request body for PUT /api/v1/me/esims/{id}/auto-topup/.
+      description: PUT body; still accepts v1 trigger_mode mapped to v2 columns until PR4.
       properties:
         enabled:
           default: true
