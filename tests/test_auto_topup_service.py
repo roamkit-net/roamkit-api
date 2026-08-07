@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from django.test import override_settings
@@ -15,8 +16,10 @@ from apps.billing.services import credit_service
 from apps.catalog.models import Package
 from apps.esims.models import Esim, EsimAutoTopupPolicy, Topup
 from apps.esims.services.auto_topup_service import AutoTopupService
+from apps.orders.exceptions import SpendInProgressError
 from apps.orders.models import Order
 from shared.events.esim_events import (
+    AutoTopupConfigurationChanged,
     AutoTopupPausedFunds,
     AutoTopupPolicyCreated,
     AutoTopupSucceeded,
@@ -456,3 +459,339 @@ def test_success_publishes_event(user: User, esim: Esim) -> None:
     AutoTopupService(FakeTopupProvider()).evaluate_one(policy.pk)
     assert len(captured) == 1
     assert captured[0].package_id == "topup-1gb"
+
+
+_SETTINGS_V2 = dict(
+    BILLING_ENABLED=True,
+    AUTO_TOPUP_ENABLED=True,
+    AUTO_TOPUP_ROLLOUT_MODE="all",
+    AUTO_TOPUP_MINIMUM_AGE_SECONDS=0,
+    AUTO_TOPUP_USAGE_MAX_AGE_SECONDS=600,
+    AUTO_TOPUP_COOLDOWN_SECONDS=900,
+)
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_combo_same_beat_expiry_wins_no_pending_usage(user: User, esim: Esim) -> None:
+    """OR + precedence: both met → one buy with expiry; cooldown blocks usage."""
+    _fund(user)
+    expired_at = timezone.now() - timedelta(minutes=5)
+    esim.usage_remaining_mb = 100
+    esim.usage_expired_at = expired_at
+    esim.usage_status = "EXPIRED"
+    esim.status = Esim.Status.EXPIRED
+    esim.save(
+        update_fields=[
+            "usage_remaining_mb",
+            "usage_expired_at",
+            "usage_status",
+            "status",
+        ]
+    )
+    policy = _policy(
+        user,
+        esim,
+        expiry_enabled=True,
+        usage_mode=EsimAutoTopupPolicy.UsageMode.THRESHOLD,
+        threshold_mb=500,
+    )
+    provider = FakeTopupProvider(
+        usage=_usage(
+            remaining_mb=100,
+            status="EXPIRED",
+            expired_at=expired_at.isoformat(),
+        )
+    )
+    metric_calls: list[tuple[str, dict]] = []
+
+    def _capture_incr(name: str, value: int = 1, **tags: str) -> None:
+        metric_calls.append((name, tags))
+
+    service = AutoTopupService(provider)
+    with patch("apps.esims.services.auto_topup_service.metrics.incr", _capture_incr):
+        assert service.evaluate_one(policy.pk) == "success"
+
+    assert Topup.objects.count() == 1
+    policy.refresh_from_db()
+    assert policy.last_idempotency_key is not None
+    assert ":expiry:" in policy.last_idempotency_key
+    assert any(
+        name == "auto_topup_trigger_reason_total" and tags.get("reason") == "expiry"
+        for name, tags in metric_calls
+    )
+
+    # Still in cooldown + usage still met → no second buy, no pending queue.
+    assert service.evaluate_one(policy.pk) == "skipped"
+    assert Topup.objects.count() == 1
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_after_cooldown_usage_can_fire_from_fresh_state(user: User, esim: Esim) -> None:
+    _fund(user)
+    expired_at = timezone.now() - timedelta(minutes=5)
+    esim.usage_remaining_mb = 100
+    esim.usage_expired_at = expired_at
+    esim.usage_status = "EXPIRED"
+    esim.status = Esim.Status.EXPIRED
+    esim.save(
+        update_fields=[
+            "usage_remaining_mb",
+            "usage_expired_at",
+            "usage_status",
+            "status",
+        ]
+    )
+    policy = _policy(
+        user,
+        esim,
+        expiry_enabled=True,
+        usage_mode=EsimAutoTopupPolicy.UsageMode.THRESHOLD,
+        threshold_mb=500,
+    )
+    service = AutoTopupService(
+        FakeTopupProvider(
+            usage=_usage(
+                remaining_mb=100,
+                status="EXPIRED",
+                expired_at=expired_at.isoformat(),
+            )
+        )
+    )
+    assert service.evaluate_one(policy.pk) == "success"
+
+    # Clear expiry; keep usage below threshold; clear cooldown.
+    policy.refresh_from_db()
+    policy.cooldown_until = None
+    policy.save(update_fields=["cooldown_until"])
+    esim.refresh_from_db()
+    esim.status = Esim.Status.ACTIVATED
+    esim.usage_status = "ACTIVE"
+    esim.usage_expired_at = None
+    esim.usage_remaining_mb = 100
+    esim.usage_synced_at = timezone.now()
+    esim.save(
+        update_fields=[
+            "status",
+            "usage_status",
+            "usage_expired_at",
+            "usage_remaining_mb",
+            "usage_synced_at",
+        ]
+    )
+    provider = FakeTopupProvider(usage=_usage(remaining_mb=100, status="ACTIVE"))
+    service2 = AutoTopupService(provider)
+    metric_calls: list[tuple[str, dict]] = []
+
+    def _capture_incr(name: str, value: int = 1, **tags: str) -> None:
+        metric_calls.append((name, tags))
+
+    with patch("apps.esims.services.auto_topup_service.metrics.incr", _capture_incr):
+        assert service2.evaluate_one(policy.pk) == "success"
+
+    assert Topup.objects.count() == 2
+    policy.refresh_from_db()
+    assert ":usage_threshold:" in (policy.last_idempotency_key or "")
+    assert any(
+        name == "auto_topup_trigger_reason_total"
+        and tags.get("reason") == "usage_threshold"
+        for name, tags in metric_calls
+    )
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_upsert_trigger_change_clears_cooldown(user: User, esim: Esim) -> None:
+    _fund(user)
+    service = AutoTopupService(FakeTopupProvider())
+    policy = service.upsert_policy(
+        esim=esim,
+        account=user.billing_account,
+        package_id="topup-1gb",
+        trigger_mode=EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_THRESHOLD,
+        renew_mode=EsimAutoTopupPolicy.RenewMode.UNTIL_FUNDS,
+        threshold_mb=500,
+        remaining_count=None,
+        enabled=True,
+        expected_version=None,
+    )
+    policy.cooldown_until = timezone.now() + timedelta(hours=1)
+    policy.save(update_fields=["cooldown_until"])
+    cooldown_before = policy.cooldown_until
+
+    captured: list = []
+    event_bus.subscribe(AutoTopupConfigurationChanged, captured.append)
+    updated = service.upsert_policy(
+        esim=esim,
+        account=user.billing_account,
+        package_id="topup-1gb",
+        trigger_mode=EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_THRESHOLD,
+        renew_mode=EsimAutoTopupPolicy.RenewMode.UNTIL_FUNDS,
+        threshold_mb=200,
+        remaining_count=None,
+        enabled=True,
+        expected_version=policy.version,
+    )
+    assert updated.cooldown_until is None
+    assert updated.threshold_mb == 200
+    assert cooldown_before is not None
+    assert len(captured) == 1
+    assert captured[0].before_threshold_mb == 500
+    assert captured[0].after_threshold_mb == 200
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_upsert_package_only_keeps_cooldown(user: User, esim: Esim) -> None:
+    _fund(user)
+    extra = TopupPackage(
+        external_id="topup-2gb",
+        title="2 GB Top-up",
+        data_allowance="2 GB",
+        validity_days=7,
+        price_usd=Decimal("8.00"),
+        net_price_usd=Decimal("7.00"),
+        is_unlimited=False,
+        plan_type="topup",
+    )
+    provider = FakeTopupProvider(
+        topups=[
+            TopupPackage(
+                external_id="topup-1gb",
+                title="1 GB Top-up",
+                data_allowance="1 GB",
+                validity_days=7,
+                price_usd=Decimal("5.00"),
+                net_price_usd=Decimal("4.50"),
+                is_unlimited=False,
+                plan_type="topup",
+            ),
+            extra,
+        ]
+    )
+    service = AutoTopupService(provider)
+    policy = service.upsert_policy(
+        esim=esim,
+        account=user.billing_account,
+        package_id="topup-1gb",
+        trigger_mode=EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_ZERO,
+        renew_mode=EsimAutoTopupPolicy.RenewMode.UNTIL_FUNDS,
+        threshold_mb=None,
+        remaining_count=None,
+        enabled=True,
+        expected_version=None,
+    )
+    cooldown = timezone.now() + timedelta(hours=1)
+    policy.cooldown_until = cooldown
+    policy.save(update_fields=["cooldown_until"])
+
+    captured: list = []
+    event_bus.subscribe(AutoTopupConfigurationChanged, captured.append)
+    updated = service.upsert_policy(
+        esim=esim,
+        account=user.billing_account,
+        package_id="topup-2gb",
+        trigger_mode=EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_ZERO,
+        renew_mode=EsimAutoTopupPolicy.RenewMode.UNTIL_FUNDS,
+        threshold_mb=None,
+        remaining_count=None,
+        enabled=True,
+        expected_version=policy.version,
+    )
+    assert updated.package_id == "topup-2gb"
+    assert updated.cooldown_until == cooldown
+    assert captured == []
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_zero_and_threshold_distinct_reasons_keys_metrics(
+    user: User, esim: Esim
+) -> None:
+    _fund(user)
+    esim.usage_remaining_mb = 0
+    esim.usage_synced_at = timezone.now()
+    esim.save(update_fields=["usage_remaining_mb", "usage_synced_at"])
+
+    policy_zero = _policy(
+        user,
+        esim,
+        expiry_enabled=False,
+        usage_mode=EsimAutoTopupPolicy.UsageMode.ZERO,
+        threshold_mb=None,
+    )
+    key_zero = AutoTopupService._idempotency_key(
+        policy_zero,
+        esim,
+        reason=EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_ZERO,
+    )
+    assert ":usage_zero:" in key_zero
+
+    policy_threshold = _policy(
+        user,
+        esim,
+        expiry_enabled=False,
+        usage_mode=EsimAutoTopupPolicy.UsageMode.THRESHOLD,
+        threshold_mb=1,
+    )
+    key_threshold = AutoTopupService._idempotency_key(
+        policy_threshold,
+        esim,
+        reason=EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_THRESHOLD,
+    )
+    assert ":usage_threshold:" in key_threshold
+    assert key_zero != key_threshold
+
+    reason_zero = AutoTopupService._select_fire_reason(
+        policy_zero, esim, now=timezone.now()
+    )
+    reason_threshold = AutoTopupService._select_fire_reason(
+        policy_threshold, esim, now=timezone.now()
+    )
+    assert reason_zero == EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_ZERO
+    assert reason_threshold == EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_THRESHOLD
+
+    metric_calls: list[tuple[str, dict]] = []
+
+    def _capture_incr(name: str, value: int = 1, **tags: str) -> None:
+        metric_calls.append((name, tags))
+
+    with patch("apps.esims.services.auto_topup_service.metrics.incr", _capture_incr):
+        assert (
+            AutoTopupService(
+                FakeTopupProvider(usage=_usage(remaining_mb=0))
+            ).evaluate_one(policy_threshold.pk)
+            == "success"
+        )
+    assert any(
+        name == "auto_topup_trigger_reason_total"
+        and tags.get("reason") == "usage_threshold"
+        for name, tags in metric_calls
+    )
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_upsert_rejects_spend_in_progress(user: User, esim: Esim) -> None:
+    Topup.objects.create(
+        account=user.billing_account,
+        esim=esim,
+        package_external_id="topup-1gb",
+        amount=Decimal("5.00"),
+        status=Topup.Status.FULFILLING,
+        idempotency_key="inflight-auto-topup",
+    )
+    service = AutoTopupService(FakeTopupProvider())
+    with pytest.raises(SpendInProgressError):
+        service.upsert_policy(
+            esim=esim,
+            account=user.billing_account,
+            package_id="topup-1gb",
+            trigger_mode=EsimAutoTopupPolicy.LEGACY_TRIGGER_EXPIRY,
+            renew_mode=EsimAutoTopupPolicy.RenewMode.UNTIL_FUNDS,
+            threshold_mb=None,
+            remaining_count=None,
+            enabled=True,
+            expected_version=None,
+        )

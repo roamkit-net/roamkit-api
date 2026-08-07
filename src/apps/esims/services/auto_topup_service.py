@@ -14,12 +14,13 @@ from django.utils import timezone
 
 from apps.billing.exceptions import InsufficientFundsError
 from apps.esims.exceptions import TopupPackageNotFoundError
-from apps.esims.models import Esim, EsimAutoTopupPolicy
+from apps.esims.models import Esim, EsimAutoTopupPolicy, Topup
 from apps.esims.services.topup_service import TopupService
 from apps.esims.services.usage_service import UsageService
 from apps.orders.exceptions import ProviderFulfillmentError, SpendInProgressError
 from core import metrics
 from shared.events.esim_events import (
+    AutoTopupConfigurationChanged,
     AutoTopupPausedFunds,
     AutoTopupPolicyCreated,
     AutoTopupPolicyUpdated,
@@ -103,7 +104,7 @@ class AutoTopupService:
         if isinstance(prepared, str):
             return prepared
 
-        esim, package_id, idempotency_key = prepared
+        esim, package_id, idempotency_key, reason = prepared
         try:
             topup = self._topups.purchase(
                 esim,
@@ -125,12 +126,13 @@ class AutoTopupService:
             )
             return "failed"
 
-        return self._on_success(policy_id, topup, idempotency_key)
+        return self._on_success(policy_id, topup, idempotency_key, fire_reason=reason)
 
-    def _prepare(self, policy_id) -> tuple[Esim, str, str] | str:
+    def _prepare(self, policy_id) -> tuple[Esim, str, str, str] | str:
         """Lock policy, refresh usage, decide whether to buy.
 
-        Returns ``(esim, package_id, idempotency_key)`` or an outcome string.
+        Returns ``(esim, package_id, idempotency_key, fire_reason)`` or an outcome
+        string.
         """
         with transaction.atomic():
             try:
@@ -170,15 +172,16 @@ class AutoTopupService:
                 return "skipped"
             if not self._past_minimum_age(esim, now=now):
                 return "skipped"
-            if not self._trigger_met(policy, esim, now=now):
-                return "skipped"
 
             reason = self._select_fire_reason(policy, esim, now=now)
-            assert reason is not None
+            if reason is None:
+                return "skipped"
+
             return (
                 esim,
                 policy.package_id,
                 self._idempotency_key(policy, esim, reason=reason),
+                reason,
             )
 
     def _ensure_fresh_usage(self, esim: Esim) -> bool:
@@ -277,7 +280,9 @@ class AutoTopupService:
         )
         return f"auto-topup:{policy.pk}:{reason}:{stamp}"
 
-    def _on_success(self, policy_id, topup, idempotency_key: str) -> str:
+    def _on_success(
+        self, policy_id, topup, idempotency_key: str, *, fire_reason: str
+    ) -> str:
         with transaction.atomic():
             policy = EsimAutoTopupPolicy.objects.select_for_update().get(pk=policy_id)
             cooldown = timedelta(seconds=int(settings.AUTO_TOPUP_COOLDOWN_SECONDS))
@@ -322,6 +327,7 @@ class AutoTopupService:
         # Events/metrics must not undo a committed purchase or policy update.
         self._safe_publish(succeeded)
         self._metric_incr("auto_topup_success_total")
+        self._metric_incr("auto_topup_trigger_reason_total", reason=fire_reason)
         if count_exhausted:
             self._metric_incr("auto_topup_paused_total", reason="count_exhausted")
         return "success"
@@ -454,6 +460,9 @@ class AutoTopupService:
         ):
             raise ValueError("remaining_count is required for fixed_count")
 
+        if Topup.objects.filter(esim=esim, status=Topup.Status.FULFILLING).exists():
+            raise SpendInProgressError("Auto top-up purchase is still in progress")
+
         with transaction.atomic():
             existing = (
                 EsimAutoTopupPolicy.objects.select_for_update()
@@ -477,15 +486,46 @@ class AutoTopupService:
                 policy.apply_legacy_trigger_mode(
                     trigger_mode, threshold_mb=threshold_mb
                 )
+                if (
+                    enabled
+                    and not policy.expiry_enabled
+                    and policy.usage_mode == EsimAutoTopupPolicy.UsageMode.DISABLED
+                ):
+                    raise ValueError(
+                        "enabled policy requires expiry_enabled and/or a usage_mode"
+                    )
                 policy.save()
                 created = True
+                config_changed = False
+                before_config = None
             else:
                 if expected_version is None or existing.version != expected_version:
                     raise LookupError("version_conflict")
+                before_config = (
+                    existing.expiry_enabled,
+                    existing.usage_mode,
+                    existing.threshold_mb,
+                )
                 existing.package_id = package_id
                 existing.apply_legacy_trigger_mode(
                     trigger_mode, threshold_mb=threshold_mb
                 )
+                after_config = (
+                    existing.expiry_enabled,
+                    existing.usage_mode,
+                    existing.threshold_mb,
+                )
+                if (
+                    enabled
+                    and not existing.expiry_enabled
+                    and existing.usage_mode == EsimAutoTopupPolicy.UsageMode.DISABLED
+                ):
+                    raise ValueError(
+                        "enabled policy requires expiry_enabled and/or a usage_mode"
+                    )
+                config_changed = before_config != after_config
+                if config_changed:
+                    existing.cooldown_until = None
                 existing.renew_mode = renew_mode
                 existing.remaining_count = remaining_count
                 existing.enabled = enabled
@@ -504,6 +544,23 @@ class AutoTopupService:
             self.publish_policy_created(policy, actor=actor)
         else:
             self.publish_policy_updated(policy, actor=actor)
+            if config_changed and before_config is not None:
+                self._safe_publish(
+                    AutoTopupConfigurationChanged(
+                        policy_id=str(policy.pk),
+                        account_id=str(policy.account_id),
+                        esim_id=str(policy.esim_id),
+                        before_expiry_enabled=before_config[0],
+                        before_usage_mode=before_config[1],
+                        before_threshold_mb=before_config[2],
+                        after_expiry_enabled=policy.expiry_enabled,
+                        after_usage_mode=policy.usage_mode,
+                        after_threshold_mb=policy.threshold_mb,
+                        version=policy.version,
+                        actor=actor,
+                        created_at=timezone.now(),
+                    )
+                )
         return policy
 
     def delete_policy(
