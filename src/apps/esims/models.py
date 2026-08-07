@@ -231,6 +231,7 @@ class EsimAutoTopupPolicy(models.Model):
         PROVIDER_ERROR = "provider_error", "Provider error"
         MANUAL_PAUSE = "manual_pause", "Manual pause"
         COUNT_EXHAUSTED = "count_exhausted", "Count exhausted"
+        SCHEDULE_ENDED = "schedule_ended", "Schedule ended"
 
     class UsageMode(models.TextChoices):
         DISABLED = "disabled", "Disabled"
@@ -290,6 +291,14 @@ class EsimAutoTopupPolicy(models.Model):
         null=True,
         blank=True,
         help_text="Required when renew_mode is fixed_count.",
+    )
+    active_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Optional UTC exclusive end bound for policy lifetime (v3). "
+            "Null means no schedule limit."
+        ),
     )
     cooldown_until = models.DateTimeField(null=True, blank=True)
     last_triggered_at = models.DateTimeField(null=True, blank=True)
