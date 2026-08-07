@@ -254,9 +254,7 @@ class TopupSerializer(serializers.ModelSerializer):
 
 
 class AutoTopupPolicySerializer(serializers.ModelSerializer):
-    """Persisted auto top-up policy response (legacy trigger_mode until PR4)."""
-
-    trigger_mode = serializers.SerializerMethodField()
+    """Persisted auto top-up policy response (v2 trigger fields)."""
 
     class Meta:
         model = EsimAutoTopupPolicy
@@ -266,7 +264,8 @@ class AutoTopupPolicySerializer(serializers.ModelSerializer):
             "enabled",
             "status",
             "reason",
-            "trigger_mode",
+            "expiry_enabled",
+            "usage_mode",
             "threshold_mb",
             "renew_mode",
             "remaining_count",
@@ -278,22 +277,14 @@ class AutoTopupPolicySerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_trigger_mode(self, obj: EsimAutoTopupPolicy) -> str:
-        return obj.legacy_trigger_mode()
-
 
 class AutoTopupPolicyWriteSerializer(serializers.Serializer):
-    """PUT body; still accepts v1 trigger_mode mapped to v2 columns until PR4."""
+    """PUT body with v2 ``expiry_enabled`` + ``usage_mode`` (no ``trigger_mode``)."""
 
     package_id = serializers.CharField(max_length=64)
     enabled = serializers.BooleanField(default=True)
-    trigger_mode = serializers.ChoiceField(
-        choices=[
-            (EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_ZERO, "Usage zero"),
-            (EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_THRESHOLD, "Usage threshold"),
-            (EsimAutoTopupPolicy.LEGACY_TRIGGER_EXPIRY, "Expiry"),
-        ]
-    )
+    expiry_enabled = serializers.BooleanField()
+    usage_mode = serializers.ChoiceField(choices=EsimAutoTopupPolicy.UsageMode.choices)
     threshold_mb = serializers.IntegerField(
         required=False, allow_null=True, min_value=1
     )
@@ -309,15 +300,29 @@ class AutoTopupPolicyWriteSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
-        trigger = attrs.get("trigger_mode")
+        enabled = attrs.get("enabled", True)
+        expiry_enabled = attrs.get("expiry_enabled")
+        usage_mode = attrs.get("usage_mode")
         renew = attrs.get("renew_mode")
-        if trigger == EsimAutoTopupPolicy.LEGACY_TRIGGER_USAGE_THRESHOLD:
+
+        if (
+            enabled
+            and not expiry_enabled
+            and usage_mode == EsimAutoTopupPolicy.UsageMode.DISABLED
+        ):
+            raise serializers.ValidationError(
+                "enabled policy requires expiry_enabled and/or a usage_mode other "
+                "than disabled."
+            )
+
+        if usage_mode == EsimAutoTopupPolicy.UsageMode.THRESHOLD:
             if attrs.get("threshold_mb") is None:
                 raise serializers.ValidationError(
-                    {"threshold_mb": "Required when trigger_mode is usage_threshold."}
+                    {"threshold_mb": "Required when usage_mode is threshold."}
                 )
         else:
-            attrs["threshold_mb"] = attrs.get("threshold_mb")
+            attrs["threshold_mb"] = None
+
         if renew == EsimAutoTopupPolicy.RenewMode.FIXED_COUNT:
             if attrs.get("remaining_count") is None:
                 raise serializers.ValidationError(

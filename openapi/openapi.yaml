@@ -1134,9 +1134,9 @@ paths:
       tags:
       - eSIM
     put:
-      description: Upsert auto top-up policy. ``package_id`` must be in Available top-ups. Optimistic
-        concurrency via body ``version`` and/or ``If-Match`` header (required when updating an existing
-        policy).
+      description: 'Upsert auto top-up policy (v2: ``expiry_enabled`` + ``usage_mode``). ``package_id``
+        must be in Available top-ups. Optimistic concurrency via body ``version`` and/or ``If-Match``
+        header (required when updating). Returns 409 if a purchase for this eSIM is still in progress.'
       operationId: esim_auto_topup_upsert
       parameters:
       - in: path
@@ -1192,7 +1192,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
-          description: Version conflict
+          description: Version conflict or spend in progress
       security:
       - bearerAuth: []
       summary: Create or update auto top-up policy
@@ -1548,7 +1548,7 @@ components:
       - unknown
       type: string
     AutoTopupPolicy:
-      description: Persisted auto top-up policy response (legacy trigger_mode until PR4).
+      description: Persisted auto top-up policy response (v2 trigger fields).
       properties:
         cooldown_until:
           format: date-time
@@ -1560,6 +1560,9 @@ components:
           readOnly: true
           type: string
         enabled:
+          readOnly: true
+          type: boolean
+        expiry_enabled:
           readOnly: true
           type: boolean
         id:
@@ -1596,13 +1599,14 @@ components:
           nullable: true
           readOnly: true
           type: integer
-        trigger_mode:
-          readOnly: true
-          type: string
         updated_at:
           format: date-time
           readOnly: true
           type: string
+        usage_mode:
+          allOf:
+          - $ref: '#/components/schemas/UsageModeEnum'
+          readOnly: true
         version:
           readOnly: true
           type: integer
@@ -1610,6 +1614,7 @@ components:
       - cooldown_until
       - created_at
       - enabled
+      - expiry_enabled
       - id
       - last_triggered_at
       - package_id
@@ -1618,8 +1623,8 @@ components:
       - renew_mode
       - status
       - threshold_mb
-      - trigger_mode
       - updated_at
+      - usage_mode
       - version
       type: object
     AutoTopupPolicyStatusEnum:
@@ -1637,10 +1642,12 @@ components:
       - disabled
       type: string
     AutoTopupPolicyWriteRequest:
-      description: PUT body; still accepts v1 trigger_mode mapped to v2 columns until PR4.
+      description: PUT body with v2 ``expiry_enabled`` + ``usage_mode`` (no ``trigger_mode``).
       properties:
         enabled:
           default: true
+          type: boolean
+        expiry_enabled:
           type: boolean
         package_id:
           maxLength: 64
@@ -1656,17 +1663,18 @@ components:
           minimum: 1
           nullable: true
           type: integer
-        trigger_mode:
-          $ref: '#/components/schemas/TriggerModeEnum'
+        usage_mode:
+          $ref: '#/components/schemas/UsageModeEnum'
         version:
           description: Expected version for optimistic concurrency (or use If-Match).
           minimum: 0
           nullable: true
           type: integer
       required:
+      - expiry_enabled
       - package_id
       - renew_mode
-      - trigger_mode
+      - usage_mode
       type: object
     Balance:
       properties:
@@ -3512,17 +3520,6 @@ components:
       - fulfilled
       - failed
       type: string
-    TriggerModeEnum:
-      description: '* `usage_zero` - Usage zero
-
-        * `usage_threshold` - Usage threshold
-
-        * `expiry` - Expiry'
-      enum:
-      - usage_zero
-      - usage_threshold
-      - expiry
-      type: string
     Usage:
       description: Live usage snapshot from the provider.
       properties:
@@ -3557,6 +3554,17 @@ components:
       - total_text
       - total_voice
       type: object
+    UsageModeEnum:
+      description: '* `disabled` - Disabled
+
+        * `threshold` - Threshold
+
+        * `zero` - Zero'
+      enum:
+      - disabled
+      - threshold
+      - zero
+      type: string
     User:
       properties:
         created_at:
