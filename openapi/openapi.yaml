@@ -1063,6 +1063,141 @@ paths:
       summary: Update my eSIM note
       tags:
       - eSIM
+  /api/v1/me/esims/{id}/auto-topup/:
+    delete:
+      description: Delete the auto top-up policy. Requires matching ``If-Match`` version (or ``version``
+        query param).
+      operationId: esim_auto_topup_destroy
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        '204':
+          description: Policy deleted
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: eSIM or policy not found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Version conflict
+      security:
+      - bearerAuth: []
+      summary: Delete auto top-up policy
+      tags:
+      - eSIM
+    get:
+      description: Return the auto top-up policy for an owned eSIM, if any.
+      operationId: esim_auto_topup_retrieve
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoTopupPolicy'
+          description: Policy
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: eSIM or policy not found
+      security:
+      - bearerAuth: []
+      summary: Get auto top-up policy
+      tags:
+      - eSIM
+    put:
+      description: 'Upsert auto top-up policy (v2: ``expiry_enabled`` + ``usage_mode``). ``package_id``
+        must be in Available top-ups. Optimistic concurrency via body ``version`` and/or ``If-Match``
+        header (required when updating). Returns 409 if a purchase for this eSIM is still in progress.'
+      operationId: esim_auto_topup_upsert
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutoTopupPolicyWriteRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoTopupPolicy'
+          description: Policy updated
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutoTopupPolicy'
+          description: Policy created
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Invalid request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Rollout gate denied
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: eSIM/package not found or auto top-up disabled
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Version conflict or spend in progress
+      security:
+      - bearerAuth: []
+      summary: Create or update auto top-up policy
+      tags:
+      - eSIM
   /api/v1/me/esims/{id}/events/:
     get:
       description: Chronological install / lifecycle trail for an owned eSIM.
@@ -1412,6 +1547,135 @@ components:
       - installation
       - unknown
       type: string
+    AutoTopupPolicy:
+      description: Persisted auto top-up policy response (v2 trigger fields).
+      properties:
+        cooldown_until:
+          format: date-time
+          nullable: true
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        enabled:
+          readOnly: true
+          type: boolean
+        expiry_enabled:
+          readOnly: true
+          type: boolean
+        id:
+          format: uuid
+          readOnly: true
+          type: string
+        last_triggered_at:
+          format: date-time
+          nullable: true
+          readOnly: true
+          type: string
+        package_id:
+          readOnly: true
+          type: string
+        reason:
+          allOf:
+          - $ref: '#/components/schemas/ReasonEnum'
+          readOnly: true
+        remaining_count:
+          description: Required when renew_mode is fixed_count.
+          nullable: true
+          readOnly: true
+          type: integer
+        renew_mode:
+          allOf:
+          - $ref: '#/components/schemas/RenewModeEnum'
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/AutoTopupPolicyStatusEnum'
+          readOnly: true
+        threshold_mb:
+          description: Required when usage_mode is threshold.
+          nullable: true
+          readOnly: true
+          type: integer
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+        usage_mode:
+          allOf:
+          - $ref: '#/components/schemas/UsageModeEnum'
+          readOnly: true
+        version:
+          readOnly: true
+          type: integer
+      required:
+      - cooldown_until
+      - created_at
+      - enabled
+      - expiry_enabled
+      - id
+      - last_triggered_at
+      - package_id
+      - reason
+      - remaining_count
+      - renew_mode
+      - status
+      - threshold_mb
+      - updated_at
+      - usage_mode
+      - version
+      type: object
+    AutoTopupPolicyStatusEnum:
+      description: '* `active` - Active
+
+        * `paused` - Paused
+
+        * `blocked` - Blocked
+
+        * `disabled` - Disabled'
+      enum:
+      - active
+      - paused
+      - blocked
+      - disabled
+      type: string
+    AutoTopupPolicyWriteRequest:
+      description: PUT body with v2 ``expiry_enabled`` + ``usage_mode`` (no ``trigger_mode``).
+      properties:
+        enabled:
+          default: true
+          type: boolean
+        expiry_enabled:
+          type: boolean
+        package_id:
+          maxLength: 64
+          minLength: 1
+          type: string
+        remaining_count:
+          minimum: 0
+          nullable: true
+          type: integer
+        renew_mode:
+          $ref: '#/components/schemas/RenewModeEnum'
+        threshold_mb:
+          minimum: 1
+          nullable: true
+          type: integer
+        usage_mode:
+          $ref: '#/components/schemas/UsageModeEnum'
+        version:
+          description: Expected version for optimistic concurrency (or use If-Match).
+          minimum: 0
+          nullable: true
+          type: integer
+      required:
+      - expiry_enabled
+      - package_id
+      - renew_mode
+      - usage_mode
+      type: object
     Balance:
       properties:
         balance:
@@ -3058,6 +3322,26 @@ components:
       - idempotency_key
       - package_id
       type: object
+    ReasonEnum:
+      description: '* `insufficient_funds` - Insufficient funds
+
+        * `package_unavailable` - Package unavailable
+
+        * `usage_unknown` - Usage unknown
+
+        * `provider_error` - Provider error
+
+        * `manual_pause` - Manual pause
+
+        * `count_exhausted` - Count exhausted'
+      enum:
+      - insufficient_funds
+      - package_unavailable
+      - usage_unknown
+      - provider_error
+      - manual_pause
+      - count_exhausted
+      type: string
     RegisterRequest:
       properties:
         email:
@@ -3067,6 +3351,14 @@ components:
       required:
       - email
       type: object
+    RenewModeEnum:
+      description: '* `until_funds` - Until funds
+
+        * `fixed_count` - Fixed count'
+      enum:
+      - until_funds
+      - fixed_count
+      type: string
     SeverityEnum:
       description: '* `info` - info
 
@@ -3262,6 +3554,17 @@ components:
       - total_text
       - total_voice
       type: object
+    UsageModeEnum:
+      description: '* `disabled` - Disabled
+
+        * `threshold` - Threshold
+
+        * `zero` - Zero'
+      enum:
+      - disabled
+      - threshold
+      - zero
+      type: string
     User:
       properties:
         created_at:
