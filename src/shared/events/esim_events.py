@@ -103,3 +103,22 @@ class AutoTopupPolicyUpdated(DomainEvent):
     version: int
     actor: str
     created_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class AutoTopupConfigurationChanged(DomainEvent):
+    """Published when trigger-config tuple changes on policy upsert (v2)."""
+
+    event_version: int = 1
+    policy_id: str
+    account_id: str
+    esim_id: str
+    before_expiry_enabled: bool
+    before_usage_mode: str
+    before_threshold_mb: int | None
+    after_expiry_enabled: bool
+    after_usage_mode: str
+    after_threshold_mb: int | None
+    version: int
+    actor: str
+    created_at: datetime
