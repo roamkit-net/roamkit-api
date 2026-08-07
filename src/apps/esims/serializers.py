@@ -254,10 +254,7 @@ class TopupSerializer(serializers.ModelSerializer):
 
 
 class AutoTopupPolicySerializer(serializers.ModelSerializer):
-    """Persisted auto top-up policy response.
-
-    Exposes legacy ``trigger_mode`` until me-API PR4 switches to v2 fields.
-    """
+    """Persisted auto top-up policy response (legacy trigger_mode until PR4)."""
 
     trigger_mode = serializers.SerializerMethodField()
 
@@ -286,10 +283,7 @@ class AutoTopupPolicySerializer(serializers.ModelSerializer):
 
 
 class AutoTopupPolicyWriteSerializer(serializers.Serializer):
-    """Request body for PUT /api/v1/me/esims/{id}/auto-topup/.
-
-    Still accepts v1 ``trigger_mode`` (mapped to v2 columns). PR4 replaces this.
-    """
+    """PUT body; still accepts v1 trigger_mode mapped to v2 columns until PR4."""
 
     package_id = serializers.CharField(max_length=64)
     enabled = serializers.BooleanField(default=True)
