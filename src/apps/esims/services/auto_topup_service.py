@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from django.conf import settings
@@ -101,6 +101,8 @@ class AutoTopupService:
         prepared = self._prepare(policy_id)
         if prepared is None or prepared == "skipped":
             return "skipped"
+        if prepared == "schedule_ended":
+            return self._finalize_schedule_ended(policy_id)
         if isinstance(prepared, str):
             return prepared
 
@@ -172,6 +174,12 @@ class AutoTopupService:
                 return "skipped"
             if not self._past_minimum_age(esim, now=now):
                 return "skipped"
+            if policy.active_until is not None and now >= policy.active_until:
+                # Pause under lock before purchase; finalize event/metric outside.
+                policy.status = EsimAutoTopupPolicy.Status.PAUSED
+                policy.reason = EsimAutoTopupPolicy.Reason.SCHEDULE_ENDED
+                policy.save(update_fields=["status", "reason", "updated_at"])
+                return "schedule_ended"
 
             reason = self._select_fire_reason(policy, esim, now=now)
             if reason is None:
@@ -332,6 +340,15 @@ class AutoTopupService:
             self._metric_incr("auto_topup_paused_total", reason="count_exhausted")
         return "success"
 
+    def _finalize_schedule_ended(self, policy_id) -> str:
+        """Publish pause snapshot + metric after schedule guard persisted pause."""
+        policy = EsimAutoTopupPolicy.objects.select_related("account", "esim").get(
+            pk=policy_id
+        )
+        self.publish_policy_updated(policy, actor="system")
+        self._metric_incr("auto_topup_paused_total", reason="schedule_ended")
+        return "paused"
+
     def _pause_funds(self, policy_id, exc: InsufficientFundsError) -> str:
         with transaction.atomic():
             policy = EsimAutoTopupPolicy.objects.select_for_update().get(pk=policy_id)
@@ -427,11 +444,18 @@ class AutoTopupService:
         renew_mode: str,
         threshold_mb: int | None,
         remaining_count: int | None,
+        active_until: datetime | None = None,
         enabled: bool = True,
         expected_version: int | None,
         actor: str = "user",
     ) -> EsimAutoTopupPolicy:
-        """Create or update policy with package validation and optimistic locking."""
+        """Create or update policy with package validation and optimistic locking.
+
+        ``active_until`` is an optional UTC exclusive lifetime bound (v3). Changing
+        it alone does **not** clear ``cooldown_until`` (not part of trigger-config).
+        Enabled + past ``active_until`` is rejected. Enabling clears ``schedule_ended``
+        (and other pause reasons) when the payload is otherwise valid.
+        """
         from apps.esims.exceptions import TopupPackageNotFoundError
 
         if not self.rollout_allows_account(account):
@@ -470,6 +494,15 @@ class AutoTopupService:
             and remaining_count is None
         ):
             raise ValueError("remaining_count is required for fixed_count")
+        if enabled and active_until is not None:
+            bound = active_until
+            if timezone.is_naive(bound):
+                bound = timezone.make_aware(bound, UTC)
+                active_until = bound
+            if timezone.now() >= bound:
+                raise ValueError(
+                    "active_until must be in the future when the policy is enabled"
+                )
 
         if Topup.objects.filter(esim=esim, status=Topup.Status.FULFILLING).exists():
             raise SpendInProgressError("Auto top-up purchase is still in progress")
@@ -483,6 +516,12 @@ class AutoTopupService:
             if existing is None:
                 if expected_version is not None:
                     raise LookupError("version_conflict")
+                if enabled:
+                    create_status = EsimAutoTopupPolicy.Status.ACTIVE
+                    create_reason = ""
+                else:
+                    create_status = EsimAutoTopupPolicy.Status.DISABLED
+                    create_reason = EsimAutoTopupPolicy.Reason.MANUAL_PAUSE
                 policy = EsimAutoTopupPolicy(
                     account=account,
                     esim=esim,
@@ -492,9 +531,10 @@ class AutoTopupService:
                     threshold_mb=threshold_mb,
                     renew_mode=renew_mode,
                     remaining_count=remaining_count,
+                    active_until=active_until,
                     enabled=enabled,
-                    status=EsimAutoTopupPolicy.Status.ACTIVE,
-                    reason="",
+                    status=create_status,
+                    reason=create_reason,
                     version=0,
                 )
                 policy.save()
@@ -523,6 +563,7 @@ class AutoTopupService:
                     existing.cooldown_until = None
                 existing.renew_mode = renew_mode
                 existing.remaining_count = remaining_count
+                existing.active_until = active_until
                 existing.enabled = enabled
                 if enabled:
                     existing.status = EsimAutoTopupPolicy.Status.ACTIVE

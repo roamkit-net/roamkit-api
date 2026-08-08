@@ -547,6 +547,7 @@ class EsimAutoTopupView(OwnedEsimMixin, GenericAPIView):
                 renew_mode=data["renew_mode"],
                 threshold_mb=data.get("threshold_mb"),
                 remaining_count=data.get("remaining_count"),
+                active_until=data.get("active_until"),
                 enabled=data.get("enabled", True),
                 expected_version=expected,
                 actor=f"user:{request.user.pk}",
