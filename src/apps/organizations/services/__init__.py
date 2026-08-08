@@ -13,6 +13,7 @@ from apps.organizations.services.authz import (
 from apps.organizations.services.context import (
     AccountContext,
     require_org_mutation,
+    resolve_account_context,
     resolve_organization_context,
     resolve_personal_context,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "require_spend",
     "require_transfer_ownership",
     "require_view",
+    "resolve_account_context",
     "resolve_organization_context",
     "resolve_personal_context",
     "revoke_invite",

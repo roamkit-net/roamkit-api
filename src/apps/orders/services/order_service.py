@@ -60,9 +60,17 @@ class OrderService:
         customer_ref: str | None = None,
         skip_payment: bool = False,
         idempotency_key: str | None = None,
+        account: Account | None = None,
     ) -> Order:
-        """Place a provider order and persist Order + Esim rows."""
-        account = ensure_billing_account(user)
+        """Place a provider order and persist Order + Esim rows.
+
+        ``account`` is the resolved spend/inventory Account (personal or team).
+        When omitted, the caller's personal Account is used (backward compatible).
+        ``user`` is the purchasing actor (dual-written on Esim; org Accounts have
+        ``account.user is None``).
+        """
+        if account is None:
+            account = ensure_billing_account(user)
 
         if not skip_payment and not idempotency_key:
             raise IdempotencyKeyRequiredError("idempotency_key is required")
@@ -106,7 +114,7 @@ class OrderService:
             logger.exception("Order %s provider fulfillment failed", order.pk)
             raise
 
-        esims = self._persist_fulfillment(order, result)
+        esims = self._persist_fulfillment(order, result, actor=user)
         self._publish_created_events(order, user, esims)
         return order
 
@@ -242,7 +250,9 @@ class OrderService:
         for event in events:
             event_bus.publish(event)
 
-    def _persist_fulfillment(self, order: Order, result: OrderResult) -> list[Esim]:
+    def _persist_fulfillment(
+        self, order: Order, result: OrderResult, *, actor: User
+    ) -> list[Esim]:
         with transaction.atomic():
             order.external_order_id = result.external_order_id
             order.status = Order.Status.FULFILLED
@@ -253,7 +263,8 @@ class OrderService:
             for sim in result.sims:
                 esims.append(
                     lifecycle_service.create_purchased(
-                        user=order.account.user,
+                        # Actor dual-write: org Accounts have account.user=None.
+                        user=actor,
                         account=order.account,
                         order=order,
                         iccid=sim.iccid,

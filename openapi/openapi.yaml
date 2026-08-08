@@ -1506,16 +1506,24 @@ paths:
   /api/v1/orders/:
     post:
       description: Debit prepaid credits then fulfill via the order provider. Idempotent on ``idempotency_key``
-        (replay returns 201 with the same body).
+        (replay returns 201 with the same body). Omit ``organization_id`` for personal Account spend;
+        set it to purchase against a team Account (requires active membership with ``can_spend``). Client-supplied
+        ``account_id`` is never accepted.
       operationId: orders_create
       requestBody:
         content:
           application/json:
             examples:
-              CreateOrder:
-                summary: Create order
+              CreateOrder(personal):
+                summary: Create order (personal)
                 value:
                   idempotency_key: client-order-uuid-1
+                  package_id: airalo-pkg-123
+              CreateOrder(team):
+                summary: Create order (team)
+                value:
+                  idempotency_key: client-order-uuid-2
+                  organization_id: 11111111-1111-1111-1111-111111111111
                   package_id: airalo-pkg-123
             schema:
               $ref: '#/components/schemas/CreateOrderRequest'
@@ -1554,12 +1562,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/InsufficientCredits'
           description: Insufficient credits
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not allowed to spend in organization context
         '404':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
-          description: Package not found or billing disabled
+          description: Package/organization not found or billing disabled
         '409':
           content:
             application/json:
@@ -2338,11 +2352,20 @@ components:
       - global
       type: string
     CreateOrderRequest:
-      description: Request body for POST /api/v1/orders/.
+      description: 'Request body for POST /api/v1/orders/.
+
+
+        Optional ``organization_id`` selects team Account context (ADR 020).
+
+        Client-supplied ``account_id`` is rejected — never an authz source.'
       properties:
         idempotency_key:
           maxLength: 128
           minLength: 1
+          type: string
+        organization_id:
+          format: uuid
+          nullable: true
           type: string
         package_id:
           maxLength: 64

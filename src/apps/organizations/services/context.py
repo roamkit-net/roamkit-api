@@ -96,3 +96,21 @@ def require_org_mutation(context: AccountContext) -> None:
         raise PermissionDenied(
             detail="Organization is not active; mutations are disabled."
         )
+
+
+def resolve_account_context(
+    user: User,
+    *,
+    organization_id: UUID | str | None = None,
+) -> AccountContext:
+    """Resolve personal or team Account for spend/inventory APIs.
+
+    * Omit ``organization_id`` → personal Account (no org permission gate).
+    * Provide ``organization_id`` → team Account via membership; callers that
+      spend must still apply ``require_spend`` (this helper does not).
+
+    Never accepts client ``account_id``.
+    """
+    if organization_id is None:
+        return resolve_personal_context(user)
+    return resolve_organization_context(user, organization_id)
