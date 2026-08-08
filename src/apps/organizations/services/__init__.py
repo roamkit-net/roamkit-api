@@ -4,6 +4,7 @@ from apps.organizations.services.account_binding import create_organization
 from apps.organizations.services.authz import (
     require_archive_org,
     require_assign_esim,
+    require_device_bind,
     require_invite,
     require_manage_members,
     require_permission,
@@ -17,6 +18,12 @@ from apps.organizations.services.context import (
     resolve_account_context,
     resolve_organization_context,
     resolve_personal_context,
+)
+from apps.organizations.services.device_binding import (
+    create_device_binding,
+    get_device_binding,
+    list_device_bindings,
+    unbind_device_binding,
 )
 from apps.organizations.services.invites import (
     accept_invite,
@@ -34,11 +41,15 @@ from apps.organizations.services.membership import (
 __all__ = [
     "AccountContext",
     "accept_invite",
+    "create_device_binding",
     "create_invite",
     "create_organization",
+    "get_device_binding",
+    "list_device_bindings",
     "list_pending_invites",
     "require_archive_org",
     "require_assign_esim",
+    "require_device_bind",
     "require_invite",
     "require_manage_members",
     "require_org_mutation",
@@ -54,4 +65,5 @@ __all__ = [
     "set_member_role",
     "set_organization_status",
     "transfer_ownership",
+    "unbind_device_binding",
 ]

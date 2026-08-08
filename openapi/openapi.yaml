@@ -1911,6 +1911,206 @@ paths:
       summary: Get organization
       tags:
       - Organizations
+  /api/v1/orgs/{organization_id}/device-bindings/:
+    get:
+      description: List DeviceBinding rows for the organization. Requires ``can_view``. Bindings attach
+        team Account eSIMs to RoamKit-issued ``device_external_id`` values (ADR 020). No UEM sync in this
+        API.
+      operationId: organization_device_bindings_list
+      parameters:
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/DeviceBinding'
+                type: array
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: List device bindings
+      tags:
+      - Organizations
+    post:
+      description: Bind a team Account eSIM to a new RoamKit-issued ``device_external_id``. Requires ``can_device_bind``
+        and an active Organization. Personal-Account eSIMs are rejected (404). One active binding per
+        eSIM (use ``replace=true`` to rebind). Client ``account_id`` / ``device_external_id`` are rejected.
+      operationId: organization_device_bindings_create
+      parameters:
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceBindingCreateRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceBinding'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Create device binding
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/device-bindings/{binding_id}/:
+    get:
+      description: Get one DeviceBinding in organization scope (``can_view``).
+      operationId: organization_device_bindings_retrieve
+      parameters:
+      - in: path
+        name: binding_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceBinding'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Retrieve device binding
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/device-bindings/{binding_id}/unbind/:
+    post:
+      description: Mark an active DeviceBinding as ``unbound`` (soft lifecycle). Requires ``can_device_bind``
+        and an active Organization.
+      operationId: organization_device_bindings_unbind
+      parameters:
+      - in: path
+        name: binding_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceBinding'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Unbind device binding
+      tags:
+      - Organizations
   /api/v1/orgs/{organization_id}/invites/:
     get:
       description: Requires ``can_invite`` (owner/admin) on an **active** organization. Does not accept
@@ -2683,6 +2883,94 @@ components:
       required:
       - detail
       type: object
+    DeviceBinding:
+      properties:
+        bound_by_id:
+          nullable: true
+          readOnly: true
+          type: integer
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        device_external_id:
+          description: RoamKit-issued opaque device key (not a client authz signal).
+          readOnly: true
+          type: string
+        esim_id:
+          readOnly: true
+          type: integer
+        iccid:
+          readOnly: true
+          type: string
+        id:
+          format: uuid
+          readOnly: true
+          type: string
+        organization_id:
+          format: uuid
+          readOnly: true
+          type: string
+        replaced_by_id:
+          format: uuid
+          nullable: true
+          readOnly: true
+          type: string
+        status:
+          allOf:
+          - $ref: '#/components/schemas/DeviceBindingStatusEnum'
+          readOnly: true
+        unbound_at:
+          format: date-time
+          nullable: true
+          readOnly: true
+          type: string
+        unbound_by_id:
+          nullable: true
+          readOnly: true
+          type: integer
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+      required:
+      - bound_by_id
+      - created_at
+      - device_external_id
+      - esim_id
+      - iccid
+      - id
+      - organization_id
+      - replaced_by_id
+      - status
+      - unbound_at
+      - unbound_by_id
+      - updated_at
+      type: object
+    DeviceBindingCreateRequest:
+      properties:
+        esim_id:
+          minimum: 1
+          type: integer
+        replace:
+          default: false
+          description: When true, replace an existing active binding on this eSIM (old → replaced, new
+            → active).
+          type: boolean
+      required:
+      - esim_id
+      type: object
+    DeviceBindingStatusEnum:
+      description: '* `active` - Active
+
+        * `unbound` - Unbound
+
+        * `replaced` - Replaced'
+      enum:
+      - active
+      - unbound
+      - replaced
+      type: string
     ErrorDetail:
       description: 'Standard DRF ``{"detail": "..."}`` error body.'
       properties:

@@ -53,3 +53,9 @@ def require_archive_org(context: AccountContext) -> None:
 def require_invite(context: AccountContext) -> None:
     require_org_mutation(context)
     require_permission(context, "can_invite")
+
+
+def require_device_bind(context: AccountContext) -> None:
+    """DeviceBinding create / unbind / rebind (owner/admin)."""
+    require_org_mutation(context)
+    require_permission(context, "can_device_bind")

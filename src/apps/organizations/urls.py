@@ -4,6 +4,9 @@ from django.urls import path
 
 from apps.organizations.views import (
     OrganizationDetailView,
+    OrganizationDeviceBindingDetailView,
+    OrganizationDeviceBindingListCreateView,
+    OrganizationDeviceBindingUnbindView,
     OrganizationInviteAcceptView,
     OrganizationInviteListCreateView,
     OrganizationInviteRevokeView,
@@ -55,5 +58,20 @@ urlpatterns = [
         "<uuid:organization_id>/invites/<uuid:invite_id>/revoke/",
         OrganizationInviteRevokeView.as_view(),
         name="organization-invite-revoke",
+    ),
+    path(
+        "<uuid:organization_id>/device-bindings/",
+        OrganizationDeviceBindingListCreateView.as_view(),
+        name="organization-device-bindings",
+    ),
+    path(
+        "<uuid:organization_id>/device-bindings/<uuid:binding_id>/",
+        OrganizationDeviceBindingDetailView.as_view(),
+        name="organization-device-binding-detail",
+    ),
+    path(
+        "<uuid:organization_id>/device-bindings/<uuid:binding_id>/unbind/",
+        OrganizationDeviceBindingUnbindView.as_view(),
+        name="organization-device-binding-unbind",
     ),
 ]

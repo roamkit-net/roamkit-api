@@ -5,6 +5,7 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from apps.organizations.models import (
+    DeviceBinding,
     InviteRole,
     Membership,
     MembershipRole,
@@ -148,3 +149,60 @@ class OrganizationInviteAcceptResponseSerializer(serializers.Serializer):
     membership = MembershipSerializer()
     organization_id = serializers.UUIDField()
     already_accepted = serializers.BooleanField()
+
+
+class DeviceBindingSerializer(serializers.ModelSerializer):
+    organization_id = serializers.UUIDField(read_only=True)
+    esim_id = serializers.IntegerField(read_only=True)
+    iccid = serializers.CharField(source="esim.iccid", read_only=True)
+
+    class Meta:
+        model = DeviceBinding
+        fields = (
+            "id",
+            "organization_id",
+            "esim_id",
+            "iccid",
+            "device_external_id",
+            "status",
+            "bound_by_id",
+            "unbound_by_id",
+            "unbound_at",
+            "replaced_by_id",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+
+class DeviceBindingCreateSerializer(serializers.Serializer):
+    esim_id = serializers.IntegerField(min_value=1)
+    replace = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text=(
+            "When true, replace an existing active binding on this eSIM "
+            "(old → replaced, new → active)."
+        ),
+    )
+
+    def validate(self, attrs: dict) -> dict:
+        if "account_id" in self.initial_data:
+            raise serializers.ValidationError(
+                {
+                    "account_id": (
+                        "Client-supplied account_id is not accepted; "
+                        "authorization uses organization_id path only."
+                    )
+                }
+            )
+        if "device_external_id" in self.initial_data:
+            raise serializers.ValidationError(
+                {
+                    "device_external_id": (
+                        "Client-supplied device_external_id is not accepted; "
+                        "RoamKit issues this id on create."
+                    )
+                }
+            )
+        return attrs

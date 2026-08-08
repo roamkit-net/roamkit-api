@@ -316,3 +316,172 @@ class OrganizationInvite(models.Model):
         raise HardDeleteViolation(
             "OrganizationInvite must not be hard-deleted; use status transitions"
         )
+
+
+class DeviceBindingStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    UNBOUND = "unbound", "Unbound"
+    REPLACED = "replaced", "Replaced"
+
+
+class DeviceBinding(models.Model):
+    """Bind a team Account eSIM to a RoamKit-issued device external id (ADR 020).
+
+    v1 cardinality: one **active** binding per eSIM, and one **active**
+    ``device_external_id`` per Organization. ``device_external_id`` is never an
+    authorization source. Personal-Account eSIMs are out of scope for v1.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="device_bindings",
+    )
+    esim = models.ForeignKey(
+        "esims.Esim",
+        on_delete=models.PROTECT,
+        related_name="device_bindings",
+    )
+    device_external_id = models.CharField(
+        max_length=64,
+        db_index=True,
+        help_text="RoamKit-issued opaque device key (not a client authz signal).",
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=DeviceBindingStatus.choices,
+        default=DeviceBindingStatus.ACTIVE,
+        db_index=True,
+    )
+    bound_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="device_bindings_created",
+    )
+    unbound_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="device_bindings_unbound",
+    )
+    unbound_at = models.DateTimeField(null=True, blank=True)
+    replaced_by = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="replaces",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = SoftLifecycleManager()
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "device binding"
+        verbose_name_plural = "device bindings"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["esim"],
+                condition=Q(status=DeviceBindingStatus.ACTIVE),
+                name="organizations_devicebinding_one_active_per_esim",
+            ),
+            models.UniqueConstraint(
+                fields=["organization", "device_external_id"],
+                condition=Q(status=DeviceBindingStatus.ACTIVE),
+                name="organizations_devicebinding_one_active_device_per_org",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    status__in=[
+                        DeviceBindingStatus.ACTIVE,
+                        DeviceBindingStatus.UNBOUND,
+                        DeviceBindingStatus.REPLACED,
+                    ]
+                ),
+                name="organizations_devicebinding_status_valid",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "status"],
+                name="org_dbind_org_status",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"DeviceBinding {self.device_external_id} "
+            f"esim={self.esim_id} ({self.status})"
+        )
+
+    def delete(self, using=None, keep_parents=False):
+        raise HardDeleteViolation(
+            "DeviceBinding must not be hard-deleted; use status transitions"
+        )
+
+
+class DeviceBindingEventAction(models.TextChoices):
+    BIND = "bind", "Bind"
+    UNBIND = "unbind", "Unbind"
+    REBIND = "rebind", "Rebind"
+
+
+class DeviceBindingEvent(models.Model):
+    """Append-only audit trail for DeviceBinding mutations (ADR 020)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="device_binding_events",
+    )
+    binding = models.ForeignKey(
+        DeviceBinding,
+        on_delete=models.CASCADE,
+        related_name="events",
+    )
+    esim = models.ForeignKey(
+        "esims.Esim",
+        on_delete=models.PROTECT,
+        related_name="device_binding_events",
+    )
+    action = models.CharField(max_length=16, choices=DeviceBindingEventAction.choices)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="device_binding_events",
+    )
+    device_external_id = models.CharField(max_length=64)
+    previous_binding = models.ForeignKey(
+        DeviceBinding,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="superseded_by_events",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "device binding event"
+        verbose_name_plural = "device binding events"
+        indexes = [
+            models.Index(
+                fields=["organization", "created_at"],
+                name="org_dbevt_org_created",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"DeviceBindingEvent {self.action} {self.device_external_id}"
+
+    def delete(self, using=None, keep_parents=False):
+        raise HardDeleteViolation("DeviceBindingEvent must not be hard-deleted")
