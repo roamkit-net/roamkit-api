@@ -2,7 +2,11 @@
 
 from django.conf import settings
 from django.db.models import Prefetch
+from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import (
+    OpenApiExample,
+    OpenApiParameter,
     OpenApiResponse,
     extend_schema,
     extend_schema_view,
@@ -57,6 +61,13 @@ from core.openapi_serializers import (
 from shared.providers.factory import get_topup_provider
 
 
+def _truthy_query_flag(raw: str | None) -> bool:
+    """Parse a boolean query flag; missing/empty → False."""
+    if raw is None:
+        return False
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 class OwnedEsimMixin:
     """Scopes eSIM lookups to the authenticated owner (404 for others)."""
 
@@ -81,7 +92,38 @@ class OwnedEsimMixin:
         tags=["eSIM"],
         operation_id="esim_list",
         summary="List my eSIMs",
-        description="List eSIMs owned by the authenticated user.",
+        description=(
+            "List eSIMs owned by the authenticated user. "
+            "By default archived eSIMs are omitted "
+            "(``include_archived=false``). Filtering is applied before "
+            "pagination. ``archived_at`` is presentation-only and does not "
+            "affect lifecycle, top-up, billing, or provider sync."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name="include_archived",
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                default=False,
+                description=(
+                    "When false (default), exclude rows with ``archived_at`` "
+                    "set. When true, include archived eSIMs in the page."
+                ),
+                examples=[
+                    OpenApiExample(
+                        "Default — hide archived",
+                        value=False,
+                        description="GET /api/v1/me/esims/?include_archived=false",
+                    ),
+                    OpenApiExample(
+                        "Include archived",
+                        value=True,
+                        description="GET /api/v1/me/esims/?include_archived=true",
+                    ),
+                ],
+            ),
+        ],
         responses={
             200: OpenApiResponse(
                 response=EsimSerializer(many=True), description="Paginated eSIMs"
@@ -96,6 +138,12 @@ class EsimListView(OwnedEsimMixin, ListAPIView):
     """List eSIMs owned by the authenticated user."""
 
     serializer_class = EsimSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if not _truthy_query_flag(self.request.query_params.get("include_archived")):
+            queryset = queryset.filter(archived_at__isnull=True)
+        return queryset
 
 
 @extend_schema_view(
@@ -121,6 +169,7 @@ class EsimListView(OwnedEsimMixin, ListAPIView):
         description=(
             "Partially update an owned eSIM. Only ``note`` is writable. "
             "``note`` is user-local metadata and is never synchronized to Airalo. "
+            "``archived_at`` is not writable here — use POST archive/unarchive. "
             "Auth-gated like other My eSIM endpoints (no dedicated throttle). "
             "PUT is not supported."
         ),
@@ -144,6 +193,87 @@ class EsimDetailView(OwnedEsimMixin, RetrieveUpdateAPIView):
 
     serializer_class = EsimSerializer
     http_method_names = ["get", "head", "options", "patch"]
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["eSIM"],
+        operation_id="esim_archive",
+        summary="Archive my eSIM",
+        description=(
+            "Set ``archived_at`` on an owned eSIM (user-local visibility). "
+            "Idempotent: if already archived, returns 200 with the current "
+            "resource. Concurrent requests are safe; last committed write wins. "
+            "Does not change lifecycle ``status``, top-up eligibility, or "
+            "provider state. Always returns the full eSIM serializer body."
+        ),
+        request=None,
+        responses={
+            200: OpenApiResponse(
+                response=EsimSerializer,
+                description="eSIM (archived_at set)",
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="eSIM not found"
+            ),
+        },
+    ),
+)
+class EsimArchiveView(OwnedEsimMixin, GenericAPIView):
+    """Archive an owned eSIM (presentation-only ``archived_at``)."""
+
+    serializer_class = EsimSerializer
+    http_method_names = ["post", "head", "options"]
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        esim = self.get_object()
+        if esim.archived_at is None:
+            esim.archived_at = timezone.now()
+            esim.save(update_fields=["archived_at", "updated_at"])
+        return Response(self.get_serializer(esim).data)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["eSIM"],
+        operation_id="esim_unarchive",
+        summary="Unarchive my eSIM",
+        description=(
+            "Clear ``archived_at`` on an owned eSIM (user-local visibility). "
+            "Idempotent: if not archived, returns 200 with the current "
+            "resource. Concurrent requests are safe; last committed write wins. "
+            "Always returns the full eSIM serializer body."
+        ),
+        request=None,
+        responses={
+            200: OpenApiResponse(
+                response=EsimSerializer,
+                description="eSIM (archived_at cleared)",
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="eSIM not found"
+            ),
+        },
+    ),
+)
+class EsimUnarchiveView(OwnedEsimMixin, GenericAPIView):
+    """Unarchive an owned eSIM (clear presentation-only ``archived_at``)."""
+
+    serializer_class = EsimSerializer
+    http_method_names = ["post", "head", "options"]
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        esim = self.get_object()
+        if esim.archived_at is not None:
+            esim.archived_at = None
+            esim.save(update_fields=["archived_at", "updated_at"])
+        return Response(self.get_serializer(esim).data)
 
 
 @extend_schema_view(
