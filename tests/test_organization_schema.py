@@ -14,6 +14,7 @@ from apps.organizations.models import (
     Organization,
     OrganizationStatus,
 )
+from apps.organizations.services import create_organization
 
 User = get_user_model()
 
@@ -30,7 +31,7 @@ def other_user(db):
 
 @pytest.fixture
 def organization(db) -> Organization:
-    return Organization.objects.create(name="Fleet Ops")
+    return create_organization(name="Fleet Ops")
 
 
 @pytest.mark.django_db
@@ -147,8 +148,8 @@ def test_membership_revoke_via_status(organization: Organization, user):
 
 @pytest.mark.django_db
 def test_user_can_belong_to_multiple_organizations(user):
-    org_a = Organization.objects.create(name="Org A")
-    org_b = Organization.objects.create(name="Org B")
+    org_a = create_organization(name="Org A")
+    org_b = create_organization(name="Org B")
     Membership.objects.create(
         organization=org_a,
         user=user,

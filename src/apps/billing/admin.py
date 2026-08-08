@@ -66,6 +66,7 @@ class AssignPricingProfileForm(forms.Form):
 class AccountAdmin(admin.ModelAdmin):
     list_display = (
         "id",
+        "kind",
         "user",
         "balance",
         "pricing_profile",
@@ -74,9 +75,10 @@ class AccountAdmin(admin.ModelAdmin):
         "adjust_link",
     )
     search_fields = ("user__email", "id")
-    list_filter = ("pricing_profile",)
+    list_filter = ("kind", "pricing_profile")
     readonly_fields = (
         "id",
+        "kind",
         "balance",
         "version",
         "created_at",
