@@ -206,3 +206,30 @@ class DeviceBindingCreateSerializer(serializers.Serializer):
                 }
             )
         return attrs
+
+
+class DeviceStatusEsimSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    iccid = serializers.CharField()
+    status = serializers.CharField()
+
+
+class DeviceStatusUsageSerializer(serializers.Serializer):
+    data_remaining = serializers.CharField(allow_null=True)
+    data_used = serializers.CharField(allow_null=True)
+    expires_at = serializers.DateTimeField(allow_null=True)
+
+
+class DeviceStatusAutoTopupSerializer(serializers.Serializer):
+    enabled = serializers.BooleanField()
+
+
+class DeviceStatusSerializer(serializers.Serializer):
+    """Read-only UEM status contract (cached inventory/usage; no provider call)."""
+
+    device_external_id = serializers.CharField()
+    binding_status = serializers.CharField()
+    esim = DeviceStatusEsimSerializer()
+    usage = DeviceStatusUsageSerializer()
+    auto_topup = DeviceStatusAutoTopupSerializer()
+    checked_at = serializers.DateTimeField()

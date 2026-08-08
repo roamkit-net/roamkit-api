@@ -25,6 +25,7 @@ from apps.organizations.services.device_binding import (
     list_device_bindings,
     unbind_device_binding,
 )
+from apps.organizations.services.device_status import get_device_status
 from apps.organizations.services.invites import (
     accept_invite,
     create_invite,
@@ -45,6 +46,7 @@ __all__ = [
     "create_invite",
     "create_organization",
     "get_device_binding",
+    "get_device_status",
     "list_device_bindings",
     "list_pending_invites",
     "require_archive_org",

@@ -40,6 +40,7 @@ from apps.organizations.permissions import permissions_for_role
 from apps.organizations.serializers import (
     DeviceBindingCreateSerializer,
     DeviceBindingSerializer,
+    DeviceStatusSerializer,
     MembershipRoleUpdateSerializer,
     MembershipSerializer,
     OrganizationCreateSerializer,
@@ -61,6 +62,7 @@ from apps.organizations.services.device_binding import (
     list_device_bindings,
     unbind_device_binding,
 )
+from apps.organizations.services.device_status import get_device_status
 from apps.organizations.services.invites import (
     accept_invite,
     create_invite,
@@ -715,3 +717,46 @@ class OrganizationDeviceBindingUnbindView(OrganizationsAPIView):
             _map_device_binding_error(exc)
             raise
         return Response(DeviceBindingSerializer(binding).data)
+
+
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Organizations"],
+        operation_id="organization_device_status",
+        summary="Device status snapshot",
+        description=(
+            "Read-only UEM status for an **active** DeviceBinding looked up by "
+            "``device_external_id`` within ``organization_id``. Requires "
+            "``can_view``. ``device_external_id`` is a lookup key only — never a "
+            "credential. Usage comes from the eSIM cache (no provider refresh). "
+            "Unbound/replaced/cross-org bindings return 404. No BlackBerry sync."
+        ),
+        responses={
+            200: OpenApiResponse(response=DeviceStatusSerializer),
+            401: OpenApiResponse(response=ErrorDetailSerializer),
+            403: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+    ),
+)
+class OrganizationDeviceStatusView(OrganizationsAPIView):
+    def get(
+        self, request: Request, organization_id, device_external_id: str
+    ) -> Response:
+        snapshot = get_device_status(
+            request.user,
+            organization_id,
+            device_external_id=device_external_id,
+        )
+        return Response(
+            DeviceStatusSerializer(
+                {
+                    "device_external_id": snapshot.device_external_id,
+                    "binding_status": snapshot.binding_status,
+                    "esim": snapshot.esim,
+                    "usage": snapshot.usage,
+                    "auto_topup": snapshot.auto_topup,
+                    "checked_at": snapshot.checked_at,
+                }
+            ).data
+        )

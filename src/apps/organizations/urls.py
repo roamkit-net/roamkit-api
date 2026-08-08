@@ -7,6 +7,7 @@ from apps.organizations.views import (
     OrganizationDeviceBindingDetailView,
     OrganizationDeviceBindingListCreateView,
     OrganizationDeviceBindingUnbindView,
+    OrganizationDeviceStatusView,
     OrganizationInviteAcceptView,
     OrganizationInviteListCreateView,
     OrganizationInviteRevokeView,
@@ -73,5 +74,10 @@ urlpatterns = [
         "<uuid:organization_id>/device-bindings/<uuid:binding_id>/unbind/",
         OrganizationDeviceBindingUnbindView.as_view(),
         name="organization-device-binding-unbind",
+    ),
+    path(
+        "<uuid:organization_id>/devices/<str:device_external_id>/status/",
+        OrganizationDeviceStatusView.as_view(),
+        name="organization-device-status",
     ),
 ]

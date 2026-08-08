@@ -2111,6 +2111,55 @@ paths:
       summary: Unbind device binding
       tags:
       - Organizations
+  /api/v1/orgs/{organization_id}/devices/{device_external_id}/status/:
+    get:
+      description: Read-only UEM status for an **active** DeviceBinding looked up by ``device_external_id``
+        within ``organization_id``. Requires ``can_view``. ``device_external_id`` is a lookup key only
+        — never a credential. Usage comes from the eSIM cache (no provider refresh). Unbound/replaced/cross-org
+        bindings return 404. No BlackBerry sync.
+      operationId: organization_device_status
+      parameters:
+      - in: path
+        name: device_external_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceStatus'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Device status snapshot
+      tags:
+      - Organizations
   /api/v1/orgs/{organization_id}/invites/:
     get:
       description: Requires ``can_invite`` (owner/admin) on an **active** organization. Does not accept
@@ -2971,6 +3020,67 @@ components:
       - unbound
       - replaced
       type: string
+    DeviceStatus:
+      description: Read-only UEM status contract (cached inventory/usage; no provider call).
+      properties:
+        auto_topup:
+          $ref: '#/components/schemas/DeviceStatusAutoTopup'
+        binding_status:
+          type: string
+        checked_at:
+          format: date-time
+          type: string
+        device_external_id:
+          type: string
+        esim:
+          $ref: '#/components/schemas/DeviceStatusEsim'
+        usage:
+          $ref: '#/components/schemas/DeviceStatusUsage'
+      required:
+      - auto_topup
+      - binding_status
+      - checked_at
+      - device_external_id
+      - esim
+      - usage
+      type: object
+    DeviceStatusAutoTopup:
+      properties:
+        enabled:
+          type: boolean
+      required:
+      - enabled
+      type: object
+    DeviceStatusEsim:
+      properties:
+        iccid:
+          type: string
+        id:
+          type: integer
+        status:
+          type: string
+      required:
+      - iccid
+      - id
+      - status
+      type: object
+    DeviceStatusUsage:
+      properties:
+        data_remaining:
+          nullable: true
+          type: string
+        data_used:
+          nullable: true
+          type: string
+        expires_at:
+          format: date-time
+          nullable: true
+          type: string
+      required:
+      - data_remaining
+      - data_used
+      - expires_at
+      type: object
     ErrorDetail:
       description: 'Standard DRF ``{"detail": "..."}`` error body.'
       properties:
