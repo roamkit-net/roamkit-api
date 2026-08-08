@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from django.conf import settings
@@ -453,7 +453,8 @@ class AutoTopupService:
 
         ``active_until`` is an optional UTC exclusive lifetime bound (v3). Changing
         it alone does **not** clear ``cooldown_until`` (not part of trigger-config).
-        Past-date / resume validation for enabled policies is enforced in PR4 API.
+        Enabled + past ``active_until`` is rejected. Enabling clears ``schedule_ended``
+        (and other pause reasons) when the payload is otherwise valid.
         """
         from apps.esims.exceptions import TopupPackageNotFoundError
 
@@ -493,6 +494,15 @@ class AutoTopupService:
             and remaining_count is None
         ):
             raise ValueError("remaining_count is required for fixed_count")
+        if enabled and active_until is not None:
+            bound = active_until
+            if timezone.is_naive(bound):
+                bound = timezone.make_aware(bound, UTC)
+                active_until = bound
+            if timezone.now() >= bound:
+                raise ValueError(
+                    "active_until must be in the future when the policy is enabled"
+                )
 
         if Topup.objects.filter(esim=esim, status=Topup.Status.FULFILLING).exists():
             raise SpendInProgressError("Auto top-up purchase is still in progress")
@@ -506,6 +516,12 @@ class AutoTopupService:
             if existing is None:
                 if expected_version is not None:
                     raise LookupError("version_conflict")
+                if enabled:
+                    create_status = EsimAutoTopupPolicy.Status.ACTIVE
+                    create_reason = ""
+                else:
+                    create_status = EsimAutoTopupPolicy.Status.DISABLED
+                    create_reason = EsimAutoTopupPolicy.Reason.MANUAL_PAUSE
                 policy = EsimAutoTopupPolicy(
                     account=account,
                     esim=esim,
@@ -517,8 +533,8 @@ class AutoTopupService:
                     remaining_count=remaining_count,
                     active_until=active_until,
                     enabled=enabled,
-                    status=EsimAutoTopupPolicy.Status.ACTIVE,
-                    reason="",
+                    status=create_status,
+                    reason=create_reason,
                     version=0,
                 )
                 policy.save()
