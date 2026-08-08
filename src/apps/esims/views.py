@@ -53,6 +53,8 @@ from apps.orders.exceptions import (
     ProviderFulfillmentError,
     SpendInProgressError,
 )
+from apps.organizations.services import require_spend, resolve_account_context
+from apps.organizations.services.context import AccountContext
 from apps.pricing.presentation import pricing_account_for_request
 from core.openapi_serializers import (
     ErrorDetailSerializer,
@@ -405,10 +407,24 @@ class EsimEventsView(OwnedEsimMixin, GenericAPIView):
         operation_id="esim_topups_list",
         summary="List top-up packages",
         description=(
-            "List available top-up packages for an owned eSIM. "
+            "List available top-up packages for an eSIM owned by the resolved "
+            "Account (``Esim.account``). Omit ``organization_id`` for personal "
+            "Account; set the query param for team context. "
             "Additive pricing fields match catalog packages "
             "(``price_usd`` customer charge, ``list_price_usd`` provider list)."
         ),
+        parameters=[
+            OpenApiParameter(
+                name="organization_id",
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description=(
+                    "Team Account context via organization id. "
+                    "Never pass account_id."
+                ),
+            ),
+        ],
         responses={
             200: OpenApiResponse(
                 response=TopupPackageSerializer(many=True),
@@ -416,6 +432,10 @@ class EsimEventsView(OwnedEsimMixin, GenericAPIView):
             ),
             401: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="Membership not active",
             ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer, description="eSIM not found"
@@ -427,8 +447,11 @@ class EsimEventsView(OwnedEsimMixin, GenericAPIView):
         operation_id="esim_topups_purchase",
         summary="Purchase top-up",
         description=(
-            "Purchase a top-up package using prepaid credits. "
-            "Idempotent on ``idempotency_key``."
+            "Purchase a top-up using prepaid credits on the resolved Account. "
+            "Ownership requires ``Esim.account`` to match the context Account "
+            "(``Esim.user`` is not authz). Idempotent on ``idempotency_key``. "
+            "Omit ``organization_id`` for personal spend; set it for team spend "
+            "(requires ``can_spend``). Client ``account_id`` is rejected."
         ),
         request=PurchaseTopupSerializer,
         responses={
@@ -445,6 +468,10 @@ class EsimEventsView(OwnedEsimMixin, GenericAPIView):
                 response=InsufficientCreditsSerializer,
                 description="Insufficient credits",
             ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="Not allowed to spend in organization context",
+            ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer,
                 description="eSIM/package not found or billing disabled",
@@ -455,13 +482,26 @@ class EsimEventsView(OwnedEsimMixin, GenericAPIView):
         },
     ),
 )
-class EsimTopupsView(OwnedEsimMixin, GenericAPIView):
-    """List or purchase top-up packages for an owned eSIM."""
+class EsimTopupsView(GenericAPIView):
+    """List or purchase top-ups for an Account-owned eSIM (ADR 020)."""
 
     serializer_class = PurchaseTopupSerializer
+    queryset = Esim.objects.all()
+
+    def _esim_for_context(self, context: AccountContext) -> Esim:
+        """Load eSIM only when ``Esim.account`` matches resolved Account."""
+        try:
+            return Esim.objects.select_related("account", "order").get(
+                pk=self.kwargs["pk"],
+                account=context.account,
+            )
+        except Esim.DoesNotExist as exc:
+            raise NotFound(detail="Not found.") from exc
 
     def get(self, request: Request, *args, **kwargs) -> Response:
-        esim = self.get_object()
+        organization_id = request.query_params.get("organization_id") or None
+        context = resolve_account_context(request.user, organization_id=organization_id)
+        esim = self._esim_for_context(context)
         packages = TopupService(get_topup_provider()).list_topups(esim)
         serializer = TopupPackageSerializer(
             packages,
@@ -477,9 +517,15 @@ class EsimTopupsView(OwnedEsimMixin, GenericAPIView):
         if not settings.BILLING_ENABLED:
             raise NotFound(detail="Not found.")
 
-        esim = self.get_object()
         serializer = PurchaseTopupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
+        organization_id = serializer.validated_data.get("organization_id")
+        context = resolve_account_context(request.user, organization_id=organization_id)
+        if context.kind == "organization":
+            require_spend(context)
+
+        esim = self._esim_for_context(context)
 
         service = TopupService(get_topup_provider())
         try:
@@ -487,6 +533,7 @@ class EsimTopupsView(OwnedEsimMixin, GenericAPIView):
                 esim,
                 package_id=serializer.validated_data["package_id"],
                 idempotency_key=serializer.validated_data["idempotency_key"],
+                account=context.account,
             )
         except BillingDisabledError as exc:
             raise NotFound(detail="Not found.") from exc
