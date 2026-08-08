@@ -82,16 +82,12 @@ def _add_member(org, user, role: str) -> Membership:
 
 @pytest.fixture
 def org_a(owner):
-    org = create_organization(name="Org A")
-    _add_member(org, owner, MembershipRole.OWNER)
-    return org
+    return create_organization(name="Org A", actor=owner)
 
 
 @pytest.fixture
 def org_b(stranger):
-    org = create_organization(name="Org B")
-    _add_member(org, stranger, MembershipRole.OWNER)
-    return org
+    return create_organization(name="Org B", actor=stranger)
 
 
 # --- permissions matrix ---

@@ -1602,6 +1602,46 @@ paths:
       summary: List my organizations
       tags:
       - Organizations
+    post:
+      description: Creates an Organization with a new empty team Account and an active **owner** membership
+        for the caller. Does not convert or merge the caller's personal Account or move eSIM inventory.
+      operationId: organization_create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationCreateRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Organizations feature disabled
+      security:
+      - bearerAuth: []
+      summary: Create organization
+      tags:
+      - Organizations
   /api/v1/orgs/invites/accept/:
     post:
       description: Accept by single-use token. Email on the authenticated user must match the invite.
@@ -3471,6 +3511,15 @@ components:
       - permissions
       - status
       - updated_at
+      type: object
+    OrganizationCreateRequest:
+      properties:
+        name:
+          maxLength: 128
+          minLength: 1
+          type: string
+      required:
+      - name
       type: object
     OrganizationInvite:
       properties:
