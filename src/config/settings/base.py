@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "apps.billing",
     "apps.pricing",
     "apps.wallet",
+    "apps.organizations",
     "apps.catalog",
     "apps.orders",
     "apps.esims",
