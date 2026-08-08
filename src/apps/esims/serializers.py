@@ -233,10 +233,28 @@ class TopupPackageSerializer(serializers.Serializer):
 
 
 class PurchaseTopupSerializer(serializers.Serializer):
-    """Request body for POST /api/v1/me/esims/{id}/topups/."""
+    """Request body for POST /api/v1/me/esims/{id}/topups/.
+
+    Optional ``organization_id`` selects team Account context (ADR 020).
+    Client-supplied ``account_id`` is rejected — never an authz source.
+    Ownership is ``Esim.account == resolved Account`` (not ``Esim.user``).
+    """
 
     package_id = serializers.CharField(max_length=64)
     idempotency_key = serializers.CharField(max_length=128)
+    organization_id = serializers.UUIDField(required=False, allow_null=True)
+
+    def validate(self, attrs: dict) -> dict:
+        if "account_id" in self.initial_data:
+            raise serializers.ValidationError(
+                {
+                    "account_id": (
+                        "Client-supplied account_id is not accepted; "
+                        "use organization_id for team spend."
+                    )
+                }
+            )
+        return attrs
 
 
 class TopupSerializer(serializers.ModelSerializer):

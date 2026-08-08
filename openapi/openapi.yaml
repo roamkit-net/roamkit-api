@@ -1343,8 +1343,10 @@ paths:
       - eSIM
   /api/v1/me/esims/{id}/topups/:
     get:
-      description: List available top-up packages for an owned eSIM. Additive pricing fields match catalog
-        packages (``price_usd`` customer charge, ``list_price_usd`` provider list).
+      description: List available top-up packages for an eSIM owned by the resolved Account (``Esim.account``).
+        Omit ``organization_id`` for personal Account; set the query param for team context. Additive
+        pricing fields match catalog packages (``price_usd`` customer charge, ``list_price_usd`` provider
+        list).
       operationId: esim_topups_list
       parameters:
       - in: path
@@ -1352,6 +1354,12 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Never pass account_id.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '200':
           content:
@@ -1365,6 +1373,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Membership not active
         '404':
           content:
             application/json:
@@ -1377,7 +1391,10 @@ paths:
       tags:
       - eSIM
     post:
-      description: Purchase a top-up package using prepaid credits. Idempotent on ``idempotency_key``.
+      description: Purchase a top-up using prepaid credits on the resolved Account. Ownership requires
+        ``Esim.account`` to match the context Account (``Esim.user`` is not authz). Idempotent on ``idempotency_key``.
+        Omit ``organization_id`` for personal spend; set it for team spend (requires ``can_spend``). Client
+        ``account_id`` is rejected.
       operationId: esim_topups_purchase
       parameters:
       - in: path
@@ -1416,6 +1433,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/InsufficientCredits'
           description: Insufficient credits
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not allowed to spend in organization context
         '404':
           content:
             application/json:
@@ -4256,11 +4279,22 @@ components:
       - snapshot_schema_version
       type: object
     PurchaseTopupRequest:
-      description: Request body for POST /api/v1/me/esims/{id}/topups/.
+      description: 'Request body for POST /api/v1/me/esims/{id}/topups/.
+
+
+        Optional ``organization_id`` selects team Account context (ADR 020).
+
+        Client-supplied ``account_id`` is rejected — never an authz source.
+
+        Ownership is ``Esim.account == resolved Account`` (not ``Esim.user``).'
       properties:
         idempotency_key:
           maxLength: 128
           minLength: 1
+          type: string
+        organization_id:
+          format: uuid
+          nullable: true
           type: string
         package_id:
           maxLength: 64
