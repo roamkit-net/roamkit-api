@@ -24,6 +24,7 @@ from rest_framework.views import APIView
 from apps.organizations.exceptions import (
     InviteConflictError,
     InviteInvalidError,
+    LastOwnerError,
     NotAllowedError,
 )
 from apps.organizations.models import (
@@ -34,6 +35,7 @@ from apps.organizations.models import (
 )
 from apps.organizations.permissions import permissions_for_role
 from apps.organizations.serializers import (
+    MembershipRoleUpdateSerializer,
     MembershipSerializer,
     OrganizationCreateSerializer,
     OrganizationInviteAcceptResponseSerializer,
@@ -51,6 +53,10 @@ from apps.organizations.services.invites import (
     create_invite,
     list_pending_invites,
     revoke_invite,
+)
+from apps.organizations.services.membership import (
+    revoke_membership,
+    set_member_role,
 )
 from core.openapi_serializers import ErrorDetailSerializer
 
@@ -70,6 +76,26 @@ def _map_invite_error(exc: Exception) -> None:
     if isinstance(exc, NotAllowedError):
         raise PermissionDenied(detail=str(exc)) from exc
     raise exc
+
+
+def _map_membership_error(exc: Exception) -> None:
+    """Convert membership domain errors to DRF exceptions (never returns)."""
+    if isinstance(exc, LastOwnerError):
+        raise PermissionDenied(detail=str(exc)) from exc
+    if isinstance(exc, NotAllowedError):
+        raise PermissionDenied(detail=str(exc)) from exc
+    raise exc
+
+
+def _membership_for_org(*, organization_id, membership_id) -> Membership:
+    membership = (
+        Membership.objects.select_related("user", "organization")
+        .filter(pk=membership_id, organization_id=organization_id)
+        .first()
+    )
+    if membership is None:
+        raise NotFound(detail="Not found.")
+    return membership
 
 
 class OrganizationsAPIView(APIView):
@@ -254,6 +280,85 @@ class OrganizationMembersListView(OrganizationsAPIView, ListAPIView):
             .order_by("created_at")
         )
         return Response(MembershipSerializer(qs, many=True).data)
+
+
+@extend_schema_view(
+    patch=extend_schema(
+        tags=["Organizations"],
+        operation_id="organization_members_update_role",
+        summary="Update member role",
+        description=(
+            "Requires ``can_manage_members`` on an **active** organization. "
+            "Cannot assign ``owner`` (use transfer ownership) and cannot change "
+            "the current owner's role. Business rules live in "
+            "``set_member_role``."
+        ),
+        request=MembershipRoleUpdateSerializer,
+        responses={
+            200: OpenApiResponse(response=MembershipSerializer),
+            400: OpenApiResponse(response=ErrorDetailSerializer),
+            401: OpenApiResponse(response=ErrorDetailSerializer),
+            403: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+    ),
+)
+class OrganizationMemberDetailView(OrganizationsAPIView):
+    def patch(self, request: Request, organization_id, membership_id) -> Response:
+        body = MembershipRoleUpdateSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        membership = _membership_for_org(
+            organization_id=organization_id,
+            membership_id=membership_id,
+        )
+        try:
+            updated = set_member_role(
+                actor=request.user,
+                organization_id=organization_id,
+                target_user=membership.user,
+                role=body.validated_data["role"],
+            )
+        except (LastOwnerError, NotAllowedError) as exc:
+            _map_membership_error(exc)
+            raise
+        return Response(MembershipSerializer(updated).data)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Organizations"],
+        operation_id="organization_members_revoke",
+        summary="Revoke membership",
+        description=(
+            "Requires ``can_manage_members``. Cannot revoke the sole active "
+            "owner. Idempotent when already revoked. Business rules live in "
+            "``revoke_membership``."
+        ),
+        request=None,
+        responses={
+            200: OpenApiResponse(response=MembershipSerializer),
+            401: OpenApiResponse(response=ErrorDetailSerializer),
+            403: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+    ),
+)
+class OrganizationMemberRevokeView(OrganizationsAPIView):
+    def post(self, request: Request, organization_id, membership_id) -> Response:
+        membership = _membership_for_org(
+            organization_id=organization_id,
+            membership_id=membership_id,
+        )
+        try:
+            updated = revoke_membership(
+                actor=request.user,
+                organization_id=organization_id,
+                target_user=membership.user,
+            )
+        except (LastOwnerError, NotAllowedError) as exc:
+            _map_membership_error(exc)
+            raise
+        return Response(MembershipSerializer(updated).data)
 
 
 @extend_schema_view(

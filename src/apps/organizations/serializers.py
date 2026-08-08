@@ -7,10 +7,18 @@ from rest_framework import serializers
 from apps.organizations.models import (
     InviteRole,
     Membership,
+    MembershipRole,
     Organization,
     OrganizationInvite,
 )
 from apps.organizations.permissions import permissions_for_role
+
+# Roles assignable via PATCH members (owner only via transfer_ownership).
+MANAGED_MEMBERSHIP_ROLES = (
+    (MembershipRole.ADMIN, "Admin"),
+    (MembershipRole.MEMBER, "Member"),
+    (MembershipRole.VIEWER, "Viewer"),
+)
 
 
 class OrgPermissionsSerializer(serializers.Serializer):
@@ -76,6 +84,10 @@ class MembershipSerializer(serializers.ModelSerializer):
             "updated_at",
         )
         read_only_fields = fields
+
+
+class MembershipRoleUpdateSerializer(serializers.Serializer):
+    role = serializers.ChoiceField(choices=MANAGED_MEMBERSHIP_ROLES)
 
 
 class OrganizationInviteSerializer(serializers.ModelSerializer):

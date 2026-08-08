@@ -1920,6 +1920,113 @@ paths:
       summary: List organization members
       tags:
       - Organizations
+  /api/v1/orgs/{organization_id}/members/{membership_id}/:
+    patch:
+      description: Requires ``can_manage_members`` on an **active** organization. Cannot assign ``owner``
+        (use transfer ownership) and cannot change the current owner's role. Business rules live in ``set_member_role``.
+      operationId: organization_members_update_role
+      parameters:
+      - in: path
+        name: membership_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedMembershipRoleUpdateRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Membership'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Update member role
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/members/{membership_id}/revoke/:
+    post:
+      description: Requires ``can_manage_members``. Cannot revoke the sole active owner. Idempotent when
+        already revoked. Business rules live in ``revoke_membership``.
+      operationId: organization_members_revoke
+      parameters:
+      - in: path
+        name: membership_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Membership'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Revoke membership
+      tags:
+      - Organizations
   /api/v1/packages/:
     get:
       description: 'List active packages synced from external providers. Additive pricing fields: ``price_usd``
@@ -3972,6 +4079,11 @@ components:
             (favorite_at, pinned_at, hidden_at) belongs on the same model without provider sync.
           maxLength: 255
           type: string
+      type: object
+    PatchedMembershipRoleUpdateRequest:
+      properties:
+        role:
+          $ref: '#/components/schemas/InviteRoleEnum'
       type: object
     PricingPreviewRequestRequest:
       description: Preview inputs — package catalog id and/or explicit prices for topup.
