@@ -1098,10 +1098,6 @@ paths:
         '200':
           content:
             application/json:
-              examples:
-                Archive:
-                  description: POST /api/v1/me/esims/{id}/archive/
-                  value: null
               schema:
                 $ref: '#/components/schemas/Esim'
           description: eSIM (archived_at set)
@@ -1450,10 +1446,6 @@ paths:
         '200':
           content:
             application/json:
-              examples:
-                Unarchive:
-                  description: POST /api/v1/me/esims/{id}/unarchive/
-                  value: null
               schema:
                 $ref: '#/components/schemas/Esim'
           description: eSIM (archived_at cleared)

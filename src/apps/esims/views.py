@@ -208,13 +208,6 @@ class EsimDetailView(OwnedEsimMixin, RetrieveUpdateAPIView):
             "provider state. Always returns the full eSIM serializer body."
         ),
         request=None,
-        examples=[
-            OpenApiExample(
-                "Archive",
-                description="POST /api/v1/me/esims/{id}/archive/",
-                value=None,
-            ),
-        ],
         responses={
             200: OpenApiResponse(
                 response=EsimSerializer,
@@ -255,13 +248,6 @@ class EsimArchiveView(OwnedEsimMixin, GenericAPIView):
             "Always returns the full eSIM serializer body."
         ),
         request=None,
-        examples=[
-            OpenApiExample(
-                "Unarchive",
-                description="POST /api/v1/me/esims/{id}/unarchive/",
-                value=None,
-            ),
-        ],
         responses={
             200: OpenApiResponse(
                 response=EsimSerializer,
