@@ -15,3 +15,15 @@ class LastOwnerError(MembershipInvariantError):
 
 class NotAllowedError(OrganizationError):
     """Actor lacks permission for the requested membership action."""
+
+
+class InviteError(OrganizationError):
+    """Base invite domain error."""
+
+
+class InviteConflictError(InviteError):
+    """Invite conflicts with an existing membership or active invite rule."""
+
+
+class InviteInvalidError(InviteError):
+    """Invite token is invalid, expired, revoked, or email mismatch."""

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from apps.organizations.models import Membership, Organization
+from apps.organizations.models import (
+    InviteRole,
+    Membership,
+    Organization,
+    OrganizationInvite,
+)
 from apps.organizations.permissions import permissions_for_role
 
 
@@ -67,3 +72,54 @@ class MembershipSerializer(serializers.ModelSerializer):
             "updated_at",
         )
         read_only_fields = fields
+
+
+class OrganizationInviteSerializer(serializers.ModelSerializer):
+    invited_by_email = serializers.EmailField(
+        source="invited_by.email",
+        read_only=True,
+    )
+
+    class Meta:
+        model = OrganizationInvite
+        fields = (
+            "id",
+            "organization_id",
+            "email",
+            "email_normalized",
+            "role",
+            "status",
+            "expires_at",
+            "invited_by_email",
+            "accepted_at",
+            "revoked_at",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+
+class OrganizationInviteCreateSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    role = serializers.ChoiceField(
+        choices=InviteRole.choices,
+        default=InviteRole.MEMBER,
+    )
+
+
+class OrganizationInviteCreateResponseSerializer(serializers.Serializer):
+    invite = OrganizationInviteSerializer()
+    token = serializers.CharField(
+        help_text="Single-use invite token; shown only at create/refresh time."
+    )
+    created = serializers.BooleanField()
+
+
+class OrganizationInviteAcceptSerializer(serializers.Serializer):
+    token = serializers.CharField()
+
+
+class OrganizationInviteAcceptResponseSerializer(serializers.Serializer):
+    membership = MembershipSerializer()
+    organization_id = serializers.UUIDField()
+    already_accepted = serializers.BooleanField()

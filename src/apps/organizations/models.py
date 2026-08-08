@@ -200,3 +200,119 @@ class Membership(models.Model):
         raise HardDeleteViolation(
             "Membership must not be hard-deleted; use status transitions"
         )
+
+
+class InviteStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    ACCEPTED = "accepted", "Accepted"
+    REVOKED = "revoked", "Revoked"
+    EXPIRED = "expired", "Expired"
+
+
+class InviteRole(models.TextChoices):
+    """Roles that may be granted via invite (owner is never inviteable)."""
+
+    ADMIN = "admin", "Admin"
+    MEMBER = "member", "Member"
+    VIEWER = "viewer", "Viewer"
+
+
+class OrganizationInvite(models.Model):
+    """Email invite into an Organization (ADR 020).
+
+    Token plaintext is returned only at create/rotate time; only ``token_hash``
+    is stored. Accept must not merge wallets or move eSIM inventory.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="invites",
+    )
+    email = models.EmailField(help_text="Invitee email as entered (display).")
+    email_normalized = models.EmailField(
+        db_index=True,
+        help_text="Trimmed lowercase email for uniqueness / match.",
+    )
+    role = models.CharField(
+        max_length=16,
+        choices=InviteRole.choices,
+        default=InviteRole.MEMBER,
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=InviteStatus.choices,
+        default=InviteStatus.PENDING,
+        db_index=True,
+    )
+    token_hash = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField()
+    invited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="organization_invites_sent",
+    )
+    accepted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="organization_invites_accepted",
+    )
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = SoftLifecycleManager()
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "organization invite"
+        verbose_name_plural = "organization invites"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "email_normalized"],
+                condition=Q(status=InviteStatus.PENDING),
+                name="organizations_invite_one_pending_per_email",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    role__in=[
+                        InviteRole.ADMIN,
+                        InviteRole.MEMBER,
+                        InviteRole.VIEWER,
+                    ]
+                ),
+                name="organizations_invite_role_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    status__in=[
+                        InviteStatus.PENDING,
+                        InviteStatus.ACCEPTED,
+                        InviteStatus.REVOKED,
+                        InviteStatus.EXPIRED,
+                    ]
+                ),
+                name="organizations_invite_status_valid",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["organization", "status"],
+                name="organizations_inv_org_status",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"Invite {self.email_normalized} @ {self.organization_id} "
+            f"({self.role}/{self.status})"
+        )
+
+    def delete(self, using=None, keep_parents=False):
+        raise HardDeleteViolation(
+            "OrganizationInvite must not be hard-deleted; use status transitions"
+        )
