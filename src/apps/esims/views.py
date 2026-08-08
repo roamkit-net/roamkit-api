@@ -69,12 +69,22 @@ def _truthy_query_flag(raw: str | None) -> bool:
 
 
 class OwnedEsimMixin:
-    """Scopes eSIM lookups to the authenticated owner (404 for others)."""
+    """Scopes eSIM lookups to the authenticated inventory owner (404 for others).
+
+    Inventory SoT is ``Esim.account`` (ADR 020). Dual-read also matches legacy
+    ``Esim.user`` during cutover. ``assigned_user`` is never used for authz.
+    """
 
     def get_queryset(self):
+        from django.db.models import Q
+
+        from apps.billing.services import ensure_billing_account
+
+        account = ensure_billing_account(self.request.user)
         return (
-            Esim.objects.filter(user=self.request.user)
-            .select_related("order")
+            Esim.objects.filter(Q(account=account) | Q(user=self.request.user))
+            .select_related("order", "account")
+            .distinct()
             .prefetch_related(
                 Prefetch(
                     "lifecycle_events",

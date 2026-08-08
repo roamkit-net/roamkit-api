@@ -82,12 +82,3 @@ def test_create_organization_does_not_touch_personal_account(user):
     assert personal.kind == AccountKind.PERSONAL
     assert personal.pk != org.account_id
     assert personal.balance == Decimal("0")
-
-
-def test_no_esim_account_field_in_this_pr():
-    """Inventory ownership migration is out of scope for Account.kind PR."""
-    from apps.esims.models import Esim
-
-    concrete_fields = {f.name for f in Esim._meta.fields}
-    assert "user" in concrete_fields
-    assert "account" not in concrete_fields
