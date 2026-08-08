@@ -3,6 +3,7 @@
 from apps.organizations.services.account_binding import create_organization
 from apps.organizations.services.authz import (
     require_archive_org,
+    require_assign_esim,
     require_invite,
     require_manage_members,
     require_permission,
@@ -37,6 +38,7 @@ __all__ = [
     "create_organization",
     "list_pending_invites",
     "require_archive_org",
+    "require_assign_esim",
     "require_invite",
     "require_manage_members",
     "require_org_mutation",

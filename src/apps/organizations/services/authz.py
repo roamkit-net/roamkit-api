@@ -19,7 +19,7 @@ def require_view(context: AccountContext) -> None:
 
 
 def require_spend(context: AccountContext) -> None:
-    """Spend gate for team Account context (orders; top-ups later).
+    """Spend gate for team Account context (orders / top-ups / auto-topup).
 
     Requires active Organization + ``can_spend`` (owner/admin/member).
     Personal context has no org permissions object — callers must only invoke
@@ -27,6 +27,12 @@ def require_spend(context: AccountContext) -> None:
     """
     require_org_mutation(context)
     require_permission(context, "can_spend")
+
+
+def require_assign_esim(context: AccountContext) -> None:
+    """Inventory presentation mutations (note / archive / lifecycle events)."""
+    require_org_mutation(context)
+    require_permission(context, "can_assign_esim")
 
 
 def require_manage_members(context: AccountContext) -> None:

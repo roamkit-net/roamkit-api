@@ -959,8 +959,9 @@ paths:
       - Catalog
   /api/v1/me/esims/:
     get:
-      description: List eSIMs owned by the authenticated user. By default archived eSIMs are omitted (``include_archived=false``).
-        Filtering is applied before pagination. ``archived_at`` is presentation-only and does not affect
+      description: List eSIMs owned by the resolved Account (``Esim.account``). Omit ``organization_id``
+        for personal Account; set it for team inventory (requires ``can_view``). By default archived eSIMs
+        are omitted (``include_archived=false``). ``archived_at`` is presentation-only and does not affect
         lifecycle, top-up, billing, or provider sync.
       operationId: esim_list
       parameters:
@@ -980,6 +981,13 @@ paths:
         schema:
           default: false
           type: boolean
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       - description: A page number within the paginated result set.
         in: query
         name: page
@@ -999,6 +1007,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Membership not active / cannot view
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Organization not found
       security:
       - bearerAuth: []
       summary: List my eSIMs
@@ -1006,7 +1026,7 @@ paths:
       - eSIM
   /api/v1/me/esims/{id}/:
     get:
-      description: Retrieve a single eSIM owned by the authenticated user.
+      description: Retrieve a single eSIM owned by the resolved Account (``Esim.account``).
       operationId: esim_retrieve
       parameters:
       - in: path
@@ -1014,6 +1034,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '200':
           content:
@@ -1027,6 +1054,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Membership not active / cannot view
         '404':
           content:
             application/json:
@@ -1039,9 +1072,9 @@ paths:
       tags:
       - eSIM
     patch:
-      description: Partially update an owned eSIM. Only ``note`` is writable. ``note`` is user-local metadata
+      description: Partially update an owned eSIM. Only ``note`` is writable. ``note`` is local metadata
         and is never synchronized to Airalo. ``archived_at`` is not writable here — use POST archive/unarchive.
-        Auth-gated like other My eSIM endpoints (no dedicated throttle). PUT is not supported.
+        Team context requires ``can_assign_esim`` and an active Organization. PUT is not supported.
       operationId: esim_partial_update
       parameters:
       - in: path
@@ -1049,6 +1082,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       requestBody:
         content:
           application/json:
@@ -1073,6 +1113,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not allowed
         '404':
           content:
             application/json:
@@ -1086,10 +1132,10 @@ paths:
       - eSIM
   /api/v1/me/esims/{id}/archive/:
     post:
-      description: 'Set ``archived_at`` on an owned eSIM (user-local visibility). Idempotent: if already
+      description: 'Set ``archived_at`` on an owned eSIM (presentation visibility). Idempotent: if already
         archived, returns 200 with the current resource. Concurrent requests are safe; last committed
-        write wins. Does not change lifecycle ``status``, top-up eligibility, or provider state. Always
-        returns the full eSIM serializer body.'
+        write wins. Does not change lifecycle ``status``, top-up eligibility, or provider state. Team
+        context requires ``can_assign_esim`` and an active Organization.'
       operationId: esim_archive
       parameters:
       - in: path
@@ -1097,6 +1143,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '200':
           content:
@@ -1110,6 +1163,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not allowed
         '404':
           content:
             application/json:
@@ -1124,7 +1183,7 @@ paths:
   /api/v1/me/esims/{id}/auto-topup/:
     delete:
       description: Delete the auto top-up policy. Requires matching ``If-Match`` version (or ``version``
-        query param).
+        query param). Team context requires ``can_spend`` and an active Organization.
       operationId: esim_auto_topup_destroy
       parameters:
       - in: path
@@ -1132,6 +1191,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '204':
           description: Policy deleted
@@ -1141,6 +1207,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not allowed
         '404':
           content:
             application/json:
@@ -1159,7 +1231,7 @@ paths:
       tags:
       - eSIM
     get:
-      description: Return the auto top-up policy for an owned eSIM, if any.
+      description: Return the auto top-up policy for an eSIM owned by the resolved Account, if any.
       operationId: esim_auto_topup_retrieve
       parameters:
       - in: path
@@ -1167,6 +1239,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '200':
           content:
@@ -1180,6 +1259,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Membership not active / cannot view
         '404':
           content:
             application/json:
@@ -1194,7 +1279,9 @@ paths:
     put:
       description: 'Upsert auto top-up policy (v2: ``expiry_enabled`` + ``usage_mode``). ``package_id``
         must be in Available top-ups. Optimistic concurrency via body ``version`` and/or ``If-Match``
-        header (required when updating). Returns 409 if a purchase for this eSIM is still in progress.'
+        header (required when updating). Policy is bound to the resolved Account. Team context requires
+        ``can_spend`` and an active Organization. Returns 409 if a purchase for this eSIM is still in
+        progress.'
       operationId: esim_auto_topup_upsert
       parameters:
       - in: path
@@ -1202,6 +1289,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       requestBody:
         content:
           application/json:
@@ -1238,7 +1332,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
-          description: Rollout gate denied
+          description: Rollout gate denied or spend not allowed
         '404':
           content:
             application/json:
@@ -1258,7 +1352,7 @@ paths:
       - eSIM
   /api/v1/me/esims/{id}/events/:
     get:
-      description: Chronological install / lifecycle trail for an owned eSIM.
+      description: Chronological install / lifecycle trail for an eSIM owned by the resolved Account.
       operationId: esim_events_list
       parameters:
       - in: path
@@ -1266,6 +1360,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '200':
           content:
@@ -1279,6 +1380,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Membership not active / cannot view
         '404':
           content:
             application/json:
@@ -1292,6 +1399,7 @@ paths:
       - eSIM
     post:
       description: Record a client install/telemetry event. Idempotent on ``idempotency_key`` per eSIM.
+        Team context requires ``can_assign_esim`` and an active Organization.
       operationId: esim_events_create
       parameters:
       - in: path
@@ -1299,6 +1407,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       requestBody:
         content:
           application/json:
@@ -1330,6 +1445,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not allowed
         '404':
           content:
             application/json:
@@ -1354,7 +1475,8 @@ paths:
         required: true
         schema:
           type: integer
-      - description: Team Account context via organization id. Never pass account_id.
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
         in: query
         name: organization_id
         schema:
@@ -1458,9 +1580,9 @@ paths:
       - eSIM
   /api/v1/me/esims/{id}/unarchive/:
     post:
-      description: 'Clear ``archived_at`` on an owned eSIM (user-local visibility). Idempotent: if not
-        archived, returns 200 with the current resource. Concurrent requests are safe; last committed
-        write wins. Always returns the full eSIM serializer body.'
+      description: 'Clear ``archived_at`` on an owned eSIM (presentation visibility). Idempotent: if not
+        archived, returns 200 with the current resource. Team context requires ``can_assign_esim`` and
+        an active Organization.'
       operationId: esim_unarchive
       parameters:
       - in: path
@@ -1468,6 +1590,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '200':
           content:
@@ -1481,6 +1610,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not allowed
         '404':
           content:
             application/json:
@@ -1494,7 +1629,7 @@ paths:
       - eSIM
   /api/v1/me/esims/{id}/usage/:
     get:
-      description: Fetch live usage for an owned eSIM and refresh the cache.
+      description: Fetch live usage for an eSIM owned by the resolved Account and refresh the cache.
       operationId: esim_usage
       parameters:
       - in: path
@@ -1502,6 +1637,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '200':
           content:
@@ -1515,6 +1657,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Membership not active / cannot view
         '404':
           content:
             application/json:
