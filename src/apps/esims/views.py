@@ -26,7 +26,6 @@ from apps.billing.exceptions import (
     InsufficientFundsError,
     InvalidAmountError,
 )
-from apps.billing.services import ensure_billing_account
 from apps.esims.exceptions import (
     TopupPackageNotFoundError,
     UnknownLifecycleEventTypeError,
@@ -53,7 +52,12 @@ from apps.orders.exceptions import (
     ProviderFulfillmentError,
     SpendInProgressError,
 )
-from apps.organizations.services import require_spend, resolve_account_context
+from apps.organizations.services import (
+    require_assign_esim,
+    require_spend,
+    require_view,
+    resolve_account_context,
+)
 from apps.organizations.services.context import AccountContext
 from apps.pricing.presentation import pricing_account_for_request
 from core.openapi_serializers import (
@@ -61,6 +65,18 @@ from core.openapi_serializers import (
     InsufficientCreditsSerializer,
 )
 from shared.providers.factory import get_topup_provider
+
+ORGANIZATION_CONTEXT_PARAMETER = OpenApiParameter(
+    name="organization_id",
+    type=OpenApiTypes.UUID,
+    location=OpenApiParameter.QUERY,
+    required=False,
+    description=(
+        "Team Account context via organization id. Omit for personal Account. "
+        "Authorization uses ``Esim.account`` only — never client ``account_id`` "
+        "or ``Esim.user``."
+    ),
+)
 
 
 def _truthy_query_flag(raw: str | None) -> bool:
@@ -71,22 +87,46 @@ def _truthy_query_flag(raw: str | None) -> bool:
 
 
 class OwnedEsimMixin:
-    """Scopes eSIM lookups to the authenticated inventory owner (404 for others).
+    """Scopes eSIM lookups to the resolved Account (``Esim.account`` only).
 
-    Inventory SoT is ``Esim.account`` (ADR 020). Dual-read also matches legacy
-    ``Esim.user`` during cutover. ``assigned_user`` is never used for authz.
+    Optional query ``organization_id`` selects team context (ADR 020).
+    ``Esim.user`` / ``assigned_user`` are never used for authz.
     """
 
+    def resolve_inventory_context(self) -> AccountContext:
+        cached = getattr(self, "_account_context", None)
+        if cached is not None:
+            return cached
+        organization_id = self.request.query_params.get("organization_id") or None
+        if organization_id == "":
+            organization_id = None
+        context = resolve_account_context(
+            self.request.user, organization_id=organization_id
+        )
+        if context.kind == "organization":
+            require_view(context)
+        self._account_context = context
+        return context
+
+    def require_inventory_mutation(self) -> AccountContext:
+        """Gate presentation mutations (note / archive / lifecycle events)."""
+        context = self.resolve_inventory_context()
+        if context.kind == "organization":
+            require_assign_esim(context)
+        return context
+
+    def require_spend_mutation(self) -> AccountContext:
+        """Gate team spend mutations (auto-topup policy write/delete)."""
+        context = self.resolve_inventory_context()
+        if context.kind == "organization":
+            require_spend(context)
+        return context
+
     def get_queryset(self):
-        from django.db.models import Q
-
-        from apps.billing.services import ensure_billing_account
-
-        account = ensure_billing_account(self.request.user)
+        context = self.resolve_inventory_context()
         return (
-            Esim.objects.filter(Q(account=account) | Q(user=self.request.user))
+            Esim.objects.filter(account=context.account)
             .select_related("order", "account")
-            .distinct()
             .prefetch_related(
                 Prefetch(
                     "lifecycle_events",
@@ -105,13 +145,15 @@ class OwnedEsimMixin:
         operation_id="esim_list",
         summary="List my eSIMs",
         description=(
-            "List eSIMs owned by the authenticated user. "
-            "By default archived eSIMs are omitted "
-            "(``include_archived=false``). Filtering is applied before "
-            "pagination. ``archived_at`` is presentation-only and does not "
-            "affect lifecycle, top-up, billing, or provider sync."
+            "List eSIMs owned by the resolved Account (``Esim.account``). "
+            "Omit ``organization_id`` for personal Account; set it for team "
+            "inventory (requires ``can_view``). By default archived eSIMs are "
+            "omitted (``include_archived=false``). ``archived_at`` is "
+            "presentation-only and does not affect lifecycle, top-up, billing, "
+            "or provider sync."
         ),
         parameters=[
+            ORGANIZATION_CONTEXT_PARAMETER,
             OpenApiParameter(
                 name="include_archived",
                 type=OpenApiTypes.BOOL,
@@ -143,11 +185,18 @@ class OwnedEsimMixin:
             401: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Authentication required"
             ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="Membership not active / cannot view",
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Organization not found"
+            ),
         },
     ),
 )
 class EsimListView(OwnedEsimMixin, ListAPIView):
-    """List eSIMs owned by the authenticated user."""
+    """List eSIMs for the resolved Account context."""
 
     serializer_class = EsimSerializer
 
@@ -163,11 +212,19 @@ class EsimListView(OwnedEsimMixin, ListAPIView):
         tags=["eSIM"],
         operation_id="esim_retrieve",
         summary="Retrieve my eSIM",
-        description="Retrieve a single eSIM owned by the authenticated user.",
+        description=(
+            "Retrieve a single eSIM owned by the resolved Account "
+            "(``Esim.account``)."
+        ),
+        parameters=[ORGANIZATION_CONTEXT_PARAMETER],
         responses={
             200: OpenApiResponse(response=EsimSerializer, description="eSIM"),
             401: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="Membership not active / cannot view",
             ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer, description="eSIM not found"
@@ -180,11 +237,12 @@ class EsimListView(OwnedEsimMixin, ListAPIView):
         summary="Update my eSIM note",
         description=(
             "Partially update an owned eSIM. Only ``note`` is writable. "
-            "``note`` is user-local metadata and is never synchronized to Airalo. "
+            "``note`` is local metadata and is never synchronized to Airalo. "
             "``archived_at`` is not writable here — use POST archive/unarchive. "
-            "Auth-gated like other My eSIM endpoints (no dedicated throttle). "
+            "Team context requires ``can_assign_esim`` and an active Organization. "
             "PUT is not supported."
         ),
+        parameters=[ORGANIZATION_CONTEXT_PARAMETER],
         request=EsimSerializer,
         responses={
             200: OpenApiResponse(response=EsimSerializer, description="eSIM"),
@@ -193,6 +251,9 @@ class EsimListView(OwnedEsimMixin, ListAPIView):
             ),
             401: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Not allowed"
             ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer, description="eSIM not found"
@@ -206,6 +267,10 @@ class EsimDetailView(OwnedEsimMixin, RetrieveUpdateAPIView):
     serializer_class = EsimSerializer
     http_method_names = ["get", "head", "options", "patch"]
 
+    def partial_update(self, request: Request, *args, **kwargs) -> Response:
+        self.require_inventory_mutation()
+        return super().partial_update(request, *args, **kwargs)
+
 
 @extend_schema_view(
     post=extend_schema(
@@ -213,12 +278,14 @@ class EsimDetailView(OwnedEsimMixin, RetrieveUpdateAPIView):
         operation_id="esim_archive",
         summary="Archive my eSIM",
         description=(
-            "Set ``archived_at`` on an owned eSIM (user-local visibility). "
+            "Set ``archived_at`` on an owned eSIM (presentation visibility). "
             "Idempotent: if already archived, returns 200 with the current "
             "resource. Concurrent requests are safe; last committed write wins. "
             "Does not change lifecycle ``status``, top-up eligibility, or "
-            "provider state. Always returns the full eSIM serializer body."
+            "provider state. Team context requires ``can_assign_esim`` and an "
+            "active Organization."
         ),
+        parameters=[ORGANIZATION_CONTEXT_PARAMETER],
         request=None,
         responses={
             200: OpenApiResponse(
@@ -227,6 +294,9 @@ class EsimDetailView(OwnedEsimMixin, RetrieveUpdateAPIView):
             ),
             401: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Not allowed"
             ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer, description="eSIM not found"
@@ -241,6 +311,7 @@ class EsimArchiveView(OwnedEsimMixin, GenericAPIView):
     http_method_names = ["post", "head", "options"]
 
     def post(self, request: Request, *args, **kwargs) -> Response:
+        self.require_inventory_mutation()
         esim = self.get_object()
         if esim.archived_at is None:
             esim.archived_at = timezone.now()
@@ -254,11 +325,12 @@ class EsimArchiveView(OwnedEsimMixin, GenericAPIView):
         operation_id="esim_unarchive",
         summary="Unarchive my eSIM",
         description=(
-            "Clear ``archived_at`` on an owned eSIM (user-local visibility). "
+            "Clear ``archived_at`` on an owned eSIM (presentation visibility). "
             "Idempotent: if not archived, returns 200 with the current "
-            "resource. Concurrent requests are safe; last committed write wins. "
-            "Always returns the full eSIM serializer body."
+            "resource. Team context requires ``can_assign_esim`` and an active "
+            "Organization."
         ),
+        parameters=[ORGANIZATION_CONTEXT_PARAMETER],
         request=None,
         responses={
             200: OpenApiResponse(
@@ -267,6 +339,9 @@ class EsimArchiveView(OwnedEsimMixin, GenericAPIView):
             ),
             401: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Not allowed"
             ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer, description="eSIM not found"
@@ -281,6 +356,7 @@ class EsimUnarchiveView(OwnedEsimMixin, GenericAPIView):
     http_method_names = ["post", "head", "options"]
 
     def post(self, request: Request, *args, **kwargs) -> Response:
+        self.require_inventory_mutation()
         esim = self.get_object()
         if esim.archived_at is not None:
             esim.archived_at = None
@@ -293,13 +369,21 @@ class EsimUnarchiveView(OwnedEsimMixin, GenericAPIView):
         tags=["eSIM"],
         operation_id="esim_usage",
         summary="eSIM usage",
-        description="Fetch live usage for an owned eSIM and refresh the cache.",
+        description=(
+            "Fetch live usage for an eSIM owned by the resolved Account and "
+            "refresh the cache."
+        ),
+        parameters=[ORGANIZATION_CONTEXT_PARAMETER],
         responses={
             200: OpenApiResponse(
                 response=UsageSerializer, description="Usage snapshot"
             ),
             401: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="Membership not active / cannot view",
             ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer, description="eSIM not found"
@@ -323,7 +407,11 @@ class EsimUsageView(OwnedEsimMixin, GenericAPIView):
         tags=["eSIM"],
         operation_id="esim_events_list",
         summary="List eSIM lifecycle events",
-        description="Chronological install / lifecycle trail for an owned eSIM.",
+        description=(
+            "Chronological install / lifecycle trail for an eSIM owned by the "
+            "resolved Account."
+        ),
+        parameters=[ORGANIZATION_CONTEXT_PARAMETER],
         responses={
             200: OpenApiResponse(
                 response=LifecycleEventSerializer(many=True),
@@ -331,6 +419,10 @@ class EsimUsageView(OwnedEsimMixin, GenericAPIView):
             ),
             401: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="Membership not active / cannot view",
             ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer, description="eSIM not found"
@@ -343,8 +435,10 @@ class EsimUsageView(OwnedEsimMixin, GenericAPIView):
         summary="Record eSIM lifecycle event",
         description=(
             "Record a client install/telemetry event. Idempotent on "
-            "``idempotency_key`` per eSIM."
+            "``idempotency_key`` per eSIM. Team context requires "
+            "``can_assign_esim`` and an active Organization."
         ),
+        parameters=[ORGANIZATION_CONTEXT_PARAMETER],
         request=LifecycleEventCreateSerializer,
         responses={
             200: OpenApiResponse(
@@ -359,6 +453,9 @@ class EsimUsageView(OwnedEsimMixin, GenericAPIView):
             ),
             401: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Not allowed"
             ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer, description="eSIM not found"
@@ -375,6 +472,7 @@ class EsimEventsView(OwnedEsimMixin, GenericAPIView):
         return Response(LifecycleEventSerializer(events, many=True).data)
 
     def post(self, request: Request, *args, **kwargs) -> Response:
+        self.require_inventory_mutation()
         esim = self.get_object()
         serializer = LifecycleEventCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -413,18 +511,7 @@ class EsimEventsView(OwnedEsimMixin, GenericAPIView):
             "Additive pricing fields match catalog packages "
             "(``price_usd`` customer charge, ``list_price_usd`` provider list)."
         ),
-        parameters=[
-            OpenApiParameter(
-                name="organization_id",
-                type=OpenApiTypes.UUID,
-                location=OpenApiParameter.QUERY,
-                required=False,
-                description=(
-                    "Team Account context via organization id. "
-                    "Never pass account_id."
-                ),
-            ),
-        ],
+        parameters=[ORGANIZATION_CONTEXT_PARAMETER],
         responses={
             200: OpenApiResponse(
                 response=TopupPackageSerializer(many=True),
@@ -608,13 +695,21 @@ def _resolve_expected_version(
         tags=["eSIM"],
         operation_id="esim_auto_topup_retrieve",
         summary="Get auto top-up policy",
-        description="Return the auto top-up policy for an owned eSIM, if any.",
+        description=(
+            "Return the auto top-up policy for an eSIM owned by the resolved "
+            "Account, if any."
+        ),
+        parameters=[ORGANIZATION_CONTEXT_PARAMETER],
         responses={
             200: OpenApiResponse(
                 response=AutoTopupPolicySerializer, description="Policy"
             ),
             401: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="Membership not active / cannot view",
             ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer, description="eSIM or policy not found"
@@ -629,8 +724,11 @@ def _resolve_expected_version(
             "Upsert auto top-up policy (v2: ``expiry_enabled`` + ``usage_mode``). "
             "``package_id`` must be in Available top-ups. Optimistic concurrency via "
             "body ``version`` and/or ``If-Match`` header (required when updating). "
-            "Returns 409 if a purchase for this eSIM is still in progress."
+            "Policy is bound to the resolved Account. Team context requires "
+            "``can_spend`` and an active Organization. Returns 409 if a purchase "
+            "for this eSIM is still in progress."
         ),
+        parameters=[ORGANIZATION_CONTEXT_PARAMETER],
         request=AutoTopupPolicyWriteSerializer,
         responses={
             200: OpenApiResponse(
@@ -646,7 +744,8 @@ def _resolve_expected_version(
                 response=ErrorDetailSerializer, description="Authentication required"
             ),
             403: OpenApiResponse(
-                response=ErrorDetailSerializer, description="Rollout gate denied"
+                response=ErrorDetailSerializer,
+                description="Rollout gate denied or spend not allowed",
             ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer,
@@ -664,12 +763,17 @@ def _resolve_expected_version(
         summary="Delete auto top-up policy",
         description=(
             "Delete the auto top-up policy. Requires matching ``If-Match`` version "
-            "(or ``version`` query param)."
+            "(or ``version`` query param). Team context requires ``can_spend`` and "
+            "an active Organization."
         ),
+        parameters=[ORGANIZATION_CONTEXT_PARAMETER],
         responses={
             204: OpenApiResponse(description="Policy deleted"),
             401: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Not allowed"
             ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer, description="eSIM or policy not found"
@@ -681,7 +785,7 @@ def _resolve_expected_version(
     ),
 )
 class EsimAutoTopupView(OwnedEsimMixin, GenericAPIView):
-    """GET/PUT/DELETE auto top-up policy for an owned eSIM."""
+    """GET/PUT/DELETE auto top-up policy for an Account-owned eSIM."""
 
     serializer_class = AutoTopupPolicyWriteSerializer
 
@@ -696,6 +800,7 @@ class EsimAutoTopupView(OwnedEsimMixin, GenericAPIView):
         if not settings.AUTO_TOPUP_ENABLED or not settings.BILLING_ENABLED:
             raise NotFound(detail="Not found.")
 
+        context = self.require_spend_mutation()
         esim = self.get_object()
         serializer = AutoTopupPolicyWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -723,11 +828,10 @@ class EsimAutoTopupView(OwnedEsimMixin, GenericAPIView):
             )
 
         service = AutoTopupService(get_topup_provider())
-        account = ensure_billing_account(request.user)
         try:
             policy = service.upsert_policy(
                 esim=esim,
-                account=account,
+                account=context.account,
                 package_id=data["package_id"],
                 expiry_enabled=data["expiry_enabled"],
                 usage_mode=data["usage_mode"],
@@ -777,6 +881,7 @@ class EsimAutoTopupView(OwnedEsimMixin, GenericAPIView):
         if not settings.AUTO_TOPUP_ENABLED or not settings.BILLING_ENABLED:
             raise NotFound(detail="Not found.")
 
+        self.require_spend_mutation()
         esim = self.get_object()
         version_raw = request.query_params.get("version")
         body_version: int | None = None
