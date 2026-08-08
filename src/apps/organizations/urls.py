@@ -8,6 +8,8 @@ from apps.organizations.views import (
     OrganizationInviteListCreateView,
     OrganizationInviteRevokeView,
     OrganizationListView,
+    OrganizationMemberDetailView,
+    OrganizationMemberRevokeView,
     OrganizationMembersListView,
 )
 
@@ -27,6 +29,16 @@ urlpatterns = [
         "<uuid:organization_id>/members/",
         OrganizationMembersListView.as_view(),
         name="organization-members",
+    ),
+    path(
+        "<uuid:organization_id>/members/<uuid:membership_id>/",
+        OrganizationMemberDetailView.as_view(),
+        name="organization-member-detail",
+    ),
+    path(
+        "<uuid:organization_id>/members/<uuid:membership_id>/revoke/",
+        OrganizationMemberRevokeView.as_view(),
+        name="organization-member-revoke",
     ),
     path(
         "<uuid:organization_id>/invites/",

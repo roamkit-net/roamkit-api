@@ -1,7 +1,7 @@
 """Membership mutations with ADR 020 invariants.
 
-HTTP invite/write APIs are out of scope for PR3; these services are the
-normative implementation for later endpoints and are covered by unit tests.
+Normative business rules for membership role/revoke HTTP (and transfer).
+Views must call these helpers — do not reimplement invariants in the view layer.
 """
 
 from __future__ import annotations
