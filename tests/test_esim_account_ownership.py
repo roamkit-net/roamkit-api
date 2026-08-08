@@ -147,7 +147,7 @@ def test_assigned_user_is_not_inventory_owner(user, other, order):
 def test_backfill_maps_to_personal_account_not_org_account(user, order):
     """Migration must not attach team Accounts."""
     personal = ensure_billing_account(user)
-    org = create_organization(name="Fleet")
+    org = create_organization(name="Fleet", actor=user)
     assert org.account_id != personal.pk
 
     esim = lifecycle_service.create_purchased(

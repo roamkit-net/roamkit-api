@@ -56,6 +56,10 @@ class OrganizationSerializer(serializers.ModelSerializer):
         return OrgPermissionsSerializer(perms).data
 
 
+class OrganizationCreateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=128, trim_whitespace=True)
+
+
 class MembershipSerializer(serializers.ModelSerializer):
     user_id = serializers.IntegerField(read_only=True)
     user_email = serializers.EmailField(source="user.email", read_only=True)

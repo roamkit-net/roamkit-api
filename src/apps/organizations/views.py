@@ -26,9 +26,16 @@ from apps.organizations.exceptions import (
     InviteInvalidError,
     NotAllowedError,
 )
-from apps.organizations.models import Membership, MembershipStatus, Organization
+from apps.organizations.models import (
+    Membership,
+    MembershipRole,
+    MembershipStatus,
+    Organization,
+)
+from apps.organizations.permissions import permissions_for_role
 from apps.organizations.serializers import (
     MembershipSerializer,
+    OrganizationCreateSerializer,
     OrganizationInviteAcceptResponseSerializer,
     OrganizationInviteAcceptSerializer,
     OrganizationInviteCreateResponseSerializer,
@@ -36,6 +43,7 @@ from apps.organizations.serializers import (
     OrganizationInviteSerializer,
     OrganizationSerializer,
 )
+from apps.organizations.services.account_binding import create_organization
 from apps.organizations.services.authz import require_view
 from apps.organizations.services.context import resolve_organization_context
 from apps.organizations.services.invites import (
@@ -94,6 +102,26 @@ class OrganizationsAPIView(APIView):
             ),
         },
     ),
+    post=extend_schema(
+        tags=["Organizations"],
+        operation_id="organization_create",
+        summary="Create organization",
+        description=(
+            "Creates an Organization with a new empty team Account and an "
+            "active **owner** membership for the caller. Does not convert or "
+            "merge the caller's personal Account or move eSIM inventory."
+        ),
+        request=OrganizationCreateSerializer,
+        responses={
+            201: OpenApiResponse(response=OrganizationSerializer),
+            400: OpenApiResponse(response=ErrorDetailSerializer),
+            401: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="Organizations feature disabled",
+            ),
+        },
+    ),
 )
 class OrganizationListView(OrganizationsAPIView, ListAPIView):
     serializer_class = OrganizationSerializer
@@ -128,6 +156,24 @@ class OrganizationListView(OrganizationsAPIView, ListAPIView):
             for org in orgs
         ]
         return Response(data)
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        body = OrganizationCreateSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        org = create_organization(
+            name=body.validated_data["name"],
+            actor=request.user,
+        )
+        return Response(
+            OrganizationSerializer(
+                org,
+                context={
+                    "my_role": MembershipRole.OWNER,
+                    "permissions": permissions_for_role(MembershipRole.OWNER),
+                },
+            ).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 @extend_schema_view(

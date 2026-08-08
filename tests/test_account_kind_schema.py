@@ -10,7 +10,12 @@ from django.db import IntegrityError
 
 from apps.billing.models import Account, AccountKind
 from apps.billing.services import ensure_billing_account
-from apps.organizations.models import Membership, MembershipRole, Organization
+from apps.organizations.models import (
+    Membership,
+    MembershipRole,
+    MembershipStatus,
+    Organization,
+)
 from apps.organizations.services import create_organization
 
 User = get_user_model()
@@ -29,19 +34,25 @@ def test_personal_account_default_kind(user):
 
 
 @pytest.mark.django_db
-def test_create_organization_binds_team_account():
-    org = create_organization(name="Fleet Ops")
+def test_create_organization_binds_team_account(user):
+    org = create_organization(name="Fleet Ops", actor=user)
     org.refresh_from_db()
     assert org.account_id is not None
     assert org.account.kind == AccountKind.ORGANIZATION
     assert org.account.user_id is None
     assert org.account.balance == Decimal("0")
     assert org.account.organization.pk == org.pk
+    assert Membership.objects.filter(
+        organization=org,
+        user=user,
+        role=MembershipRole.OWNER,
+        status=MembershipStatus.ACTIVE,
+    ).exists()
 
 
 @pytest.mark.django_db
-def test_organization_account_one_to_one():
-    org_a = create_organization(name="Org A")
+def test_organization_account_one_to_one(user):
+    org_a = create_organization(name="Org A", actor=user)
     with pytest.raises(IntegrityError):
         Organization.objects.create(
             name="Org B",
@@ -72,12 +83,7 @@ def test_organization_account_forbids_user(user):
 @pytest.mark.django_db
 def test_create_organization_does_not_touch_personal_account(user):
     personal = ensure_billing_account(user)
-    org = create_organization(name="Fleet Ops")
-    Membership.objects.create(
-        organization=org,
-        user=user,
-        role=MembershipRole.OWNER,
-    )
+    org = create_organization(name="Fleet Ops", actor=user)
     personal.refresh_from_db()
     assert personal.kind == AccountKind.PERSONAL
     assert personal.pk != org.account_id

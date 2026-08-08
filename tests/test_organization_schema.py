@@ -30,8 +30,9 @@ def other_user(db):
 
 
 @pytest.fixture
-def organization(db) -> Organization:
-    return create_organization(name="Fleet Ops")
+def organization(other_user) -> Organization:
+    # Owner is other_user so membership constraint tests can still add ``user``.
+    return create_organization(name="Fleet Ops", actor=other_user)
 
 
 @pytest.mark.django_db
@@ -68,11 +69,6 @@ def test_membership_unique_per_user_org(organization: Organization, user, other_
     Membership.objects.create(
         organization=organization,
         user=user,
-        role=MembershipRole.OWNER,
-    )
-    Membership.objects.create(
-        organization=organization,
-        user=other_user,
         role=MembershipRole.MEMBER,
     )
     with pytest.raises(IntegrityError):
@@ -84,17 +80,12 @@ def test_membership_unique_per_user_org(organization: Organization, user, other_
 
 
 @pytest.mark.django_db
-def test_at_most_one_active_owner(organization: Organization, user, other_user):
-    Membership.objects.create(
-        organization=organization,
-        user=user,
-        role=MembershipRole.OWNER,
-        status=MembershipStatus.ACTIVE,
-    )
+def test_at_most_one_active_owner(organization: Organization, user):
+    # ``organization`` fixture already has an active owner (other_user).
     with pytest.raises(IntegrityError):
         Membership.objects.create(
             organization=organization,
-            user=other_user,
+            user=user,
             role=MembershipRole.OWNER,
             status=MembershipStatus.ACTIVE,
         )
@@ -104,15 +95,16 @@ def test_at_most_one_active_owner(organization: Organization, user, other_user):
 def test_second_owner_allowed_when_previous_not_active(
     organization: Organization, user, other_user
 ):
-    Membership.objects.create(
-        organization=organization,
-        user=user,
-        role=MembershipRole.OWNER,
-        status=MembershipStatus.REVOKED,
-    )
-    second = Membership.objects.create(
+    existing = Membership.objects.get(
         organization=organization,
         user=other_user,
+        role=MembershipRole.OWNER,
+    )
+    existing.status = MembershipStatus.REVOKED
+    existing.save(update_fields=["status", "updated_at"])
+    second = Membership.objects.create(
+        organization=organization,
+        user=user,
         role=MembershipRole.OWNER,
         status=MembershipStatus.ACTIVE,
     )
@@ -120,11 +112,10 @@ def test_second_owner_allowed_when_previous_not_active(
 
 
 @pytest.mark.django_db
-def test_membership_hard_delete_blocked(organization: Organization, user):
-    membership = Membership.objects.create(
+def test_membership_hard_delete_blocked(organization: Organization, other_user):
+    membership = Membership.objects.get(
         organization=organization,
-        user=user,
-        role=MembershipRole.OWNER,
+        user=other_user,
     )
     with pytest.raises(HardDeleteViolation):
         membership.delete()
@@ -134,11 +125,10 @@ def test_membership_hard_delete_blocked(organization: Organization, user):
 
 
 @pytest.mark.django_db
-def test_membership_revoke_via_status(organization: Organization, user):
-    membership = Membership.objects.create(
+def test_membership_revoke_via_status(organization: Organization, other_user):
+    membership = Membership.objects.get(
         organization=organization,
-        user=user,
-        role=MembershipRole.OWNER,
+        user=other_user,
     )
     membership.status = MembershipStatus.REVOKED
     membership.save(update_fields=["status", "updated_at"])
@@ -148,16 +138,6 @@ def test_membership_revoke_via_status(organization: Organization, user):
 
 @pytest.mark.django_db
 def test_user_can_belong_to_multiple_organizations(user):
-    org_a = create_organization(name="Org A")
-    org_b = create_organization(name="Org B")
-    Membership.objects.create(
-        organization=org_a,
-        user=user,
-        role=MembershipRole.OWNER,
-    )
-    Membership.objects.create(
-        organization=org_b,
-        user=user,
-        role=MembershipRole.MEMBER,
-    )
+    create_organization(name="Org A", actor=user)
+    create_organization(name="Org B", actor=user)
     assert Membership.objects.filter(user=user).count() == 2

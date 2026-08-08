@@ -86,9 +86,7 @@ def _add_member(org, user, role: str) -> Membership:
 
 @pytest.fixture
 def org(owner):
-    organization = create_organization(name="Fleet Ops")
-    _add_member(organization, owner, MembershipRole.OWNER)
-    return organization
+    return create_organization(name="Fleet Ops", actor=owner)
 
 
 def _access_token(client: Client, email: str) -> str:
