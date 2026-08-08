@@ -1,8 +1,9 @@
-"""HTTP tests for GET/PUT/DELETE /me/esims/{id}/auto-topup/ (v2 PR4)."""
+"""HTTP tests for GET/PUT/DELETE /me/esims/{id}/auto-topup/ (v2/v3)."""
 
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -344,4 +345,137 @@ def test_openapi_auto_topup_has_no_trigger_mode() -> None:
         assert "trigger_mode" not in props, name
         assert "expiry_enabled" in props, name
         assert "usage_mode" in props, name
+        assert "active_until" in props, name
     assert "TriggerModeEnum" not in schemas
+
+
+@pytest.mark.django_db
+@override_settings(
+    BILLING_ENABLED=True,
+    AUTO_TOPUP_ENABLED=True,
+    AUTO_TOPUP_ROLLOUT_MODE="all",
+)
+def test_put_get_active_until(
+    client: Client, user: User, esim: Esim, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "apps.esims.views.get_topup_provider", lambda: FakeTopupProvider()
+    )
+    headers = _auth(client, user)
+    bound = timezone.now() + timedelta(days=10)
+    create = client.put(
+        f"/api/v1/me/esims/{esim.pk}/auto-topup/",
+        data=json.dumps(_put_body(active_until=bound.isoformat())),
+        content_type="application/json",
+        **headers,
+    )
+    assert create.status_code == 201, create.content
+    payload = create.json()
+    assert payload["active_until"] is not None
+    assert "schedule_ended" not in (payload.get("reason") or "")
+
+    got = client.get(f"/api/v1/me/esims/{esim.pk}/auto-topup/", **headers)
+    assert got.status_code == 200
+    assert got.json()["active_until"] == payload["active_until"]
+
+    cleared = client.put(
+        f"/api/v1/me/esims/{esim.pk}/auto-topup/",
+        data=json.dumps(_put_body(active_until=None)),
+        content_type="application/json",
+        HTTP_IF_MATCH=f'"{payload["version"]}"',
+        **headers,
+    )
+    assert cleared.status_code == 200, cleared.content
+    assert cleared.json()["active_until"] is None
+
+
+@pytest.mark.django_db
+@override_settings(
+    BILLING_ENABLED=True,
+    AUTO_TOPUP_ENABLED=True,
+    AUTO_TOPUP_ROLLOUT_MODE="all",
+)
+def test_put_past_active_until_enabled_400(
+    client: Client, user: User, esim: Esim, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "apps.esims.views.get_topup_provider", lambda: FakeTopupProvider()
+    )
+    headers = _auth(client, user)
+    past = timezone.now() - timedelta(days=1)
+    response = client.put(
+        f"/api/v1/me/esims/{esim.pk}/auto-topup/",
+        data=json.dumps(_put_body(active_until=past.isoformat())),
+        content_type="application/json",
+        **headers,
+    )
+    assert response.status_code == 400
+    assert "active_until" in response.json()
+
+
+@pytest.mark.django_db
+@override_settings(
+    BILLING_ENABLED=True,
+    AUTO_TOPUP_ENABLED=True,
+    AUTO_TOPUP_ROLLOUT_MODE="all",
+)
+def test_put_past_active_until_disabled_ok(
+    client: Client, user: User, esim: Esim, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "apps.esims.views.get_topup_provider", lambda: FakeTopupProvider()
+    )
+    headers = _auth(client, user)
+    past = timezone.now() - timedelta(days=1)
+    response = client.put(
+        f"/api/v1/me/esims/{esim.pk}/auto-topup/",
+        data=json.dumps(_put_body(enabled=False, active_until=past.isoformat())),
+        content_type="application/json",
+        **headers,
+    )
+    assert response.status_code == 201, response.content
+    assert response.json()["status"] == "disabled"
+    assert response.json()["active_until"] is not None
+
+
+@pytest.mark.django_db
+@override_settings(
+    BILLING_ENABLED=True,
+    AUTO_TOPUP_ENABLED=True,
+    AUTO_TOPUP_ROLLOUT_MODE="all",
+)
+def test_resume_from_schedule_ended(
+    client: Client, user: User, esim: Esim, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "apps.esims.views.get_topup_provider", lambda: FakeTopupProvider()
+    )
+    headers = _auth(client, user)
+    create = client.put(
+        f"/api/v1/me/esims/{esim.pk}/auto-topup/",
+        data=json.dumps(
+            _put_body(active_until=(timezone.now() + timedelta(days=5)).isoformat())
+        ),
+        content_type="application/json",
+        **headers,
+    )
+    assert create.status_code == 201, create.content
+    policy = EsimAutoTopupPolicy.objects.get(esim=esim)
+    policy.status = EsimAutoTopupPolicy.Status.PAUSED
+    policy.reason = EsimAutoTopupPolicy.Reason.SCHEDULE_ENDED
+    policy.active_until = timezone.now() - timedelta(hours=1)
+    policy.save(update_fields=["status", "reason", "active_until", "updated_at"])
+
+    future = timezone.now() + timedelta(days=14)
+    resume = client.put(
+        f"/api/v1/me/esims/{esim.pk}/auto-topup/",
+        data=json.dumps(_put_body(active_until=future.isoformat())),
+        content_type="application/json",
+        HTTP_IF_MATCH=f'"{policy.version}"',
+        **headers,
+    )
+    assert resume.status_code == 200, resume.content
+    body = resume.json()
+    assert body["status"] == "active"
+    assert body["reason"] == ""
+    assert body["active_until"] is not None

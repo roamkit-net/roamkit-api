@@ -1,15 +1,12 @@
 """eSIM API serializers."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.esims.models import Esim, EsimAutoTopupPolicy, EsimLifecycleEvent, Topup
-
-# Lifecycle event written by LifecycleService.transition(..., ACTIVATED).
-ACTIVATED_EVENT_TYPE = "system.status.activated"
 
 # Lifecycle event written by LifecycleService.transition(..., ACTIVATED).
 ACTIVATED_EVENT_TYPE = "system.status.activated"
@@ -257,7 +254,7 @@ class TopupSerializer(serializers.ModelSerializer):
 
 
 class AutoTopupPolicySerializer(serializers.ModelSerializer):
-    """Persisted auto top-up policy response (v2 trigger fields)."""
+    """Persisted auto top-up policy response (v2 triggers + v3 lifetime)."""
 
     class Meta:
         model = EsimAutoTopupPolicy
@@ -272,6 +269,7 @@ class AutoTopupPolicySerializer(serializers.ModelSerializer):
             "threshold_mb",
             "renew_mode",
             "remaining_count",
+            "active_until",
             "cooldown_until",
             "last_triggered_at",
             "version",
@@ -282,7 +280,7 @@ class AutoTopupPolicySerializer(serializers.ModelSerializer):
 
 
 class AutoTopupPolicyWriteSerializer(serializers.Serializer):
-    """PUT body with v2 ``expiry_enabled`` + ``usage_mode`` (no ``trigger_mode``)."""
+    """PUT body with v2 triggers + optional v3 ``active_until``."""
 
     package_id = serializers.CharField(max_length=64)
     enabled = serializers.BooleanField(default=True)
@@ -295,6 +293,15 @@ class AutoTopupPolicyWriteSerializer(serializers.Serializer):
     remaining_count = serializers.IntegerField(
         required=False, allow_null=True, min_value=0
     )
+    active_until = serializers.DateTimeField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text=(
+            "Optional UTC exclusive lifetime bound (ISO-8601). "
+            "Null/omitted = no schedule limit."
+        ),
+    )
     version = serializers.IntegerField(
         required=False,
         allow_null=True,
@@ -303,6 +310,8 @@ class AutoTopupPolicyWriteSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
+        from django.utils import timezone
+
         enabled = attrs.get("enabled", True)
         expiry_enabled = attrs.get("expiry_enabled")
         usage_mode = attrs.get("usage_mode")
@@ -333,4 +342,18 @@ class AutoTopupPolicyWriteSerializer(serializers.Serializer):
                 )
         else:
             attrs["remaining_count"] = attrs.get("remaining_count")
+
+        active_until = attrs.get("active_until")
+        if enabled and active_until is not None:
+            if timezone.is_naive(active_until):
+                active_until = timezone.make_aware(active_until, UTC)
+                attrs["active_until"] = active_until
+            if timezone.now() >= active_until:
+                raise serializers.ValidationError(
+                    {
+                        "active_until": (
+                            "Must be in the future when the policy is enabled."
+                        )
+                    }
+                )
         return attrs

@@ -22,6 +22,7 @@ from shared.events.esim_events import (
     AutoTopupConfigurationChanged,
     AutoTopupPausedFunds,
     AutoTopupPolicyCreated,
+    AutoTopupPolicyUpdated,
     AutoTopupSucceeded,
 )
 from shared.events.event_bus import event_bus
@@ -175,6 +176,7 @@ def _policy(user: User, esim: Esim, **kwargs) -> EsimAutoTopupPolicy:
         "reason": "",
         "threshold_mb": None,
         "remaining_count": None,
+        "active_until": None,
         "cooldown_until": None,
     }
     defaults.update(kwargs)
@@ -800,3 +802,156 @@ def test_upsert_rejects_spend_in_progress(user: User, esim: Esim) -> None:
             enabled=True,
             expected_version=None,
         )
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_active_until_null_still_buys(user: User, esim: Esim) -> None:
+    _fund(user)
+    policy = _policy(user, esim, active_until=None)
+    provider = FakeTopupProvider()
+    assert AutoTopupService(provider).evaluate_one(policy.pk) == "success"
+    assert len(provider.submit_calls) == 1
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_active_until_future_still_buys(user: User, esim: Esim) -> None:
+    _fund(user)
+    policy = _policy(
+        user,
+        esim,
+        active_until=timezone.now() + timedelta(days=7),
+    )
+    provider = FakeTopupProvider()
+    assert AutoTopupService(provider).evaluate_one(policy.pk) == "success"
+    assert len(provider.submit_calls) == 1
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_active_until_reached_pauses_schedule_ended(user: User, esim: Esim) -> None:
+    _fund(user)
+    policy = _policy(
+        user,
+        esim,
+        active_until=timezone.now() - timedelta(minutes=1),
+    )
+    provider = FakeTopupProvider()
+    metric_calls: list[tuple[str, dict]] = []
+    captured: list = []
+    event_bus.subscribe(AutoTopupPolicyUpdated, captured.append)
+
+    def _capture_incr(name: str, value: int = 1, **tags: str) -> None:
+        metric_calls.append((name, tags))
+
+    with patch("apps.esims.services.auto_topup_service.metrics.incr", _capture_incr):
+        assert AutoTopupService(provider).evaluate_one(policy.pk) == "paused"
+
+    policy.refresh_from_db()
+    assert policy.status == EsimAutoTopupPolicy.Status.PAUSED
+    assert policy.reason == EsimAutoTopupPolicy.Reason.SCHEDULE_ENDED
+    assert provider.submit_calls == []
+    assert any(
+        name == "auto_topup_paused_total" and tags.get("reason") == "schedule_ended"
+        for name, tags in metric_calls
+    )
+    assert any(
+        isinstance(e, AutoTopupPolicyUpdated) and e.reason == "schedule_ended"
+        for e in captured
+    )
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_after_schedule_ended_stays_paused(user: User, esim: Esim) -> None:
+    _fund(user)
+    policy = _policy(
+        user,
+        esim,
+        active_until=timezone.now() - timedelta(minutes=1),
+    )
+    service = AutoTopupService(FakeTopupProvider())
+    assert service.evaluate_one(policy.pk) == "paused"
+    assert service.evaluate_one(policy.pk) == "skipped"
+    stats = service.evaluate_due()
+    assert stats.get("success", 0) == 0
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_fixed_count_wins_before_active_until(user: User, esim: Esim) -> None:
+    _fund(user)
+    policy = _policy(
+        user,
+        esim,
+        renew_mode=EsimAutoTopupPolicy.RenewMode.FIXED_COUNT,
+        remaining_count=1,
+        active_until=timezone.now() + timedelta(days=30),
+    )
+    assert AutoTopupService(FakeTopupProvider()).evaluate_one(policy.pk) == "success"
+    policy.refresh_from_db()
+    assert policy.reason == EsimAutoTopupPolicy.Reason.COUNT_EXHAUSTED
+    assert policy.status == EsimAutoTopupPolicy.Status.PAUSED
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_active_until_wins_before_fixed_count(user: User, esim: Esim) -> None:
+    _fund(user)
+    policy = _policy(
+        user,
+        esim,
+        renew_mode=EsimAutoTopupPolicy.RenewMode.FIXED_COUNT,
+        remaining_count=5,
+        active_until=timezone.now() - timedelta(seconds=1),
+    )
+    provider = FakeTopupProvider()
+    assert AutoTopupService(provider).evaluate_one(policy.pk) == "paused"
+    policy.refresh_from_db()
+    assert policy.reason == EsimAutoTopupPolicy.Reason.SCHEDULE_ENDED
+    assert policy.remaining_count == 5
+    assert provider.submit_calls == []
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_upsert_active_until_only_keeps_cooldown(user: User, esim: Esim) -> None:
+    _fund(user)
+    service = AutoTopupService(FakeTopupProvider())
+    policy = service.upsert_policy(
+        esim=esim,
+        account=user.billing_account,
+        package_id="topup-1gb",
+        expiry_enabled=False,
+        usage_mode=EsimAutoTopupPolicy.UsageMode.ZERO,
+        renew_mode=EsimAutoTopupPolicy.RenewMode.UNTIL_FUNDS,
+        threshold_mb=None,
+        remaining_count=None,
+        active_until=None,
+        enabled=True,
+        expected_version=None,
+    )
+    cooldown = timezone.now() + timedelta(hours=1)
+    policy.cooldown_until = cooldown
+    policy.save(update_fields=["cooldown_until"])
+
+    bound = timezone.now() + timedelta(days=14)
+    captured: list = []
+    event_bus.subscribe(AutoTopupConfigurationChanged, captured.append)
+    updated = service.upsert_policy(
+        esim=esim,
+        account=user.billing_account,
+        package_id="topup-1gb",
+        expiry_enabled=False,
+        usage_mode=EsimAutoTopupPolicy.UsageMode.ZERO,
+        renew_mode=EsimAutoTopupPolicy.RenewMode.UNTIL_FUNDS,
+        threshold_mb=None,
+        remaining_count=None,
+        active_until=bound,
+        enabled=True,
+        expected_version=policy.version,
+    )
+    assert updated.active_until == bound
+    assert updated.cooldown_until == cooldown
+    assert captured == []
