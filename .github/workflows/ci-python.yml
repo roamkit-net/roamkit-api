@@ -65,7 +65,13 @@ jobs:
           ./scripts/generate_openapi.sh
           diff -u /tmp/openapi-first.yaml openapi/openapi.yaml
           # Committed artifact must match generated output.
-          git diff --exit-code -- openapi/openapi.yaml
+          if ! git diff --exit-code -- openapi/openapi.yaml; then
+            echo "::error::Committed openapi/openapi.yaml is stale."
+            echo "Run:"
+            echo "  ./scripts/generate_openapi.sh"
+            echo "Then commit the updated openapi/openapi.yaml."
+            exit 1
+          fi
       - name: Setup Node (Spectral)
         uses: actions/setup-node@v4
         with:
