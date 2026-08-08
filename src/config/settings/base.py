@@ -242,6 +242,13 @@ SPECTACULAR_SETTINGS = {
         {"name": "Orders", "description": "Package purchase orders"},
         {"name": "Catalog", "description": "Packages and locations"},
         {"name": "eSIM", "description": "User eSIM inventory, usage, and top-ups"},
+        {
+            "name": "Organizations",
+            "description": (
+                "Team organizations and memberships (ADR 020). "
+                "Authorize via organization_id; never via client account_id."
+            ),
+        },
         {"name": "Users", "description": "Authenticated user profile"},
         {
             "name": "Ops",
@@ -310,6 +317,10 @@ AIRALO_BLOCKED_CLIENT_IDS = os.environ.get("AIRALO_BLOCKED_CLIENT_IDS", "")
 # Billing feature flags (ADR-010). Money endpoints under /api/v1/billing/*
 # return 404 when BILLING_ENABLED is false; GET …/billing/config/ stays public.
 BILLING_ENABLED = os.environ.get("BILLING_ENABLED", "true").lower() == "true"
+# ADR 020 — Organization / Membership HTTP surfaces under /api/v1/orgs/*
+ORGANIZATIONS_ENABLED = (
+    os.environ.get("ORGANIZATIONS_ENABLED", "true").lower() == "true"
+)
 SUBSCRIPTIONS_ENABLED = (
     os.environ.get("SUBSCRIPTIONS_ENABLED", "false").lower() == "true"
 )

@@ -23,6 +23,9 @@ tags:
   name: Catalog
 - description: User eSIM inventory, usage, and top-ups
   name: eSIM
+- description: Team organizations and memberships (ADR 020). Authorize via organization_id; never via
+    client account_id.
+  name: Organizations
 - description: Authenticated user profile
   name: Users
 - description: Staff-only read-only Operations Dashboard (members, search, aggregates)
@@ -1568,6 +1571,123 @@ paths:
       summary: Create package order
       tags:
       - Orders
+  /api/v1/orgs/:
+    get:
+      description: Organizations where the caller has an **active** membership. Team Account is exposed
+        as ``account_id`` for display only — authorization always uses ``organization_id``.
+      operationId: organization_list
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Organization'
+                type: array
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Organizations feature disabled
+      security:
+      - bearerAuth: []
+      summary: List my organizations
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/:
+    get:
+      description: Requires an **active** membership. Unknown or inaccessible ``organization_id`` returns
+        404. Suspended/revoked membership → 403.
+      operationId: organization_retrieve
+      parameters:
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Get organization
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/members/:
+    get:
+      description: Requires an **active** membership with ``can_view``. Does not accept ``account_id``
+        as an authorization input.
+      operationId: organization_members_list
+      parameters:
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Membership'
+                type: array
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: List organization members
+      tags:
+      - Organizations
   /api/v1/packages/:
     get:
       description: 'List active packages synced from external providers. Additive pricing fields: ``price_usd``
@@ -2469,6 +2589,55 @@ components:
       - slug
       - title
       type: object
+    Membership:
+      properties:
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        id:
+          format: uuid
+          readOnly: true
+          type: string
+        role:
+          allOf:
+          - $ref: '#/components/schemas/RoleEnum'
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/MembershipStatusEnum'
+          readOnly: true
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+        user_email:
+          format: email
+          readOnly: true
+          type: string
+        user_id:
+          readOnly: true
+          type: integer
+      required:
+      - created_at
+      - id
+      - role
+      - status
+      - updated_at
+      - user_email
+      - user_id
+      type: object
+    MembershipStatusEnum:
+      description: '* `active` - Active
+
+        * `suspended` - Suspended
+
+        * `revoked` - Revoked'
+      enum:
+      - active
+      - suspended
+      - revoked
+      type: string
     OpsAlert:
       properties:
         code:
@@ -3043,6 +3212,60 @@ components:
       - package
       - topup
       type: string
+    Organization:
+      description: Organization plus the caller's role and permission flags.
+      properties:
+        account_id:
+          format: uuid
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        id:
+          format: uuid
+          readOnly: true
+          type: string
+        my_role:
+          readOnly: true
+          type: string
+        name:
+          readOnly: true
+          type: string
+        permissions:
+          additionalProperties: {}
+          readOnly: true
+          type: object
+        status:
+          allOf:
+          - $ref: '#/components/schemas/OrganizationStatusEnum'
+          readOnly: true
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+      required:
+      - account_id
+      - created_at
+      - id
+      - my_role
+      - name
+      - permissions
+      - status
+      - updated_at
+      type: object
+    OrganizationStatusEnum:
+      description: '* `active` - Active
+
+        * `suspended` - Suspended
+
+        * `archived` - Archived'
+      enum:
+      - active
+      - suspended
+      - archived
+      type: string
     Package:
       description: 'Public package representation for the catalog API.
 
@@ -3481,6 +3704,20 @@ components:
       enum:
       - until_funds
       - fixed_count
+      type: string
+    RoleEnum:
+      description: '* `owner` - Owner
+
+        * `admin` - Admin
+
+        * `member` - Member
+
+        * `viewer` - Viewer'
+      enum:
+      - owner
+      - admin
+      - member
+      - viewer
       type: string
     SeverityEnum:
       description: '* `info` - info

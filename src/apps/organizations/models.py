@@ -109,8 +109,8 @@ class Membership(models.Model):
     """User membership in an Organization (ADR 020).
 
     At most one row per ``(user, organization)``. At most one active owner per
-    organization (DB). Exactly-one-owner after mutations is enforced by services
-    in a later permissions PR.
+    organization (DB). Exactly-one-owner after mutations is enforced by
+    ``services.membership``.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
