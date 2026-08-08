@@ -2027,6 +2027,61 @@ paths:
       summary: Revoke membership
       tags:
       - Organizations
+  /api/v1/orgs/{organization_id}/transfer-ownership/:
+    post:
+      description: Requires ``can_transfer_ownership`` (owner) on an **active** organization. The new
+        owner must already be an active member. The previous owner is demoted to admin. Business rules
+        live in ``transfer_ownership``.
+      operationId: organization_transfer_ownership
+      parameters:
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationTransferOwnershipRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationTransferOwnershipResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Transfer organization ownership
+      tags:
+      - Organizations
   /api/v1/packages/:
     get:
       description: 'List active packages synced from external providers. Additive pricing fields: ``price_usd``
@@ -3770,6 +3825,24 @@ components:
       - suspended
       - archived
       type: string
+    OrganizationTransferOwnershipRequest:
+      properties:
+        new_owner_user_id:
+          minimum: 1
+          type: integer
+      required:
+      - new_owner_user_id
+      type: object
+    OrganizationTransferOwnershipResponse:
+      properties:
+        new_owner_membership:
+          $ref: '#/components/schemas/Membership'
+        organization:
+          $ref: '#/components/schemas/Organization'
+      required:
+      - new_owner_membership
+      - organization
+      type: object
     Package:
       description: 'Public package representation for the catalog API.
 

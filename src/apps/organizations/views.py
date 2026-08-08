@@ -21,6 +21,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.accounts.models import User
 from apps.organizations.exceptions import (
     InviteConflictError,
     InviteInvalidError,
@@ -44,6 +45,8 @@ from apps.organizations.serializers import (
     OrganizationInviteCreateSerializer,
     OrganizationInviteSerializer,
     OrganizationSerializer,
+    OrganizationTransferOwnershipResponseSerializer,
+    OrganizationTransferOwnershipSerializer,
 )
 from apps.organizations.services.account_binding import create_organization
 from apps.organizations.services.authz import require_view
@@ -57,6 +60,7 @@ from apps.organizations.services.invites import (
 from apps.organizations.services.membership import (
     revoke_membership,
     set_member_role,
+    transfer_ownership,
 )
 from core.openapi_serializers import ErrorDetailSerializer
 
@@ -238,6 +242,68 @@ class OrganizationDetailView(OrganizationsAPIView, RetrieveAPIView):
         return Response(
             OrganizationSerializer(
                 org,
+                context={
+                    "my_role": ctx.role,
+                    "permissions": ctx.permissions,
+                },
+            ).data
+        )
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Organizations"],
+        operation_id="organization_transfer_ownership",
+        summary="Transfer organization ownership",
+        description=(
+            "Requires ``can_transfer_ownership`` (owner) on an **active** "
+            "organization. The new owner must already be an active member. "
+            "The previous owner is demoted to admin. Business rules live in "
+            "``transfer_ownership``."
+        ),
+        request=OrganizationTransferOwnershipSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=OrganizationTransferOwnershipResponseSerializer
+            ),
+            400: OpenApiResponse(response=ErrorDetailSerializer),
+            401: OpenApiResponse(response=ErrorDetailSerializer),
+            403: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+    ),
+)
+class OrganizationTransferOwnershipView(OrganizationsAPIView):
+    def post(self, request: Request, organization_id) -> Response:
+        body = OrganizationTransferOwnershipSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        try:
+            new_owner = User.objects.get(pk=body.validated_data["new_owner_user_id"])
+        except User.DoesNotExist as exc:
+            raise NotFound(detail="Not found.") from exc
+
+        try:
+            new_owner_membership = transfer_ownership(
+                actor=request.user,
+                organization_id=organization_id,
+                new_owner=new_owner,
+            )
+        except (LastOwnerError, NotAllowedError) as exc:
+            _map_membership_error(exc)
+            raise
+
+        # Caller's role/permissions after transfer (typically admin).
+        ctx = resolve_organization_context(request.user, organization_id)
+        assert ctx.organization is not None
+        new_owner_membership = Membership.objects.select_related("user").get(
+            pk=new_owner_membership.pk
+        )
+        return Response(
+            OrganizationTransferOwnershipResponseSerializer(
+                {
+                    "organization": ctx.organization,
+                    "new_owner_membership": new_owner_membership,
+                },
                 context={
                     "my_role": ctx.role,
                     "permissions": ctx.permissions,

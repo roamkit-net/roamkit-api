@@ -11,6 +11,7 @@ from apps.organizations.views import (
     OrganizationMemberDetailView,
     OrganizationMemberRevokeView,
     OrganizationMembersListView,
+    OrganizationTransferOwnershipView,
 )
 
 urlpatterns = [
@@ -24,6 +25,11 @@ urlpatterns = [
         "<uuid:organization_id>/",
         OrganizationDetailView.as_view(),
         name="organization-detail",
+    ),
+    path(
+        "<uuid:organization_id>/transfer-ownership/",
+        OrganizationTransferOwnershipView.as_view(),
+        name="organization-transfer-ownership",
     ),
     path(
         "<uuid:organization_id>/members/",
