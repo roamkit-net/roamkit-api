@@ -70,7 +70,17 @@ class Esim(models.Model):
     usage_expired_at = models.DateTimeField(null=True, blank=True)
     usage_synced_at = models.DateTimeField(null=True, blank=True)
     # User-local metadata — never synchronized to Airalo (or other providers).
+    # Presentation-only cluster: note, archived_at; reserved later: favorite_at,
+    # pinned_at, hidden_at. Never gate lifecycle/billing/provider work on these.
     note = models.CharField(max_length=255, blank=True, default="")
+    archived_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "User-local visibility only. Must never affect lifecycle, top-up, "
+            "billing, auto-topup, provider sync, usage refresh, or events."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -78,6 +88,7 @@ class Esim(models.Model):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["user", "status"]),
+            models.Index(fields=["user", "archived_at"]),
         ]
 
     def __str__(self) -> str:

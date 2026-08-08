@@ -15,9 +15,10 @@ class EsimAdmin(admin.ModelAdmin):
         "status",
         "activation_policy",
         "note_preview",
+        "archived_at",
         "created_at",
     )
-    list_filter = ("status", "activation_policy")
+    list_filter = ("status", "activation_policy", "archived_at")
     search_fields = ("iccid", "user__email", "matching_id", "note")
     readonly_fields = (
         "created_at",
@@ -25,6 +26,7 @@ class EsimAdmin(admin.ModelAdmin):
         "usage_synced_at",
         "setup_completed_at",
         "setup_skipped_at",
+        "archived_at",
     )
     raw_id_fields = ("user", "order")
 

@@ -183,6 +183,7 @@ def test_list_esims_returns_only_own(
     assert item["currency"] == "USD"
     assert item["issued_at"]
     assert item["activated_at"] is None
+    assert item["archived_at"] is None
     assert "net_price_usd" not in item
     assert "net_price" not in item
     assert bob_esim.iccid not in {row["iccid"] for row in payload["results"]}
@@ -558,6 +559,7 @@ def test_patch_note_does_not_mutate_other_fields(
             "status": Esim.Status.ACTIVATED,
             "package_title": "hijacked",
             "activation_policy": "installation",
+            "archived_at": "2026-01-01T00:00:00Z",
         },
     )
     assert response.status_code == 200
@@ -571,6 +573,7 @@ def test_patch_note_does_not_mutate_other_fields(
         "lpa",
         "matching_id",
         "qrcode",
+        "archived_at",
     ):
         assert after[key] == before[key], key
 
@@ -578,6 +581,7 @@ def test_patch_note_does_not_mutate_other_fields(
     assert alice_esim.iccid == before["iccid"]
     assert alice_esim.status == before["status"]
     assert alice_esim.activation_policy == before["activation_policy"]
+    assert alice_esim.archived_at is None
 
 
 @pytest.mark.django_db
@@ -599,3 +603,147 @@ def test_patch_empty_body_is_noop(client: Client, user: User, alice_esim: Esim) 
         if key == "updated_at":
             continue
         assert after[key] == value, key
+
+
+def _post_archive(client: Client, *, access: str, esim_id: int) -> Any:
+    return client.post(
+        f"/api/v1/me/esims/{esim_id}/archive/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+
+
+def _post_unarchive(client: Client, *, access: str, esim_id: int) -> Any:
+    return client.post(
+        f"/api/v1/me/esims/{esim_id}/unarchive/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+
+
+@pytest.mark.django_db
+def test_list_excludes_archived_by_default(
+    client: Client, user: User, alice_esim: Esim, package: Package
+) -> None:
+    archived = _make_esim(user=user, package=package, iccid="891000000000009200")
+    archived.archived_at = timezone.now()
+    archived.save(update_fields=["archived_at"])
+
+    access = _access_token(client, user.email)
+    response = client.get(
+        "/api/v1/me/esims/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    ids = {row["id"] for row in payload["results"]}
+    assert alice_esim.pk in ids
+    assert archived.pk not in ids
+
+
+@pytest.mark.django_db
+def test_list_include_archived_true(
+    client: Client, user: User, alice_esim: Esim, package: Package
+) -> None:
+    archived = _make_esim(user=user, package=package, iccid="891000000000009201")
+    archived.archived_at = timezone.now()
+    archived.save(update_fields=["archived_at"])
+
+    access = _access_token(client, user.email)
+    response = client.get(
+        "/api/v1/me/esims/?include_archived=true",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    by_id = {row["id"]: row for row in payload["results"]}
+    assert alice_esim.pk in by_id
+    assert archived.pk in by_id
+    assert by_id[alice_esim.pk]["archived_at"] is None
+    assert by_id[archived.pk]["archived_at"] is not None
+
+
+@pytest.mark.django_db
+def test_archive_unarchive_round_trip(
+    client: Client, user: User, alice_esim: Esim
+) -> None:
+    access = _access_token(client, user.email)
+    status_before = alice_esim.status
+
+    archived = _post_archive(client, access=access, esim_id=alice_esim.pk)
+    assert archived.status_code == 200
+    body = archived.json()
+    assert body["id"] == alice_esim.pk
+    assert body["archived_at"] is not None
+    assert body["status"] == status_before
+    assert "iccid" in body
+
+    alice_esim.refresh_from_db()
+    assert alice_esim.archived_at is not None
+    assert alice_esim.status == status_before
+
+    restored = _post_unarchive(client, access=access, esim_id=alice_esim.pk)
+    assert restored.status_code == 200
+    assert restored.json()["archived_at"] is None
+    alice_esim.refresh_from_db()
+    assert alice_esim.archived_at is None
+
+
+@pytest.mark.django_db
+def test_archive_unarchive_idempotent_200(
+    client: Client, user: User, alice_esim: Esim
+) -> None:
+    access = _access_token(client, user.email)
+
+    first = _post_archive(client, access=access, esim_id=alice_esim.pk)
+    assert first.status_code == 200
+    first_at = first.json()["archived_at"]
+
+    second = _post_archive(client, access=access, esim_id=alice_esim.pk)
+    assert second.status_code == 200
+    assert second.json()["archived_at"] == first_at
+
+    cleared = _post_unarchive(client, access=access, esim_id=alice_esim.pk)
+    assert cleared.status_code == 200
+    assert cleared.json()["archived_at"] is None
+
+    again = _post_unarchive(client, access=access, esim_id=alice_esim.pk)
+    assert again.status_code == 200
+    assert again.json()["archived_at"] is None
+
+
+@pytest.mark.django_db
+def test_archive_hides_other_users_esim(
+    client: Client, user: User, bob_esim: Esim
+) -> None:
+    access = _access_token(client, user.email)
+    response = _post_archive(client, access=access, esim_id=bob_esim.pk)
+    assert response.status_code == 404
+    bob_esim.refresh_from_db()
+    assert bob_esim.archived_at is None
+
+
+@pytest.mark.django_db
+def test_unarchive_hides_other_users_esim(
+    client: Client, user: User, bob_esim: Esim
+) -> None:
+    bob_esim.archived_at = timezone.now()
+    bob_esim.save(update_fields=["archived_at"])
+    access = _access_token(client, user.email)
+    response = _post_unarchive(client, access=access, esim_id=bob_esim.pk)
+    assert response.status_code == 404
+    bob_esim.refresh_from_db()
+    assert bob_esim.archived_at is not None
+
+
+@pytest.mark.django_db
+def test_detail_returns_archived_esim(
+    client: Client, user: User, alice_esim: Esim
+) -> None:
+    alice_esim.archived_at = timezone.now()
+    alice_esim.save(update_fields=["archived_at"])
+    access = _access_token(client, user.email)
+    response = client.get(
+        f"/api/v1/me/esims/{alice_esim.pk}/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert response.status_code == 200
+    assert response.json()["archived_at"] is not None
