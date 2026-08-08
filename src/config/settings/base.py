@@ -275,6 +275,8 @@ SPECTACULAR_SETTINGS = {
         "DepositRequestStatusEnum": "apps.billing.models.DepositRequest.Status",
         "DepositPaymentMethodEnum": "apps.billing.models.DepositRequest.PaymentMethod",
         "LedgerReferenceTypeEnum": "apps.billing.models.LedgerReferenceType",
+        "InviteRoleEnum": "apps.organizations.models.InviteRole",
+        "MembershipRoleEnum": "apps.organizations.models.MembershipRole",
     },
 }
 
@@ -320,6 +322,10 @@ BILLING_ENABLED = os.environ.get("BILLING_ENABLED", "true").lower() == "true"
 # ADR 020 — Organization / Membership HTTP surfaces under /api/v1/orgs/*
 ORGANIZATIONS_ENABLED = (
     os.environ.get("ORGANIZATIONS_ENABLED", "true").lower() == "true"
+)
+# Pending org invite lifetime (ADR 020); accept is single-use regardless.
+ORGANIZATION_INVITE_TTL_SECONDS = int(
+    os.environ.get("ORGANIZATION_INVITE_TTL_SECONDS", str(7 * 24 * 3600))
 )
 SUBSCRIPTIONS_ENABLED = (
     os.environ.get("SUBSCRIPTIONS_ENABLED", "false").lower() == "true"

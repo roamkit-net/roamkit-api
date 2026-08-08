@@ -37,3 +37,8 @@ def require_transfer_ownership(context: AccountContext) -> None:
 def require_archive_org(context: AccountContext) -> None:
     require_org_mutation(context)
     require_permission(context, "can_archive_org")
+
+
+def require_invite(context: AccountContext) -> None:
+    require_org_mutation(context)
+    require_permission(context, "can_invite")

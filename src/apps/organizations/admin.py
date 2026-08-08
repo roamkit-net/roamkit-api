@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from apps.organizations.models import Membership, Organization
+from apps.organizations.models import Membership, Organization, OrganizationInvite
 
 
 class MembershipInline(admin.TabularInline):
@@ -52,6 +52,39 @@ class MembershipAdmin(admin.ModelAdmin):
     )
     raw_id_fields = ("organization", "user")
     readonly_fields = ("id", "created_at", "updated_at")
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False
+
+
+@admin.register(OrganizationInvite)
+class OrganizationInviteAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "organization",
+        "email_normalized",
+        "role",
+        "status",
+        "expires_at",
+        "created_at",
+    )
+    list_filter = ("status", "role")
+    search_fields = (
+        "id",
+        "email",
+        "email_normalized",
+        "organization__name",
+        "organization__id",
+    )
+    raw_id_fields = ("organization", "invited_by", "accepted_by")
+    readonly_fields = (
+        "id",
+        "token_hash",
+        "accepted_at",
+        "revoked_at",
+        "created_at",
+        "updated_at",
+    )
 
     def has_delete_permission(self, request, obj=None) -> bool:
         return False

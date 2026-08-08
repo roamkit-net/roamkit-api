@@ -1,4 +1,4 @@
-"""Organization read API (ADR 020 / PR3).
+"""Organization read + invite API (ADR 020).
 
 Authz uses ``organization_id`` path/context only. Client-supplied ``account_id``
 is never used as an authorization source.
@@ -8,18 +8,60 @@ from __future__ import annotations
 
 from django.conf import settings
 from drf_spectacular.utils import OpenApiResponse, extend_schema, extend_schema_view
-from rest_framework.exceptions import NotFound
+from rest_framework import status
+from rest_framework.exceptions import (
+    APIException,
+    NotFound,
+    PermissionDenied,
+    ValidationError,
+)
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.organizations.exceptions import (
+    InviteConflictError,
+    InviteInvalidError,
+    NotAllowedError,
+)
 from apps.organizations.models import Membership, MembershipStatus, Organization
-from apps.organizations.serializers import MembershipSerializer, OrganizationSerializer
+from apps.organizations.serializers import (
+    MembershipSerializer,
+    OrganizationInviteAcceptResponseSerializer,
+    OrganizationInviteAcceptSerializer,
+    OrganizationInviteCreateResponseSerializer,
+    OrganizationInviteCreateSerializer,
+    OrganizationInviteSerializer,
+    OrganizationSerializer,
+)
 from apps.organizations.services.authz import require_view
 from apps.organizations.services.context import resolve_organization_context
+from apps.organizations.services.invites import (
+    accept_invite,
+    create_invite,
+    list_pending_invites,
+    revoke_invite,
+)
 from core.openapi_serializers import ErrorDetailSerializer
+
+
+class Conflict(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "Conflict."
+    default_code = "conflict"
+
+
+def _map_invite_error(exc: Exception) -> None:
+    """Convert invite domain errors to DRF exceptions (never returns)."""
+    if isinstance(exc, InviteConflictError):
+        raise Conflict(detail=str(exc)) from exc
+    if isinstance(exc, InviteInvalidError):
+        raise ValidationError({"detail": str(exc)}) from exc
+    if isinstance(exc, NotAllowedError):
+        raise PermissionDenied(detail=str(exc)) from exc
+    raise exc
 
 
 class OrganizationsAPIView(APIView):
@@ -166,3 +208,161 @@ class OrganizationMembersListView(OrganizationsAPIView, ListAPIView):
             .order_by("created_at")
         )
         return Response(MembershipSerializer(qs, many=True).data)
+
+
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Organizations"],
+        operation_id="organization_invites_list",
+        summary="List pending organization invites",
+        description=(
+            "Requires ``can_invite`` (owner/admin) on an **active** organization. "
+            "Does not accept ``account_id`` as an authorization input."
+        ),
+        responses={
+            200: OpenApiResponse(response=OrganizationInviteSerializer(many=True)),
+            401: OpenApiResponse(response=ErrorDetailSerializer),
+            403: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+    ),
+    post=extend_schema(
+        tags=["Organizations"],
+        operation_id="organization_invites_create",
+        summary="Create or refresh a pending invite",
+        description=(
+            "Creates a pending invite, or refreshes the existing pending invite "
+            "for the same normalized email (token rotated). Owner role is not "
+            "inviteable. Email delivery is out of scope for this endpoint."
+        ),
+        request=OrganizationInviteCreateSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=OrganizationInviteCreateResponseSerializer,
+                description="Existing pending invite refreshed.",
+            ),
+            201: OpenApiResponse(
+                response=OrganizationInviteCreateResponseSerializer,
+                description="New pending invite created.",
+            ),
+            401: OpenApiResponse(response=ErrorDetailSerializer),
+            403: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+            409: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+    ),
+)
+class OrganizationInviteListCreateView(OrganizationsAPIView):
+    def get(self, request: Request, organization_id) -> Response:
+        try:
+            qs = list_pending_invites(
+                actor=request.user,
+                organization_id=organization_id,
+            )
+        except (InviteConflictError, InviteInvalidError, NotAllowedError) as exc:
+            _map_invite_error(exc)
+            raise
+        return Response(
+            OrganizationInviteSerializer(
+                qs.select_related("invited_by"),
+                many=True,
+            ).data
+        )
+
+    def post(self, request: Request, organization_id) -> Response:
+        body = OrganizationInviteCreateSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        try:
+            result = create_invite(
+                actor=request.user,
+                organization_id=organization_id,
+                email=body.validated_data["email"],
+                role=body.validated_data["role"],
+            )
+        except (InviteConflictError, InviteInvalidError, NotAllowedError) as exc:
+            _map_invite_error(exc)
+            raise
+        payload = OrganizationInviteCreateResponseSerializer(
+            {
+                "invite": result.invite,
+                "token": result.raw_token,
+                "created": result.created,
+            }
+        ).data
+        return Response(
+            payload,
+            status=status.HTTP_201_CREATED if result.created else status.HTTP_200_OK,
+        )
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Organizations"],
+        operation_id="organization_invites_revoke",
+        summary="Revoke a pending invite",
+        description="Requires ``can_invite``. Idempotent for already-revoked invites.",
+        request=None,
+        responses={
+            200: OpenApiResponse(response=OrganizationInviteSerializer),
+            401: OpenApiResponse(response=ErrorDetailSerializer),
+            403: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+    ),
+)
+class OrganizationInviteRevokeView(OrganizationsAPIView):
+    def post(self, request: Request, organization_id, invite_id) -> Response:
+        try:
+            invite = revoke_invite(
+                actor=request.user,
+                organization_id=organization_id,
+                invite_id=invite_id,
+            )
+        except (InviteConflictError, InviteInvalidError, NotAllowedError) as exc:
+            _map_invite_error(exc)
+            raise
+        return Response(
+            OrganizationInviteSerializer(invite).data,
+        )
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Organizations"],
+        operation_id="organization_invites_accept",
+        summary="Accept an organization invite",
+        description=(
+            "Accept by single-use token. Email on the authenticated user must match "
+            "the invite. Does not merge wallets or move eSIM inventory. Concurrent "
+            "accepts are serialized; the second call is idempotent for the same user."
+        ),
+        request=OrganizationInviteAcceptSerializer,
+        responses={
+            200: OpenApiResponse(response=OrganizationInviteAcceptResponseSerializer),
+            401: OpenApiResponse(response=ErrorDetailSerializer),
+            400: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+    ),
+)
+class OrganizationInviteAcceptView(OrganizationsAPIView):
+    def post(self, request: Request) -> Response:
+        body = OrganizationInviteAcceptSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        try:
+            result = accept_invite(
+                actor=request.user,
+                raw_token=body.validated_data["token"],
+            )
+        except (InviteConflictError, InviteInvalidError, NotAllowedError) as exc:
+            _map_invite_error(exc)
+            raise
+        return Response(
+            OrganizationInviteAcceptResponseSerializer(
+                {
+                    "membership": result.membership,
+                    "organization_id": result.invite.organization_id,
+                    "already_accepted": result.already_accepted,
+                }
+            ).data
+        )
