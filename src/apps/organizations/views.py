@@ -23,6 +23,8 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import User
 from apps.organizations.exceptions import (
+    DeviceBindingConflictError,
+    DeviceBindingNotFoundError,
     InviteConflictError,
     InviteInvalidError,
     LastOwnerError,
@@ -36,6 +38,8 @@ from apps.organizations.models import (
 )
 from apps.organizations.permissions import permissions_for_role
 from apps.organizations.serializers import (
+    DeviceBindingCreateSerializer,
+    DeviceBindingSerializer,
     MembershipRoleUpdateSerializer,
     MembershipSerializer,
     OrganizationCreateSerializer,
@@ -51,6 +55,12 @@ from apps.organizations.serializers import (
 from apps.organizations.services.account_binding import create_organization
 from apps.organizations.services.authz import require_view
 from apps.organizations.services.context import resolve_organization_context
+from apps.organizations.services.device_binding import (
+    create_device_binding,
+    get_device_binding,
+    list_device_bindings,
+    unbind_device_binding,
+)
 from apps.organizations.services.invites import (
     accept_invite,
     create_invite,
@@ -86,6 +96,17 @@ def _map_membership_error(exc: Exception) -> None:
     """Convert membership domain errors to DRF exceptions (never returns)."""
     if isinstance(exc, LastOwnerError):
         raise PermissionDenied(detail=str(exc)) from exc
+    if isinstance(exc, NotAllowedError):
+        raise PermissionDenied(detail=str(exc)) from exc
+    raise exc
+
+
+def _map_device_binding_error(exc: Exception) -> None:
+    """Convert device-binding domain errors to DRF exceptions (never returns)."""
+    if isinstance(exc, DeviceBindingConflictError):
+        raise Conflict(detail=str(exc)) from exc
+    if isinstance(exc, DeviceBindingNotFoundError):
+        raise NotFound(detail=str(exc)) from exc
     if isinstance(exc, NotAllowedError):
         raise PermissionDenied(detail=str(exc)) from exc
     raise exc
@@ -583,3 +604,114 @@ class OrganizationInviteAcceptView(OrganizationsAPIView):
                 }
             ).data
         )
+
+
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Organizations"],
+        operation_id="organization_device_bindings_list",
+        summary="List device bindings",
+        description=(
+            "List DeviceBinding rows for the organization. Requires ``can_view``. "
+            "Bindings attach team Account eSIMs to RoamKit-issued "
+            "``device_external_id`` values (ADR 020). No UEM sync in this API."
+        ),
+        responses={
+            200: OpenApiResponse(response=DeviceBindingSerializer(many=True)),
+            401: OpenApiResponse(response=ErrorDetailSerializer),
+            403: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+    ),
+    post=extend_schema(
+        tags=["Organizations"],
+        operation_id="organization_device_bindings_create",
+        summary="Create device binding",
+        description=(
+            "Bind a team Account eSIM to a new RoamKit-issued "
+            "``device_external_id``. Requires ``can_device_bind`` and an active "
+            "Organization. Personal-Account eSIMs are rejected (404). "
+            "One active binding per eSIM (use ``replace=true`` to rebind). "
+            "Client ``account_id`` / ``device_external_id`` are rejected."
+        ),
+        request=DeviceBindingCreateSerializer,
+        responses={
+            201: OpenApiResponse(response=DeviceBindingSerializer),
+            400: OpenApiResponse(response=ErrorDetailSerializer),
+            401: OpenApiResponse(response=ErrorDetailSerializer),
+            403: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+            409: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+    ),
+)
+class OrganizationDeviceBindingListCreateView(OrganizationsAPIView):
+    def get(self, request: Request, organization_id) -> Response:
+        bindings = list_device_bindings(request.user, organization_id)
+        return Response(DeviceBindingSerializer(bindings, many=True).data)
+
+    def post(self, request: Request, organization_id) -> Response:
+        body = DeviceBindingCreateSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        try:
+            binding = create_device_binding(
+                request.user,
+                organization_id,
+                esim_id=body.validated_data["esim_id"],
+                replace=body.validated_data.get("replace", False),
+            )
+        except (DeviceBindingConflictError, DeviceBindingNotFoundError) as exc:
+            _map_device_binding_error(exc)
+            raise
+        return Response(
+            DeviceBindingSerializer(binding).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Organizations"],
+        operation_id="organization_device_bindings_retrieve",
+        summary="Retrieve device binding",
+        description="Get one DeviceBinding in organization scope (``can_view``).",
+        responses={
+            200: OpenApiResponse(response=DeviceBindingSerializer),
+            401: OpenApiResponse(response=ErrorDetailSerializer),
+            403: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+    ),
+)
+class OrganizationDeviceBindingDetailView(OrganizationsAPIView):
+    def get(self, request: Request, organization_id, binding_id) -> Response:
+        binding = get_device_binding(request.user, organization_id, binding_id)
+        return Response(DeviceBindingSerializer(binding).data)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Organizations"],
+        operation_id="organization_device_bindings_unbind",
+        summary="Unbind device binding",
+        description=(
+            "Mark an active DeviceBinding as ``unbound`` (soft lifecycle). "
+            "Requires ``can_device_bind`` and an active Organization."
+        ),
+        request=None,
+        responses={
+            200: OpenApiResponse(response=DeviceBindingSerializer),
+            401: OpenApiResponse(response=ErrorDetailSerializer),
+            403: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+    ),
+)
+class OrganizationDeviceBindingUnbindView(OrganizationsAPIView):
+    def post(self, request: Request, organization_id, binding_id) -> Response:
+        try:
+            binding = unbind_device_binding(request.user, organization_id, binding_id)
+        except (DeviceBindingConflictError, DeviceBindingNotFoundError) as exc:
+            _map_device_binding_error(exc)
+            raise
+        return Response(DeviceBindingSerializer(binding).data)

@@ -27,3 +27,15 @@ class InviteConflictError(InviteError):
 
 class InviteInvalidError(InviteError):
     """Invite token is invalid, expired, revoked, or email mismatch."""
+
+
+class DeviceBindingError(OrganizationError):
+    """Base device binding domain error."""
+
+
+class DeviceBindingConflictError(DeviceBindingError):
+    """Active binding cardinality or replace conflict."""
+
+
+class DeviceBindingNotFoundError(DeviceBindingError):
+    """Binding or eligible eSIM not found in organization scope."""

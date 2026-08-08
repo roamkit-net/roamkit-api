@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from apps.organizations.models import Membership, Organization, OrganizationInvite
+from apps.organizations.models import (
+    DeviceBinding,
+    DeviceBindingEvent,
+    Membership,
+    Organization,
+    OrganizationInvite,
+)
 
 
 class MembershipInline(admin.TabularInline):
@@ -87,4 +93,87 @@ class OrganizationInviteAdmin(admin.ModelAdmin):
     )
 
     def has_delete_permission(self, request, obj=None) -> bool:
+        return False
+
+
+@admin.register(DeviceBinding)
+class DeviceBindingAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "organization",
+        "esim",
+        "device_external_id",
+        "status",
+        "created_at",
+    )
+    list_filter = ("status",)
+    search_fields = (
+        "id",
+        "device_external_id",
+        "organization__name",
+        "organization__id",
+        "esim__iccid",
+    )
+    raw_id_fields = (
+        "organization",
+        "esim",
+        "bound_by",
+        "unbound_by",
+        "replaced_by",
+    )
+    readonly_fields = (
+        "id",
+        "device_external_id",
+        "created_at",
+        "updated_at",
+        "unbound_at",
+    )
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False
+
+    def has_add_permission(self, request) -> bool:
+        return False
+
+
+@admin.register(DeviceBindingEvent)
+class DeviceBindingEventAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "organization",
+        "action",
+        "device_external_id",
+        "actor",
+        "created_at",
+    )
+    list_filter = ("action",)
+    search_fields = (
+        "id",
+        "device_external_id",
+        "organization__id",
+        "binding__id",
+    )
+    raw_id_fields = (
+        "organization",
+        "binding",
+        "esim",
+        "actor",
+        "previous_binding",
+    )
+    readonly_fields = (
+        "id",
+        "organization",
+        "binding",
+        "esim",
+        "action",
+        "actor",
+        "device_external_id",
+        "previous_binding",
+        "created_at",
+    )
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False
+
+    def has_add_permission(self, request) -> bool:
         return False
