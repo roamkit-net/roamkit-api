@@ -124,6 +124,8 @@ class DeviceBindingAdmin(admin.ModelAdmin):
     readonly_fields = (
         "id",
         "device_external_id",
+        "credential_hash",
+        "credential_issued_at",
         "created_at",
         "updated_at",
         "unbound_at",

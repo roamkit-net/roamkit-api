@@ -150,7 +150,8 @@ def test_owner_can_create_list_retrieve_unbind(client, owner, org, package):
         **headers,
     )
     assert create.status_code == 201, create.content
-    payload = create.json()
+    payload = create.json()["binding"]
+    assert create.json()["credential"]
     assert payload["status"] == DeviceBindingStatus.ACTIVE
     assert payload["esim_id"] == esim.pk
     assert payload["iccid"] == esim.iccid
@@ -230,7 +231,7 @@ def test_viewer_can_list_but_not_unbind(client, owner, viewer_user, org, package
         content_type="application/json",
         **_auth(client, owner),
     )
-    binding_id = create.json()["id"]
+    binding_id = create.json()["binding"]["id"]
 
     listed = client.get(_list_url(org.pk), **_auth(client, viewer_user))
     assert listed.status_code == 200
@@ -317,8 +318,8 @@ def test_replace_rebinds_and_audits(client, owner, org, package):
         content_type="application/json",
         **headers,
     )
-    old_id = first.json()["id"]
-    old_device = first.json()["device_external_id"]
+    old_id = first.json()["binding"]["id"]
+    old_device = first.json()["binding"]["device_external_id"]
 
     replaced = client.post(
         _list_url(org.pk),
@@ -327,9 +328,10 @@ def test_replace_rebinds_and_audits(client, owner, org, package):
         **headers,
     )
     assert replaced.status_code == 201, replaced.content
-    new_id = replaced.json()["id"]
+    new_id = replaced.json()["binding"]["id"]
     assert new_id != old_id
-    assert replaced.json()["device_external_id"] != old_device
+    assert replaced.json()["binding"]["device_external_id"] != old_device
+    assert replaced.json()["credential"]
 
     old = DeviceBinding.objects.get(pk=old_id)
     assert old.status == DeviceBindingStatus.REPLACED
@@ -416,10 +418,11 @@ def test_hard_delete_blocked(client, owner, org, package):
         content_type="application/json",
         **_auth(client, owner),
     )
-    binding = DeviceBinding.objects.get(pk=create.json()["id"])
+    binding = DeviceBinding.objects.get(pk=create.json()["binding"]["id"])
     with pytest.raises(HardDeleteViolation):
         binding.delete()
-    event = DeviceBindingEvent.objects.get(binding=binding)
+    event = DeviceBindingEvent.objects.filter(binding=binding).first()
+    assert event is not None
     with pytest.raises(HardDeleteViolation):
         event.delete()
 
@@ -440,6 +443,6 @@ def test_foreign_org_binding_detail_404(client, owner, stranger, package):
         content_type="application/json",
         **_auth(client, stranger),
     )
-    binding_id = create.json()["id"]
+    binding_id = create.json()["binding"]["id"]
     resp = client.get(_detail_url(org_a.pk, binding_id), **_auth(client, owner))
     assert resp.status_code == 404

@@ -23,9 +23,13 @@ from apps.organizations.services.device_binding import (
     create_device_binding,
     get_device_binding,
     list_device_bindings,
+    rotate_device_credential,
     unbind_device_binding,
 )
-from apps.organizations.services.device_status import get_device_status
+from apps.organizations.services.device_status import (
+    get_device_status,
+    get_device_status_by_credential,
+)
 from apps.organizations.services.invites import (
     accept_invite,
     create_invite,
@@ -47,8 +51,10 @@ __all__ = [
     "create_organization",
     "get_device_binding",
     "get_device_status",
+    "get_device_status_by_credential",
     "list_device_bindings",
     "list_pending_invites",
+    "rotate_device_credential",
     "require_archive_org",
     "require_assign_esim",
     "require_device_bind",

@@ -233,3 +233,35 @@ class DeviceStatusSerializer(serializers.Serializer):
     usage = DeviceStatusUsageSerializer()
     auto_topup = DeviceStatusAutoTopupSerializer()
     checked_at = serializers.DateTimeField()
+
+
+class DeviceBindingCredentialResponseSerializer(serializers.Serializer):
+    """Binding plus one-time plaintext credential (create / rotate only)."""
+
+    binding = DeviceBindingSerializer()
+    credential = serializers.CharField(
+        help_text="Opaque device secret; shown only at issue/rotate time."
+    )
+
+
+class DeviceStatusRequestSerializer(serializers.Serializer):
+    """Device-facing status request (credential in body, never in URL)."""
+
+    device_external_id = serializers.CharField(max_length=64)
+    credential = serializers.CharField(max_length=256)
+
+    def validate(self, attrs: dict) -> dict:
+        if "organization_id" in self.initial_data:
+            raise serializers.ValidationError(
+                {
+                    "organization_id": (
+                        "organization_id is not accepted on the device status "
+                        "endpoint; credential scopes the binding."
+                    )
+                }
+            )
+        if "account_id" in self.initial_data:
+            raise serializers.ValidationError(
+                {"account_id": "Client-supplied account_id is not accepted."}
+            )
+        return attrs

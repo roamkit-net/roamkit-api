@@ -177,6 +177,7 @@ AUTH_PASSWORD_RESET_CONFIRM_RATE = os.environ.get(
 AUTH_GOOGLE_RATE = os.environ.get("AUTH_GOOGLE_RATE", "10/min")
 AUTH_TURNSTILE_DEGRADED_RATE = os.environ.get("AUTH_TURNSTILE_DEGRADED_RATE", "5/hour")
 BILLING_VOUCHER_REDEEM_RATE = os.environ.get("BILLING_VOUCHER_REDEEM_RATE", "10/5min")
+DEVICE_STATUS_RATE = os.environ.get("DEVICE_STATUS_RATE", "60/hour")
 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
@@ -202,6 +203,7 @@ REST_FRAMEWORK = {
         "auth_password_reset_confirm": AUTH_PASSWORD_RESET_CONFIRM_RATE,
         "auth_google": AUTH_GOOGLE_RATE,
         "billing_voucher_redeem": BILLING_VOUCHER_REDEEM_RATE,
+        "device_status": DEVICE_STATUS_RATE,
     },
 }
 
