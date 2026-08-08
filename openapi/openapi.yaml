@@ -1548,8 +1548,15 @@ components:
       - unknown
       type: string
     AutoTopupPolicy:
-      description: Persisted auto top-up policy response (v2 trigger fields).
+      description: Persisted auto top-up policy response (v2 triggers + v3 lifetime).
       properties:
+        active_until:
+          description: Optional UTC exclusive end bound for policy lifetime (v3). Null means no schedule
+            limit.
+          format: date-time
+          nullable: true
+          readOnly: true
+          type: string
         cooldown_until:
           format: date-time
           nullable: true
@@ -1611,6 +1618,7 @@ components:
           readOnly: true
           type: integer
       required:
+      - active_until
       - cooldown_until
       - created_at
       - enabled
@@ -1642,8 +1650,13 @@ components:
       - disabled
       type: string
     AutoTopupPolicyWriteRequest:
-      description: PUT body with v2 ``expiry_enabled`` + ``usage_mode`` (no ``trigger_mode``).
+      description: PUT body with v2 triggers + optional v3 ``active_until``.
       properties:
+        active_until:
+          description: Optional UTC exclusive lifetime bound (ISO-8601). Null/omitted = no schedule limit.
+          format: date-time
+          nullable: true
+          type: string
         enabled:
           default: true
           type: boolean
