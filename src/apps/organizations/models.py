@@ -1,8 +1,8 @@
-"""Organization + Membership collaboration models (ADR 020 / PR1).
+"""Organization + Membership collaboration models (ADR 020).
 
 Organization is the collaboration aggregate — not a money or inventory owner.
-``billing.Account`` remains the sole financial owner (ADR 010). Team Account
-binding (``Account.kind`` + ``Organization.account``) is a later PR.
+``billing.Account`` remains the sole financial owner (ADR 010). Each
+Organization has exactly one team Account (``kind=organization``).
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ class MembershipStatus(models.TextChoices):
 class Organization(models.Model):
     """Collaboration aggregate for a team (ADR 020).
 
-    Not a financial owner. No ``account`` FK in this PR — that arrives with
-    ``Account.kind`` / team Account binding.
+    Not a financial owner. Money and (later) eSIM inventory live on
+    ``account`` (``billing.Account`` with ``kind=organization``).
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -64,6 +64,15 @@ class Organization(models.Model):
         choices=OrganizationStatus.choices,
         default=OrganizationStatus.ACTIVE,
         db_index=True,
+    )
+    account = models.OneToOneField(
+        "billing.Account",
+        on_delete=models.PROTECT,
+        related_name="organization",
+        help_text=(
+            "Dedicated team billing Account (kind=organization). "
+            "Never a personal Account."
+        ),
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
