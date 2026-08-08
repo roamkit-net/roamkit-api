@@ -150,7 +150,7 @@ def test_member_can_read_status_from_cache(client, owner, member_user, org, pack
         threshold_mb=100,
         renew_mode=EsimAutoTopupPolicy.RenewMode.UNTIL_FUNDS,
     )
-    binding = create_device_binding(owner, org.pk, esim_id=esim.pk)
+    binding = create_device_binding(owner, org.pk, esim_id=esim.pk).binding
 
     source = STATUS_SERVICE.read_text(encoding="utf-8")
     assert "get_topup_provider" not in source
@@ -182,7 +182,7 @@ def test_unknown_usage_returns_nulls_not_error(client, owner, org, package):
         package=package,
         iccid="891000000000022222",
     )
-    binding = create_device_binding(owner, org.pk, esim_id=esim.pk)
+    binding = create_device_binding(owner, org.pk, esim_id=esim.pk).binding
     resp = client.get(
         _status_url(org.pk, binding.device_external_id),
         **_auth(client, owner),
@@ -204,7 +204,7 @@ def test_viewer_can_read_status(client, owner, viewer_user, org, package):
         package=package,
         iccid="891000000000033333",
     )
-    binding = create_device_binding(owner, org.pk, esim_id=esim.pk)
+    binding = create_device_binding(owner, org.pk, esim_id=esim.pk).binding
     resp = client.get(
         _status_url(org.pk, binding.device_external_id),
         **_auth(client, viewer_user),
@@ -222,7 +222,7 @@ def test_unbound_binding_not_found(client, owner, org, package):
         package=package,
         iccid="891000000000044444",
     )
-    binding = create_device_binding(owner, org.pk, esim_id=esim.pk)
+    binding = create_device_binding(owner, org.pk, esim_id=esim.pk).binding
     device_id = binding.device_external_id
     unbind_device_binding(owner, org.pk, binding.pk)
     resp = client.get(_status_url(org.pk, device_id), **_auth(client, owner))
@@ -237,7 +237,7 @@ def test_replaced_binding_device_id_not_found(client, owner, org, package):
         package=package,
         iccid="891000000000055555",
     )
-    first = create_device_binding(owner, org.pk, esim_id=esim.pk)
+    first = create_device_binding(owner, org.pk, esim_id=esim.pk).binding
     old_device = first.device_external_id
     create_device_binding(owner, org.pk, esim_id=esim.pk, replace=True)
     resp = client.get(_status_url(org.pk, old_device), **_auth(client, owner))
@@ -254,7 +254,7 @@ def test_cross_org_lookup_not_found(client, owner, stranger, package):
         package=package,
         iccid="891000000000066666",
     )
-    binding = create_device_binding(stranger, org_b.pk, esim_id=esim.pk)
+    binding = create_device_binding(stranger, org_b.pk, esim_id=esim.pk).binding
     resp = client.get(
         _status_url(org_a.pk, binding.device_external_id),
         **_auth(client, owner),
@@ -270,7 +270,7 @@ def test_stranger_without_membership_not_found(client, owner, stranger, org, pac
         package=package,
         iccid="891000000000077777",
     )
-    binding = create_device_binding(owner, org.pk, esim_id=esim.pk)
+    binding = create_device_binding(owner, org.pk, esim_id=esim.pk).binding
     resp = client.get(
         _status_url(org.pk, binding.device_external_id),
         **_auth(client, stranger),
@@ -289,7 +289,7 @@ def test_suspended_membership_forbidden(client, owner, member_user, org, package
         package=package,
         iccid="891000000000088888",
     )
-    binding = create_device_binding(owner, org.pk, esim_id=esim.pk)
+    binding = create_device_binding(owner, org.pk, esim_id=esim.pk).binding
     resp = client.get(
         _status_url(org.pk, binding.device_external_id),
         **_auth(client, member_user),
@@ -309,7 +309,7 @@ def test_unlimited_usage_signal(client, owner, org, package):
     esim.usage_remaining_mb = None
     esim.usage_total_mb = None
     esim.save()
-    binding = create_device_binding(owner, org.pk, esim_id=esim.pk)
+    binding = create_device_binding(owner, org.pk, esim_id=esim.pk).binding
     resp = client.get(
         _status_url(org.pk, binding.device_external_id),
         **_auth(client, owner),

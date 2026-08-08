@@ -1,11 +1,13 @@
-"""Read-only UEM device status snapshot (ADR 020 / PR17).
+"""Read-only UEM device status snapshot (ADR 020).
 
-Org-authenticated lookup by ``device_external_id``. No provider refresh,
-no BlackBerry sync, no device-credential endpoint.
+Shared builder for org-authenticated (PR17) and device-credential (PR18)
+paths. No provider refresh, no BlackBerry sync.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -73,6 +75,23 @@ class DeviceStatusSnapshot:
     checked_at: datetime
 
 
+def build_device_status_snapshot(binding: DeviceBinding) -> DeviceStatusSnapshot:
+    """Pure status snapshot from an already-authorized active binding."""
+    esim = binding.esim
+    return DeviceStatusSnapshot(
+        device_external_id=binding.device_external_id,
+        binding_status=binding.status,
+        esim={
+            "id": esim.pk,
+            "iccid": esim.iccid,
+            "status": esim.status,
+        },
+        usage=_usage_snapshot(esim),
+        auto_topup=_auto_topup_snapshot(esim),
+        checked_at=timezone.now(),
+    )
+
+
 def get_device_status(
     actor: User,
     organization_id,
@@ -104,15 +123,42 @@ def get_device_status(
         # Defense in depth — team inventory invariant.
         raise NotFound(detail="Not found.")
 
-    return DeviceStatusSnapshot(
-        device_external_id=binding.device_external_id,
-        binding_status=binding.status,
-        esim={
-            "id": esim.pk,
-            "iccid": esim.iccid,
-            "status": esim.status,
-        },
-        usage=_usage_snapshot(esim),
-        auto_topup=_auto_topup_snapshot(esim),
-        checked_at=timezone.now(),
+    return build_device_status_snapshot(binding)
+
+
+def _hash_credential(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def get_device_status_by_credential(
+    *,
+    device_external_id: str,
+    credential: str,
+) -> DeviceStatusSnapshot:
+    """Device-facing status via opaque credential (PR18).
+
+    ``device_external_id`` alone is never enough. Failures return 404 without
+    distinguishing missing binding vs bad credential.
+    """
+    device_external_id = (device_external_id or "").strip()
+    credential = credential or ""
+    if not device_external_id or not credential:
+        raise NotFound(detail="Not found.")
+
+    digest = _hash_credential(credential)
+    binding = (
+        DeviceBinding.objects.select_related("esim", "esim__account", "organization")
+        .filter(
+            device_external_id=device_external_id,
+            status=DeviceBindingStatus.ACTIVE,
+        )
+        .first()
     )
+    if binding is None or not binding.credential_hash:
+        raise NotFound(detail="Not found.")
+    if not hmac.compare_digest(binding.credential_hash, digest):
+        raise NotFound(detail="Not found.")
+    if binding.esim.account_id != binding.organization.account_id:
+        raise NotFound(detail="Not found.")
+
+    return build_device_status_snapshot(binding)

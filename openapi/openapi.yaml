@@ -26,6 +26,9 @@ tags:
 - description: Team organizations and memberships (ADR 020). Authorize via organization_id; never via
     client account_id.
   name: Organizations
+- description: Device-facing endpoints authenticated by opaque device credential (not user JWT). Used
+    by managed devices / UEM.
+  name: Device
 - description: Authenticated user profile
   name: Users
 - description: Staff-only read-only Operations Dashboard (members, search, aggregates)
@@ -909,6 +912,46 @@ paths:
       tags:
       - Billing
       - Vouchers
+  /api/v1/device/status/:
+    post:
+      description: Read-only status for managed devices. Authenticate with ``device_external_id`` + opaque
+        ``credential`` in the body (never put the secret in the URL). Same snapshot shape as the org status
+        API. Unbound/replaced/wrong credential → 404. No user JWT; rate-limited by IP.
+      operationId: device_status
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceStatusRequestRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceStatus'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      summary: Device-facing status snapshot
+      tags:
+      - Device
   /api/v1/locations/:
     get:
       description: List catalog locations that have at least one active package.
@@ -1979,7 +2022,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeviceBinding'
+                $ref: '#/components/schemas/DeviceBindingCredentialResponse'
           description: ''
         '400':
           content:
@@ -2061,6 +2104,54 @@ paths:
       security:
       - bearerAuth: []
       summary: Retrieve device binding
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/device-bindings/{binding_id}/credential/rotate/:
+    post:
+      description: Issue a new opaque device credential for an active binding. The previous secret stops
+        working immediately. Plaintext is returned only in this response. Requires ``can_device_bind``.
+      operationId: organization_device_bindings_rotate_credential
+      parameters:
+      - in: path
+        name: binding_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceBindingCredentialResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Rotate device credential
       tags:
       - Organizations
   /api/v1/orgs/{organization_id}/device-bindings/{binding_id}/unbind/:
@@ -3009,6 +3100,18 @@ components:
       required:
       - esim_id
       type: object
+    DeviceBindingCredentialResponse:
+      description: Binding plus one-time plaintext credential (create / rotate only).
+      properties:
+        binding:
+          $ref: '#/components/schemas/DeviceBinding'
+        credential:
+          description: Opaque device secret; shown only at issue/rotate time.
+          type: string
+      required:
+      - binding
+      - credential
+      type: object
     DeviceBindingStatusEnum:
       description: '* `active` - Active
 
@@ -3063,6 +3166,21 @@ components:
       - iccid
       - id
       - status
+      type: object
+    DeviceStatusRequestRequest:
+      description: Device-facing status request (credential in body, never in URL).
+      properties:
+        credential:
+          maxLength: 256
+          minLength: 1
+          type: string
+        device_external_id:
+          maxLength: 64
+          minLength: 1
+          type: string
+      required:
+      - credential
+      - device_external_id
       type: object
     DeviceStatusUsage:
       properties:

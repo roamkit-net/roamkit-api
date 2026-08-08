@@ -348,6 +348,14 @@ class DeviceBinding(models.Model):
         db_index=True,
         help_text="RoamKit-issued opaque device key (not a client authz signal).",
     )
+    credential_hash = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="SHA-256 hex of device credential; plaintext never stored.",
+    )
+    credential_issued_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(
         max_length=16,
         choices=DeviceBindingStatus.choices,
@@ -430,6 +438,8 @@ class DeviceBindingEventAction(models.TextChoices):
     BIND = "bind", "Bind"
     UNBIND = "unbind", "Unbind"
     REBIND = "rebind", "Rebind"
+    CREDENTIAL_ISSUE = "credential_issue", "Credential issue"
+    CREDENTIAL_ROTATE = "credential_rotate", "Credential rotate"
 
 
 class DeviceBindingEvent(models.Model):
@@ -451,7 +461,7 @@ class DeviceBindingEvent(models.Model):
         on_delete=models.PROTECT,
         related_name="device_binding_events",
     )
-    action = models.CharField(max_length=16, choices=DeviceBindingEventAction.choices)
+    action = models.CharField(max_length=32, choices=DeviceBindingEventAction.choices)
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

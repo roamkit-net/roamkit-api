@@ -16,7 +16,7 @@ from rest_framework.exceptions import (
     ValidationError,
 )
 from rest_framework.generics import ListAPIView, RetrieveAPIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -39,7 +39,9 @@ from apps.organizations.models import (
 from apps.organizations.permissions import permissions_for_role
 from apps.organizations.serializers import (
     DeviceBindingCreateSerializer,
+    DeviceBindingCredentialResponseSerializer,
     DeviceBindingSerializer,
+    DeviceStatusRequestSerializer,
     DeviceStatusSerializer,
     MembershipRoleUpdateSerializer,
     MembershipSerializer,
@@ -60,9 +62,13 @@ from apps.organizations.services.device_binding import (
     create_device_binding,
     get_device_binding,
     list_device_bindings,
+    rotate_device_credential,
     unbind_device_binding,
 )
-from apps.organizations.services.device_status import get_device_status
+from apps.organizations.services.device_status import (
+    get_device_status,
+    get_device_status_by_credential,
+)
 from apps.organizations.services.invites import (
     accept_invite,
     create_invite,
@@ -74,6 +80,7 @@ from apps.organizations.services.membership import (
     set_member_role,
     transfer_ownership,
 )
+from apps.organizations.throttles import DeviceStatusRateThrottle
 from core.openapi_serializers import ErrorDetailSerializer
 
 
@@ -638,7 +645,7 @@ class OrganizationInviteAcceptView(OrganizationsAPIView):
         ),
         request=DeviceBindingCreateSerializer,
         responses={
-            201: OpenApiResponse(response=DeviceBindingSerializer),
+            201: OpenApiResponse(response=DeviceBindingCredentialResponseSerializer),
             400: OpenApiResponse(response=ErrorDetailSerializer),
             401: OpenApiResponse(response=ErrorDetailSerializer),
             403: OpenApiResponse(response=ErrorDetailSerializer),
@@ -656,7 +663,7 @@ class OrganizationDeviceBindingListCreateView(OrganizationsAPIView):
         body = DeviceBindingCreateSerializer(data=request.data)
         body.is_valid(raise_exception=True)
         try:
-            binding = create_device_binding(
+            result = create_device_binding(
                 request.user,
                 organization_id,
                 esim_id=body.validated_data["esim_id"],
@@ -666,7 +673,9 @@ class OrganizationDeviceBindingListCreateView(OrganizationsAPIView):
             _map_device_binding_error(exc)
             raise
         return Response(
-            DeviceBindingSerializer(binding).data,
+            DeviceBindingCredentialResponseSerializer(
+                {"binding": result.binding, "credential": result.credential}
+            ).data,
             status=status.HTTP_201_CREATED,
         )
 
@@ -720,6 +729,39 @@ class OrganizationDeviceBindingUnbindView(OrganizationsAPIView):
 
 
 @extend_schema_view(
+    post=extend_schema(
+        tags=["Organizations"],
+        operation_id="organization_device_bindings_rotate_credential",
+        summary="Rotate device credential",
+        description=(
+            "Issue a new opaque device credential for an active binding. "
+            "The previous secret stops working immediately. Plaintext is returned "
+            "only in this response. Requires ``can_device_bind``."
+        ),
+        request=None,
+        responses={
+            200: OpenApiResponse(response=DeviceBindingCredentialResponseSerializer),
+            401: OpenApiResponse(response=ErrorDetailSerializer),
+            403: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+    ),
+)
+class OrganizationDeviceBindingRotateCredentialView(OrganizationsAPIView):
+    def post(self, request: Request, organization_id, binding_id) -> Response:
+        try:
+            result = rotate_device_credential(request.user, organization_id, binding_id)
+        except (DeviceBindingConflictError, DeviceBindingNotFoundError) as exc:
+            _map_device_binding_error(exc)
+            raise
+        return Response(
+            DeviceBindingCredentialResponseSerializer(
+                {"binding": result.binding, "credential": result.credential}
+            ).data
+        )
+
+
+@extend_schema_view(
     get=extend_schema(
         tags=["Organizations"],
         operation_id="organization_device_status",
@@ -747,6 +789,61 @@ class OrganizationDeviceStatusView(OrganizationsAPIView):
             request.user,
             organization_id,
             device_external_id=device_external_id,
+        )
+        return Response(
+            DeviceStatusSerializer(
+                {
+                    "device_external_id": snapshot.device_external_id,
+                    "binding_status": snapshot.binding_status,
+                    "esim": snapshot.esim,
+                    "usage": snapshot.usage,
+                    "auto_topup": snapshot.auto_topup,
+                    "checked_at": snapshot.checked_at,
+                }
+            ).data
+        )
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Device"],
+        operation_id="device_status",
+        summary="Device-facing status snapshot",
+        description=(
+            "Read-only status for managed devices. Authenticate with "
+            "``device_external_id`` + opaque ``credential`` in the body "
+            "(never put the secret in the URL). Same snapshot shape as the "
+            "org status API. Unbound/replaced/wrong credential → 404. "
+            "No user JWT; rate-limited by IP."
+        ),
+        request=DeviceStatusRequestSerializer,
+        responses={
+            200: OpenApiResponse(response=DeviceStatusSerializer),
+            400: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+            429: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+        auth=[],
+    ),
+)
+class DeviceStatusView(APIView):
+    """Unauthenticated device status via opaque credential (PR18)."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [DeviceStatusRateThrottle]
+
+    def initial(self, request: Request, *args, **kwargs) -> None:
+        super().initial(request, *args, **kwargs)
+        if not settings.ORGANIZATIONS_ENABLED:
+            raise NotFound(detail="Not found.")
+
+    def post(self, request: Request) -> Response:
+        body = DeviceStatusRequestSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        snapshot = get_device_status_by_credential(
+            device_external_id=body.validated_data["device_external_id"],
+            credential=body.validated_data["credential"],
         )
         return Response(
             DeviceStatusSerializer(
