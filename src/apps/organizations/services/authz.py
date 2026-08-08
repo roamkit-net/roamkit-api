@@ -19,7 +19,12 @@ def require_view(context: AccountContext) -> None:
 
 
 def require_spend(context: AccountContext) -> None:
-    """Spend gate (orders/topups) — not wired to spend APIs in this PR."""
+    """Spend gate for team Account context (orders; top-ups later).
+
+    Requires active Organization + ``can_spend`` (owner/admin/member).
+    Personal context has no org permissions object — callers must only invoke
+    this for ``kind == "organization"``.
+    """
     require_org_mutation(context)
     require_permission(context, "can_spend")
 
