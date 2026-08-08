@@ -90,6 +90,7 @@ def esim(user: User, package: Package) -> Esim:
     )
     return Esim.objects.create(
         user=user,
+        account=user.billing_account,
         order=order,
         iccid="891000000000007777",
         status=Esim.Status.ACTIVATED,
@@ -107,6 +108,7 @@ def other_esim(other_user: User, package: Package) -> Esim:
     )
     return Esim.objects.create(
         user=other_user,
+        account=other_user.billing_account,
         order=order,
         iccid="891000000000007778",
         status=Esim.Status.ACTIVATED,

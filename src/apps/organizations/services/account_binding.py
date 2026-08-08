@@ -1,7 +1,4 @@
-"""Bind a team billing Account to an Organization (ADR 020).
-
-Does not touch eSIM inventory ownership (``Esim.account`` is a later PR).
-"""
+"""Bind a team billing Account to an Organization (ADR 020)."""
 
 from __future__ import annotations
 

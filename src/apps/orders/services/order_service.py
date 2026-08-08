@@ -254,6 +254,7 @@ class OrderService:
                 esims.append(
                     lifecycle_service.create_purchased(
                         user=order.account.user,
+                        account=order.account,
                         order=order,
                         iccid=sim.iccid,
                         lpa=sim.lpa,
