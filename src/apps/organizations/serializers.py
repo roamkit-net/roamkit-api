@@ -90,6 +90,15 @@ class MembershipRoleUpdateSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=MANAGED_MEMBERSHIP_ROLES)
 
 
+class OrganizationTransferOwnershipSerializer(serializers.Serializer):
+    new_owner_user_id = serializers.IntegerField(min_value=1)
+
+
+class OrganizationTransferOwnershipResponseSerializer(serializers.Serializer):
+    organization = OrganizationSerializer()
+    new_owner_membership = MembershipSerializer()
+
+
 class OrganizationInviteSerializer(serializers.ModelSerializer):
     invited_by_email = serializers.EmailField(
         source="invited_by.email",
