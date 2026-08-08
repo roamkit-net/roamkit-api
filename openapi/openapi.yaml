@@ -26,6 +26,9 @@ tags:
 - description: Team organizations and memberships (ADR 020). Authorize via organization_id; never via
     client account_id.
   name: Organizations
+- description: Device-facing endpoints authenticated by opaque device credential (not user JWT). Used
+    by managed devices / UEM.
+  name: Device
 - description: Authenticated user profile
   name: Users
 - description: Staff-only read-only Operations Dashboard (members, search, aggregates)

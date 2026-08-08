@@ -251,6 +251,13 @@ SPECTACULAR_SETTINGS = {
                 "Authorize via organization_id; never via client account_id."
             ),
         },
+        {
+            "name": "Device",
+            "description": (
+                "Device-facing endpoints authenticated by opaque device "
+                "credential (not user JWT). Used by managed devices / UEM."
+            ),
+        },
         {"name": "Users", "description": "Authenticated user profile"},
         {
             "name": "Ops",
