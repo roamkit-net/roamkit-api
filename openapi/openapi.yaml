@@ -956,9 +956,27 @@ paths:
       - Catalog
   /api/v1/me/esims/:
     get:
-      description: List eSIMs owned by the authenticated user.
+      description: List eSIMs owned by the authenticated user. By default archived eSIMs are omitted (``include_archived=false``).
+        Filtering is applied before pagination. ``archived_at`` is presentation-only and does not affect
+        lifecycle, top-up, billing, or provider sync.
       operationId: esim_list
       parameters:
+      - description: When false (default), exclude rows with ``archived_at`` set. When true, include archived
+          eSIMs in the page.
+        examples:
+          Default—HideArchived:
+            description: GET /api/v1/me/esims/?include_archived=false
+            summary: Default — hide archived
+            value: false
+          IncludeArchived:
+            description: GET /api/v1/me/esims/?include_archived=true
+            summary: Include archived
+            value: true
+        in: query
+        name: include_archived
+        schema:
+          default: false
+          type: boolean
       - description: A page number within the paginated result set.
         in: query
         name: page
@@ -1019,8 +1037,8 @@ paths:
       - eSIM
     patch:
       description: Partially update an owned eSIM. Only ``note`` is writable. ``note`` is user-local metadata
-        and is never synchronized to Airalo. Auth-gated like other My eSIM endpoints (no dedicated throttle).
-        PUT is not supported.
+        and is never synchronized to Airalo. ``archived_at`` is not writable here — use POST archive/unarchive.
+        Auth-gated like other My eSIM endpoints (no dedicated throttle). PUT is not supported.
       operationId: esim_partial_update
       parameters:
       - in: path
@@ -1061,6 +1079,47 @@ paths:
       security:
       - bearerAuth: []
       summary: Update my eSIM note
+      tags:
+      - eSIM
+  /api/v1/me/esims/{id}/archive/:
+    post:
+      description: 'Set ``archived_at`` on an owned eSIM (user-local visibility). Idempotent: if already
+        archived, returns 200 with the current resource. Concurrent requests are safe; last committed
+        write wins. Does not change lifecycle ``status``, top-up eligibility, or provider state. Always
+        returns the full eSIM serializer body.'
+      operationId: esim_archive
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Archive:
+                  description: POST /api/v1/me/esims/{id}/archive/
+                  value: null
+              schema:
+                $ref: '#/components/schemas/Esim'
+          description: eSIM (archived_at set)
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: eSIM not found
+      security:
+      - bearerAuth: []
+      summary: Archive my eSIM
       tags:
       - eSIM
   /api/v1/me/esims/{id}/auto-topup/:
@@ -1373,6 +1432,46 @@ paths:
       security:
       - bearerAuth: []
       summary: Purchase top-up
+      tags:
+      - eSIM
+  /api/v1/me/esims/{id}/unarchive/:
+    post:
+      description: 'Clear ``archived_at`` on an owned eSIM (user-local visibility). Idempotent: if not
+        archived, returns 200 with the current resource. Concurrent requests are safe; last committed
+        write wins. Always returns the full eSIM serializer body.'
+      operationId: esim_unarchive
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              examples:
+                Unarchive:
+                  description: POST /api/v1/me/esims/{id}/unarchive/
+                  value: null
+              schema:
+                $ref: '#/components/schemas/Esim'
+          description: eSIM (archived_at cleared)
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: eSIM not found
+      security:
+      - bearerAuth: []
+      summary: Unarchive my eSIM
       tags:
       - eSIM
   /api/v1/me/esims/{id}/usage/:
@@ -1898,9 +1997,13 @@ components:
 
         ``note`` is the only writable field (PATCH). It is user-local metadata and
 
-        is never synchronized to Airalo. Future RoamKit-only user metadata belongs
+        is never synchronized to Airalo. ``archived_at`` is read-only here; mutate
 
-        on the same model with the same non-sync rule.'
+        via POST archive/unarchive. Future RoamKit-only user metadata
+
+        (``favorite_at``, ``pinned_at``, ``hidden_at``) belongs on the same model
+
+        with the same non-sync rule — presentation only, never lifecycle.'
       properties:
         activated_at:
           description: First ``system.status.activated`` event time, or null.
@@ -1911,6 +2014,13 @@ components:
           allOf:
           - $ref: '#/components/schemas/ActivationPolicyEnum'
           readOnly: true
+        archived_at:
+          description: User-local visibility only. Must never affect lifecycle, top-up, billing, auto-topup,
+            provider sync, usage refresh, or events.
+          format: date-time
+          nullable: true
+          readOnly: true
+          type: string
         country_code:
           readOnly: true
           type: string
@@ -1956,7 +2066,7 @@ components:
           type: string
         note:
           description: User-local note on this eSIM. Never synchronized to Airalo. Future user metadata
-            (label, favorite, archived, …) belongs on the same model without provider sync.
+            (favorite_at, pinned_at, hidden_at) belongs on the same model without provider sync.
           maxLength: 255
           type: string
         package_title:
@@ -2035,6 +2145,7 @@ components:
       required:
       - activated_at
       - activation_policy
+      - archived_at
       - country_code
       - created_at
       - currency
@@ -3236,13 +3347,17 @@ components:
 
         ``note`` is the only writable field (PATCH). It is user-local metadata and
 
-        is never synchronized to Airalo. Future RoamKit-only user metadata belongs
+        is never synchronized to Airalo. ``archived_at`` is read-only here; mutate
 
-        on the same model with the same non-sync rule.'
+        via POST archive/unarchive. Future RoamKit-only user metadata
+
+        (``favorite_at``, ``pinned_at``, ``hidden_at``) belongs on the same model
+
+        with the same non-sync rule — presentation only, never lifecycle.'
       properties:
         note:
           description: User-local note on this eSIM. Never synchronized to Airalo. Future user metadata
-            (label, favorite, archived, …) belongs on the same model without provider sync.
+            (favorite_at, pinned_at, hidden_at) belongs on the same model without provider sync.
           maxLength: 255
           type: string
       type: object

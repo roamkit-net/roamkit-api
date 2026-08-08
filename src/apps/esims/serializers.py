@@ -16,8 +16,10 @@ class EsimSerializer(serializers.ModelSerializer):
     """Owned eSIM with ICCID, install, setup, lifecycle, and order snapshot.
 
     ``note`` is the only writable field (PATCH). It is user-local metadata and
-    is never synchronized to Airalo. Future RoamKit-only user metadata belongs
-    on the same model with the same non-sync rule.
+    is never synchronized to Airalo. ``archived_at`` is read-only here; mutate
+    via POST archive/unarchive. Future RoamKit-only user metadata
+    (``favorite_at``, ``pinned_at``, ``hidden_at``) belongs on the same model
+    with the same non-sync rule — presentation only, never lifecycle.
     """
 
     package_title = serializers.CharField(source="order.package_title", read_only=True)
@@ -47,8 +49,8 @@ class EsimSerializer(serializers.ModelSerializer):
         max_length=255,
         help_text=(
             "User-local note on this eSIM. Never synchronized to Airalo. "
-            "Future user metadata (label, favorite, archived, …) belongs on "
-            "the same model without provider sync."
+            "Future user metadata (favorite_at, pinned_at, hidden_at) belongs "
+            "on the same model without provider sync."
         ),
     )
 
@@ -78,6 +80,7 @@ class EsimSerializer(serializers.ModelSerializer):
             "usage_expired_at",
             "usage_synced_at",
             "note",
+            "archived_at",
             "package_title",
             "location_title",
             "country_code",
@@ -113,6 +116,7 @@ class EsimSerializer(serializers.ModelSerializer):
             "usage_is_unlimited",
             "usage_expired_at",
             "usage_synced_at",
+            "archived_at",
             "package_title",
             "location_title",
             "country_code",
