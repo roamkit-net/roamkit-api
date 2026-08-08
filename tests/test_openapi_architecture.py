@@ -30,6 +30,8 @@ PUBLIC_OPERATION_IDS = frozenset(
         "catalog_packages_list",
         "catalog_locations_list",
         "catalog_locations_retrieve",
+        # Device credential in body (not user JWT); see DeviceStatusView.
+        "device_status",
     }
 )
 
