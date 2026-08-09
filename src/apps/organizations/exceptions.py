@@ -53,6 +53,10 @@ class UemSerialMatchError(DeviceBindingError):
     """UEM serialNumber match is not exactly one device (0 or >1)."""
 
 
+class BindingNotFoundError(DeviceBindingError):
+    """Fleet/PR18 binding auth failed or no active binding for the device."""
+
+
 class FleetCredentialError(OrganizationError):
     """Base fleet credential domain error (ADR 021 Option C′)."""
 
