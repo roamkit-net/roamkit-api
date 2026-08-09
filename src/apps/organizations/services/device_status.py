@@ -1,8 +1,10 @@
 """Read-only device status snapshot (ADR 020 / ADR 021 Option C″).
 
 Shared builder for org-authenticated (PR17), device-credential (PR18), and
-serial+binding (Option C″) paths. No provider refresh; no binding/inventory
-mutation except refreshable ``uem_device_guid`` cache on unique serial match.
+serial+binding (Option C″) paths. No provider refresh; no ownership transfer.
+UEM ICCID resolve is global (unique non-archived Esim) — not scoped to
+``organization.account``. Only refreshable ``uem_device_guid`` cache may
+mutate on unique serial match.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from apps.integrations.blackberry_uem.client import (
 )
 from apps.organizations.exceptions import (
     BindingNotFoundError,
+    IccidAmbiguousError,
     IccidNotFoundError,
     UemInventoryUnavailableError,
     UemSerialMatchError,
@@ -228,10 +231,30 @@ def _hash_credential(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _resolve_esim_via_uem(binding: DeviceBinding) -> Esim:
-    """Read-only UEM ICCID → team Account Esim (ADR 021 staging proof).
+def _esim_for_iccid(iccid: str) -> Esim:
+    """Resolve unique non-archived Esim by ICCID (ADR 021).
 
-    Side-effect free: never creates/transfers/unbinds inventory.
+    Not scoped to organization Account. Fail closed on ambiguity — never
+    unordered ``.first()``. Side-effect free.
+    """
+    matches = list(
+        Esim.objects.select_related("order").filter(
+            iccid=iccid,
+            archived_at__isnull=True,
+        )
+    )
+    if len(matches) == 0:
+        raise IccidNotFoundError("No RoamKit data for this ICCID.")
+    if len(matches) > 1:
+        raise IccidAmbiguousError("Multiple RoamKit eSIMs match this ICCID.")
+    return matches[0]
+
+
+def _resolve_esim_via_uem(binding: DeviceBinding) -> Esim:
+    """Read-only UEM ICCID → unique RoamKit Esim (ADR 021).
+
+    Side-effect free: never creates/transfers/unbinds inventory or rewrites
+    ``Esim.account``.
     """
     guid = (binding.uem_device_guid or "").strip()
     if not guid:
@@ -257,15 +280,7 @@ def _resolve_esim_via_uem(binding: DeviceBinding) -> Esim:
         raise UemInventoryUnavailableError("UEM device not found for mapped guid")
 
     iccid = resolve_top_level_iccid(device)
-    account_id = binding.organization.account_id
-    esim = (
-        Esim.objects.select_related("order")
-        .filter(account_id=account_id, iccid=iccid)
-        .first()
-    )
-    if esim is None:
-        raise IccidNotFoundError("No RoamKit data for this ICCID.")
-    return esim
+    return _esim_for_iccid(iccid)
 
 
 def _resolve_binding_and_esim_by_credential(
@@ -273,10 +288,11 @@ def _resolve_binding_and_esim_by_credential(
     device_external_id: str,
     credential: str,
 ) -> tuple[DeviceBinding, Esim]:
-    """Shared credential + ownership resolution for device status/coverage.
+    """Shared credential resolution for device status/coverage.
 
     ``device_external_id`` alone is never enough. Auth failures raise 404
-    without distinguishing missing binding vs bad credential.
+    without distinguishing missing binding vs bad credential. Does not
+    require ``binding.esim.account == organization.account``.
     """
     device_external_id = (device_external_id or "").strip()
     credential = credential or ""
@@ -297,8 +313,6 @@ def _resolve_binding_and_esim_by_credential(
     if binding is None or not binding.credential_hash:
         raise NotFound(detail="Not found.")
     if not hmac.compare_digest(binding.credential_hash, digest):
-        raise NotFound(detail="Not found.")
-    if binding.esim.account_id != binding.organization.account_id:
         raise NotFound(detail="Not found.")
 
     if (binding.uem_device_guid or "").strip():
@@ -323,26 +337,14 @@ def get_device_status_by_credential(
     return build_device_status_snapshot(binding, esim=esim)
 
 
-def _esim_for_team_iccid(*, organization, iccid: str) -> Esim:
-    esim = (
-        Esim.objects.select_related("order")
-        .filter(account_id=organization.account_id, iccid=iccid)
-        .first()
-    )
-    if esim is None:
-        raise IccidNotFoundError("No RoamKit data for this ICCID.")
-    if esim.account_id != organization.account_id:
-        raise IccidNotFoundError("No RoamKit data for this ICCID.")
-    return esim
-
-
 def _resolve_binding_and_esim_by_serial(
     *, device_serial: str
 ) -> tuple[DeviceBinding, Esim]:
-    """Shared serial + ownership resolution for device status/coverage (C″).
+    """Shared serial resolution for device status/coverage (C″).
 
     Serial is an identifier, not a secret. Gate: exactly one active
-    ``DeviceBinding`` for that serial, then UEM ICCID → team-Account Esim.
+    ``DeviceBinding`` for that serial, then UEM ICCID → unique Esim by
+    ICCID (any Account; no ownership rewrite).
     """
     serial = (device_serial or "").strip()
     if not serial:
@@ -374,7 +376,7 @@ def _resolve_binding_and_esim_by_serial(
         ) from exc
 
     iccid = resolve_top_level_iccid(device)
-    esim = _esim_for_team_iccid(organization=binding.organization, iccid=iccid)
+    esim = _esim_for_iccid(iccid)
     return binding, esim
 
 

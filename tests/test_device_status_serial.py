@@ -12,6 +12,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client, override_settings
 from django.utils import timezone
 
+from apps.billing.services import ensure_billing_account
 from apps.catalog.models import Package
 from apps.esims.models import Esim
 from apps.orders.models import Order
@@ -233,6 +234,91 @@ def test_serial_status_iccid_not_found(client, owner, org, package):
             iccid=ICCID
         )
         resp = _serial_status(client, device_serial=SERIAL)
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "iccid_not_found"
+
+
+@pytest.mark.django_db
+@override_settings(BLACKBERRY_UEM_ENABLED=True)
+def test_serial_status_resolves_personal_account_esim(client, owner, org, package):
+    """MDM enrollment must not require Esim.account == organization.account."""
+    binding, esim = _bind_serial(
+        owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL
+    )
+    personal = ensure_billing_account(owner)
+    esim.account = personal
+    esim.save(update_fields=["account", "updated_at"])
+
+    with patch(
+        "apps.organizations.services.uem_serial.BlackberryUemClient"
+    ) as client_cls:
+        client_cls.return_value.get_device_by_serial.return_value = _uem_device()
+        resp = _serial_status(client, device_serial=SERIAL)
+
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["esim"]["id"] == esim.pk
+    assert resp.json()["esim"]["iccid"] == ICCID
+    esim.refresh_from_db()
+    assert esim.account_id == personal.id
+    binding.refresh_from_db()
+    assert binding.organization_id == org.id
+
+
+@pytest.mark.django_db
+def test_esim_for_iccid_ambiguous_fails_closed(owner, org, package):
+    """DB unique(iccid) normally prevents this; resolver must still fail closed."""
+    from apps.organizations.exceptions import IccidAmbiguousError
+    from apps.organizations.services.device_status import _esim_for_iccid
+
+    first = _make_esim(account=org.account, user=owner, package=package, iccid=ICCID)
+    second = _make_esim(
+        account=org.account,
+        user=owner,
+        package=package,
+        iccid="89852350326100304892",
+    )
+    with patch(
+        "apps.organizations.services.device_status.Esim.objects.select_related"
+    ) as select_related:
+        select_related.return_value.filter.return_value = [first, second]
+        with pytest.raises(IccidAmbiguousError):
+            _esim_for_iccid(ICCID)
+
+
+@pytest.mark.django_db
+@override_settings(BLACKBERRY_UEM_ENABLED=True)
+def test_serial_status_iccid_ambiguous_http_code(client, owner, org, package):
+    from apps.organizations.exceptions import IccidAmbiguousError
+
+    _bind_serial(owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL)
+    with patch(
+        "apps.organizations.services.uem_serial.BlackberryUemClient"
+    ) as client_cls:
+        client_cls.return_value.get_device_by_serial.return_value = _uem_device()
+        with patch(
+            "apps.organizations.services.device_status._esim_for_iccid",
+            side_effect=IccidAmbiguousError("Multiple RoamKit eSIMs match this ICCID."),
+        ):
+            resp = _serial_status(client, device_serial=SERIAL)
+
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "iccid_ambiguous"
+
+
+@pytest.mark.django_db
+@override_settings(BLACKBERRY_UEM_ENABLED=True)
+def test_serial_status_skips_archived_esim(client, owner, org, package):
+    _bind_serial(owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL)
+    esim = Esim.objects.get(iccid=ICCID)
+    esim.archived_at = timezone.now()
+    esim.save(update_fields=["archived_at", "updated_at"])
+
+    with patch(
+        "apps.organizations.services.uem_serial.BlackberryUemClient"
+    ) as client_cls:
+        client_cls.return_value.get_device_by_serial.return_value = _uem_device()
+        resp = _serial_status(client, device_serial=SERIAL)
+
     assert resp.status_code == 404
     assert resp.json()["code"] == "iccid_not_found"
 
