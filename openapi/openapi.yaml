@@ -3114,8 +3114,9 @@ components:
           - $ref: '#/components/schemas/DeviceBindingStatusEnum'
           readOnly: true
         uem_device_guid:
-          description: BlackBerry UEM device.guid bridge for staging SIM/ICCID lookup (ADR 021 option
-            C proof). Empty = classic PR18 binding.esim path. Not an auth secret.
+          description: Current BlackBerry UEM device.guid correlation/cache (ADR 021 Option C′). Refreshable
+            after re-enroll when serial match is unique. Not an auth secret. Empty = classic PR18 path
+            or guid not yet resolved.
           readOnly: true
           type: string
         unbound_at:
