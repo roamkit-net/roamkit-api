@@ -28,6 +28,7 @@ from apps.organizations.services.device_binding import (
 )
 from apps.organizations.services.device_status import (
     get_device_coverage_by_credential,
+    get_device_coverage_by_serial,
     get_device_status,
     get_device_status_by_credential,
     get_device_status_by_serial,
@@ -62,6 +63,7 @@ __all__ = [
     "create_organization",
     "get_device_binding",
     "get_device_coverage_by_credential",
+    "get_device_coverage_by_serial",
     "get_device_status",
     "get_device_status_by_credential",
     "get_device_status_by_serial",

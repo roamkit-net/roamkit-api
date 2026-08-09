@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import uuid
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.test import Client
+from django.test import Client, override_settings
 from django.utils import timezone
 
 from apps.catalog.models import Location, Package
@@ -22,6 +23,8 @@ from apps.organizations.services import create_device_binding, create_organizati
 
 User = get_user_model()
 PASSWORD = "SecurePass1!"
+SERIAL = "36281JEGR04531"
+GUID = "fb3de589-14c1-4b95-a215-2b0c7d44199d"
 
 
 @pytest.fixture
@@ -287,3 +290,86 @@ def test_backfill_does_not_set_coverage_snapshot_from_live_catalog(owner, org):
     order.refresh_from_db()
     assert order.coverage_snapshot is None
     assert order.package_title == "World"
+
+
+def _serial_coverage(client, *, device_serial: str):
+    return client.post(
+        "/api/v1/device/coverage/",
+        data=json.dumps({"device_serial": device_serial}),
+        content_type="application/json",
+    )
+
+
+@pytest.mark.django_db
+@override_settings(BLACKBERRY_UEM_ENABLED=True)
+def test_serial_coverage_returns_snapshot(client, owner, org):
+    snapshot = [
+        {
+            "country_code": "HR",
+            "country_name": "Croatia",
+            "operators": ["A1", "Telemach"],
+        }
+    ]
+    binding, _credential, order, _location = _bind_with_order(
+        owner, org, coverage_snapshot=snapshot, coverage_type="global"
+    )
+    binding.uem_serial_number = SERIAL
+    binding.save(update_fields=["uem_serial_number", "updated_at"])
+    iccid = binding.esim.iccid
+
+    with patch(
+        "apps.organizations.services.uem_serial.BlackberryUemClient"
+    ) as client_cls:
+        client_cls.return_value.get_device_by_serial.return_value = {
+            "guid": GUID,
+            "serialNumber": SERIAL,
+            "iccid": iccid,
+            "sims": [{"iccid": iccid}],
+        }
+        resp = _serial_coverage(client, device_serial=SERIAL)
+
+    assert resp.status_code == 200, resp.content
+    body = resp.json()
+    assert body["device_external_id"] == binding.device_external_id
+    assert body["coverage_type"] == "global"
+    assert body["coverage"] == snapshot
+    order.refresh_from_db()
+    assert order.coverage_snapshot == snapshot
+
+
+@pytest.mark.django_db
+@override_settings(BLACKBERRY_UEM_ENABLED=True)
+def test_serial_coverage_binding_not_found(client, owner, org):
+    _bind_with_order(
+        owner,
+        org,
+        coverage_snapshot=[
+            {"country_code": "HR", "country_name": "Croatia", "operators": []}
+        ],
+    )
+    resp = _serial_coverage(client, device_serial=SERIAL)
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "binding_not_found"
+
+
+@pytest.mark.django_db
+def test_coverage_rejects_mixed_pr18_and_serial(client, owner, org):
+    binding, credential, _o, _l = _bind_with_order(
+        owner,
+        org,
+        coverage_snapshot=[
+            {"country_code": "HR", "country_name": "Croatia", "operators": []}
+        ],
+    )
+    resp = client.post(
+        "/api/v1/device/coverage/",
+        data=json.dumps(
+            {
+                "device_external_id": binding.device_external_id,
+                "credential": credential,
+                "device_serial": SERIAL,
+            }
+        ),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400

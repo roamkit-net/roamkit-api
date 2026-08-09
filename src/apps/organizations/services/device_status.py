@@ -336,12 +336,13 @@ def _esim_for_team_iccid(*, organization, iccid: str) -> Esim:
     return esim
 
 
-def get_device_status_by_serial(*, device_serial: str) -> DeviceStatusSnapshot:
-    """Device-facing status via serial + active binding (ADR 021 Option C″).
+def _resolve_binding_and_esim_by_serial(
+    *, device_serial: str
+) -> tuple[DeviceBinding, Esim]:
+    """Shared serial + ownership resolution for device status/coverage (C″).
 
     Serial is an identifier, not a secret. Gate: exactly one active
     ``DeviceBinding`` for that serial, then UEM ICCID → team-Account Esim.
-    Read-only; no mutations.
     """
     serial = (device_serial or "").strip()
     if not serial:
@@ -374,6 +375,12 @@ def get_device_status_by_serial(*, device_serial: str) -> DeviceStatusSnapshot:
 
     iccid = resolve_top_level_iccid(device)
     esim = _esim_for_team_iccid(organization=binding.organization, iccid=iccid)
+    return binding, esim
+
+
+def get_device_status_by_serial(*, device_serial: str) -> DeviceStatusSnapshot:
+    """Device-facing status via serial + active binding (ADR 021 Option C″)."""
+    binding, esim = _resolve_binding_and_esim_by_serial(device_serial=device_serial)
     return build_device_status_snapshot(binding, esim=esim)
 
 
@@ -440,4 +447,10 @@ def get_device_coverage_by_credential(
         device_external_id=device_external_id,
         credential=credential,
     )
+    return build_device_coverage_snapshot(binding, esim=esim)
+
+
+def get_device_coverage_by_serial(*, device_serial: str) -> DeviceCoverageSnapshot:
+    """Device-facing coverage via serial + active binding (ADR 021 Option C″)."""
+    binding, esim = _resolve_binding_and_esim_by_serial(device_serial=device_serial)
     return build_device_coverage_snapshot(binding, esim=esim)
