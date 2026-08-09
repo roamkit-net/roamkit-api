@@ -949,6 +949,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
       summary: Device-facing status snapshot
       tags:
       - Device
@@ -3060,6 +3066,11 @@ components:
           allOf:
           - $ref: '#/components/schemas/DeviceBindingStatusEnum'
           readOnly: true
+        uem_device_guid:
+          description: BlackBerry UEM device.guid bridge for staging SIM/ICCID lookup (ADR 021 option
+            C proof). Empty = classic PR18 binding.esim path. Not an auth secret.
+          readOnly: true
+          type: string
         unbound_at:
           format: date-time
           nullable: true
@@ -3083,6 +3094,7 @@ components:
       - organization_id
       - replaced_by_id
       - status
+      - uem_device_guid
       - unbound_at
       - unbound_by_id
       - updated_at
