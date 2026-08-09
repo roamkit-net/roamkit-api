@@ -225,6 +225,25 @@ class DeviceStatusAutoTopupSerializer(serializers.Serializer):
     enabled = serializers.BooleanField()
 
 
+class DeviceStatusCoverageSummarySerializer(serializers.Serializer):
+    """Light coverage affordance for status (no country list)."""
+
+    available = serializers.BooleanField()
+    country_count = serializers.IntegerField()
+
+
+class DeviceStatusPlanSerializer(serializers.Serializer):
+    """Purchase-time plan metadata from Order snapshot (nullable parent field)."""
+
+    title = serializers.CharField(allow_null=True)
+    data_allowance = serializers.CharField(allow_null=True)
+    validity_days = serializers.IntegerField(allow_null=True)
+    country_code = serializers.CharField(allow_null=True)
+    coverage_type = serializers.CharField(allow_null=True)
+    location_title = serializers.CharField(allow_null=True)
+    coverage_summary = DeviceStatusCoverageSummarySerializer(allow_null=True)
+
+
 class DeviceStatusSerializer(serializers.Serializer):
     """Read-only UEM status contract (cached inventory/usage; no provider call)."""
 
@@ -233,6 +252,27 @@ class DeviceStatusSerializer(serializers.Serializer):
     esim = DeviceStatusEsimSerializer()
     usage = DeviceStatusUsageSerializer()
     auto_topup = DeviceStatusAutoTopupSerializer()
+    plan = DeviceStatusPlanSerializer(allow_null=True)
+    checked_at = serializers.DateTimeField()
+
+
+class DeviceCoverageCountrySerializer(serializers.Serializer):
+    """Stable purchase-time coverage row (no provider raw fields)."""
+
+    country_code = serializers.CharField()
+    country_name = serializers.CharField(allow_null=True)
+    operators = serializers.ListField(
+        child=serializers.CharField(),
+        allow_empty=True,
+    )
+
+
+class DeviceCoverageSerializer(serializers.Serializer):
+    """Device-facing coverage list from Order.coverage_snapshot only."""
+
+    device_external_id = serializers.CharField()
+    coverage_type = serializers.CharField(allow_null=True)
+    coverage = DeviceCoverageCountrySerializer(many=True, allow_null=True)
     checked_at = serializers.DateTimeField()
 
 
@@ -246,7 +286,7 @@ class DeviceBindingCredentialResponseSerializer(serializers.Serializer):
 
 
 class DeviceStatusRequestSerializer(serializers.Serializer):
-    """Device-facing status request (credential in body, never in URL)."""
+    """Device credential request body (status / coverage; never in URL)."""
 
     device_external_id = serializers.CharField(max_length=64)
     credential = serializers.CharField(max_length=256)
@@ -256,13 +296,22 @@ class DeviceStatusRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {
                     "organization_id": (
-                        "organization_id is not accepted on the device status "
-                        "endpoint; credential scopes the binding."
+                        "organization_id is not accepted on device credential "
+                        "endpoints; credential scopes the binding."
                     )
                 }
             )
         if "account_id" in self.initial_data:
             raise serializers.ValidationError(
                 {"account_id": "Client-supplied account_id is not accepted."}
+            )
+        if "esim_id" in self.initial_data:
+            raise serializers.ValidationError(
+                {
+                    "esim_id": (
+                        "esim_id is not accepted; coverage/status resolve the "
+                        "eSIM via the authenticated device binding only."
+                    )
+                }
             )
         return attrs

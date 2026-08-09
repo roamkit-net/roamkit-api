@@ -43,6 +43,7 @@ from apps.organizations.serializers import (
     DeviceBindingCreateSerializer,
     DeviceBindingCredentialResponseSerializer,
     DeviceBindingSerializer,
+    DeviceCoverageSerializer,
     DeviceStatusRequestSerializer,
     DeviceStatusSerializer,
     MembershipRoleUpdateSerializer,
@@ -68,6 +69,7 @@ from apps.organizations.services.device_binding import (
     unbind_device_binding,
 )
 from apps.organizations.services.device_status import (
+    get_device_coverage_by_credential,
     get_device_status,
     get_device_status_by_credential,
 )
@@ -82,7 +84,10 @@ from apps.organizations.services.membership import (
     set_member_role,
     transfer_ownership,
 )
-from apps.organizations.throttles import DeviceStatusRateThrottle
+from apps.organizations.throttles import (
+    DeviceCoverageRateThrottle,
+    DeviceStatusRateThrottle,
+)
 from core.openapi_serializers import ErrorDetailSerializer
 
 
@@ -792,18 +797,7 @@ class OrganizationDeviceStatusView(OrganizationsAPIView):
             organization_id,
             device_external_id=device_external_id,
         )
-        return Response(
-            DeviceStatusSerializer(
-                {
-                    "device_external_id": snapshot.device_external_id,
-                    "binding_status": snapshot.binding_status,
-                    "esim": snapshot.esim,
-                    "usage": snapshot.usage,
-                    "auto_topup": snapshot.auto_topup,
-                    "checked_at": snapshot.checked_at,
-                }
-            ).data
-        )
+        return Response(DeviceStatusSerializer(snapshot.as_response_dict()).data)
 
 
 @extend_schema_view(
@@ -870,15 +864,67 @@ class DeviceStatusView(APIView):
                 },
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(
-            DeviceStatusSerializer(
+        return Response(DeviceStatusSerializer(snapshot.as_response_dict()).data)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Device"],
+        operation_id="device_coverage",
+        summary="Device-facing coverage snapshot",
+        description=(
+            "Read-only purchase-time coverage list for managed devices. "
+            "Authenticate with ``device_external_id`` + opaque ``credential`` "
+            "in the body (same ownership boundary as device status). "
+            "Never accepts ``esim_id``. Legacy orders without a coverage "
+            "snapshot return ``coverage: null``. No user JWT; rate-limited "
+            "by IP."
+        ),
+        request=DeviceStatusRequestSerializer,
+        responses={
+            200: OpenApiResponse(response=DeviceCoverageSerializer),
+            400: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+            429: OpenApiResponse(response=ErrorDetailSerializer),
+            503: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+        auth=[],
+    ),
+)
+class DeviceCoverageView(APIView):
+    """Unauthenticated device coverage via opaque credential."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [DeviceCoverageRateThrottle]
+
+    def initial(self, request: Request, *args, **kwargs) -> None:
+        super().initial(request, *args, **kwargs)
+        if not settings.ORGANIZATIONS_ENABLED:
+            raise NotFound(detail="Not found.")
+
+    def post(self, request: Request) -> Response:
+        body = DeviceStatusRequestSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        try:
+            snapshot = get_device_coverage_by_credential(
+                device_external_id=body.validated_data["device_external_id"],
+                credential=body.validated_data["credential"],
+            )
+        except UemInventoryUnavailableError as exc:
+            return Response(
                 {
-                    "device_external_id": snapshot.device_external_id,
-                    "binding_status": snapshot.binding_status,
-                    "esim": snapshot.esim,
-                    "usage": snapshot.usage,
-                    "auto_topup": snapshot.auto_topup,
-                    "checked_at": snapshot.checked_at,
-                }
-            ).data
-        )
+                    "detail": str(exc) or "UEM telephony inventory unavailable.",
+                    "code": "uem_inventory_unavailable",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except IccidNotFoundError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "No RoamKit data for this ICCID.",
+                    "code": "iccid_not_found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(DeviceCoverageSerializer(snapshot.as_response_dict()).data)

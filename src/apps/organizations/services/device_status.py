@@ -79,6 +79,70 @@ def _auto_topup_snapshot(esim: Esim) -> dict[str, bool]:
     return {"enabled": enabled}
 
 
+def _order_coverage_type(order: Any) -> str:
+    coverage_raw = (getattr(order, "coverage_type", None) or "").strip().lower()
+    return coverage_raw if coverage_raw in {"local", "regional", "global"} else ""
+
+
+def _coverage_summary(order: Any) -> dict[str, Any] | None:
+    """Light summary from Order.coverage_snapshot only (never live catalog).
+
+    ``country_count`` is the length of the normalized snapshot list.
+    """
+    if not hasattr(order, "coverage_snapshot"):
+        return None
+    raw = order.coverage_snapshot
+    # SQL NULL / missing → legacy; distinguish from snapshotted [].
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        return {"available": False, "country_count": 0}
+    country_count = len(raw)
+    coverage_type = _order_coverage_type(order)
+    available = coverage_type in {"regional", "global"} and country_count > 0
+    return {"available": available, "country_count": country_count}
+
+
+def _plan_snapshot(esim: Esim) -> dict[str, Any] | None:
+    """Read-only plan metadata from Order purchase snapshot only.
+
+    Never reads live ``order.package`` / ``location`` — avoids mixing
+    immutable snapshot fields with current catalog. ``coverage_type`` is
+    null for legacy orders that predate the snapshot column.
+    """
+    order = getattr(esim, "order", None)
+    if order is None:
+        return None
+
+    package_title = (getattr(order, "package_title", None) or "").strip()
+    location_title = (getattr(order, "location_title", None) or "").strip()
+    country_code = (getattr(order, "country_code", None) or "").strip().upper()
+    data_allowance = (getattr(order, "data_allowance", None) or "").strip()
+    validity_days = getattr(order, "validity_days", None)
+    coverage_type = _order_coverage_type(order)
+
+    title = package_title or location_title
+    has_any = bool(
+        title
+        or data_allowance
+        or validity_days is not None
+        or country_code
+        or coverage_type
+    )
+    if not has_any:
+        return None
+
+    return {
+        "title": title or None,
+        "data_allowance": data_allowance or None,
+        "validity_days": validity_days,
+        "country_code": country_code or None,
+        "coverage_type": coverage_type or None,
+        "location_title": location_title or None,
+        "coverage_summary": _coverage_summary(order),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class DeviceStatusSnapshot:
     device_external_id: str
@@ -86,7 +150,19 @@ class DeviceStatusSnapshot:
     esim: dict[str, Any]
     usage: dict[str, Any]
     auto_topup: dict[str, bool]
+    plan: dict[str, Any] | None
     checked_at: datetime
+
+    def as_response_dict(self) -> dict[str, Any]:
+        return {
+            "device_external_id": self.device_external_id,
+            "binding_status": self.binding_status,
+            "esim": self.esim,
+            "usage": self.usage,
+            "auto_topup": self.auto_topup,
+            "plan": self.plan,
+            "checked_at": self.checked_at,
+        }
 
 
 def build_device_status_snapshot(
@@ -106,6 +182,7 @@ def build_device_status_snapshot(
         },
         usage=_usage_snapshot(resolved),
         auto_topup=_auto_topup_snapshot(resolved),
+        plan=_plan_snapshot(resolved),
         checked_at=timezone.now(),
     )
 
@@ -126,7 +203,7 @@ def get_device_status(
     org = ctx.organization
 
     binding = (
-        DeviceBinding.objects.select_related("esim", "esim__account")
+        DeviceBinding.objects.select_related("esim", "esim__account", "esim__order")
         .filter(
             organization=org,
             device_external_id=device_external_id,
@@ -179,24 +256,25 @@ def _resolve_esim_via_uem(binding: DeviceBinding) -> Esim:
 
     iccid = resolve_top_level_iccid(device)
     account_id = binding.organization.account_id
-    esim = Esim.objects.filter(account_id=account_id, iccid=iccid).first()
+    esim = (
+        Esim.objects.select_related("order")
+        .filter(account_id=account_id, iccid=iccid)
+        .first()
+    )
     if esim is None:
         raise IccidNotFoundError("No RoamKit data for this ICCID.")
     return esim
 
 
-def get_device_status_by_credential(
+def _resolve_binding_and_esim_by_credential(
     *,
     device_external_id: str,
     credential: str,
-) -> DeviceStatusSnapshot:
-    """Device-facing status via opaque credential (PR18).
+) -> tuple[DeviceBinding, Esim]:
+    """Shared credential + ownership resolution for device status/coverage.
 
-    ``device_external_id`` alone is never enough. Auth failures return 404
+    ``device_external_id`` alone is never enough. Auth failures raise 404
     without distinguishing missing binding vs bad credential.
-
-    When ``DeviceBinding.uem_device_guid`` is set, resolve status Esim via
-    read-only UEM ICCID lookup (staging proof). Otherwise use ``binding.esim``.
     """
     device_external_id = (device_external_id or "").strip()
     credential = credential or ""
@@ -205,7 +283,9 @@ def get_device_status_by_credential(
 
     digest = _hash_credential(credential)
     binding = (
-        DeviceBinding.objects.select_related("esim", "esim__account", "organization")
+        DeviceBinding.objects.select_related(
+            "esim", "esim__account", "esim__order", "organization"
+        )
         .filter(
             device_external_id=device_external_id,
             status=DeviceBindingStatus.ACTIVE,
@@ -220,7 +300,88 @@ def get_device_status_by_credential(
         raise NotFound(detail="Not found.")
 
     if (binding.uem_device_guid or "").strip():
-        esim = _resolve_esim_via_uem(binding)
-        return build_device_status_snapshot(binding, esim=esim)
+        return binding, _resolve_esim_via_uem(binding)
+    return binding, binding.esim
 
-    return build_device_status_snapshot(binding)
+
+def get_device_status_by_credential(
+    *,
+    device_external_id: str,
+    credential: str,
+) -> DeviceStatusSnapshot:
+    """Device-facing status via opaque credential (PR18).
+
+    When ``DeviceBinding.uem_device_guid`` is set, resolve status Esim via
+    read-only UEM ICCID lookup (staging proof). Otherwise use ``binding.esim``.
+    """
+    binding, esim = _resolve_binding_and_esim_by_credential(
+        device_external_id=device_external_id,
+        credential=credential,
+    )
+    return build_device_status_snapshot(binding, esim=esim)
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceCoverageSnapshot:
+    device_external_id: str
+    coverage_type: str | None
+    coverage: list[dict[str, Any]] | None
+    checked_at: datetime
+
+    def as_response_dict(self) -> dict[str, Any]:
+        return {
+            "device_external_id": self.device_external_id,
+            "coverage_type": self.coverage_type,
+            "coverage": self.coverage,
+            "checked_at": self.checked_at,
+        }
+
+
+def build_device_coverage_snapshot(
+    binding: DeviceBinding,
+    *,
+    esim: Esim | None = None,
+) -> DeviceCoverageSnapshot:
+    """Coverage list from Order.coverage_snapshot only (never live catalog)."""
+    resolved = esim if esim is not None else binding.esim
+    order = getattr(resolved, "order", None)
+    coverage_type: str | None = None
+    coverage: list[dict[str, Any]] | None = None
+    if order is not None:
+        ctype = _order_coverage_type(order)
+        coverage_type = ctype or None
+        raw = getattr(order, "coverage_snapshot", None)
+        if raw is None:
+            coverage = None
+        elif isinstance(raw, list):
+            # Persist shape is already normalized; strip any unexpected keys.
+            coverage = [
+                {
+                    "country_code": str(item.get("country_code") or ""),
+                    "country_name": item.get("country_name"),
+                    "operators": list(item.get("operators") or []),
+                }
+                for item in raw
+                if isinstance(item, dict) and item.get("country_code")
+            ]
+        else:
+            coverage = []
+    return DeviceCoverageSnapshot(
+        device_external_id=binding.device_external_id,
+        coverage_type=coverage_type,
+        coverage=coverage,
+        checked_at=timezone.now(),
+    )
+
+
+def get_device_coverage_by_credential(
+    *,
+    device_external_id: str,
+    credential: str,
+) -> DeviceCoverageSnapshot:
+    """Device-facing coverage via the same credential boundary as status."""
+    binding, esim = _resolve_binding_and_esim_by_credential(
+        device_external_id=device_external_id,
+        credential=credential,
+    )
+    return build_device_coverage_snapshot(binding, esim=esim)

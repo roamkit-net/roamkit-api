@@ -135,6 +135,7 @@ def test_fulfill_writes_immutable_product_snapshot(
     assert order.retail_price_usd == Decimal("4.00")
     assert order.currency == LEDGER_CURRENCY
     assert order.net_price_usd == Decimal("1.30")
+    assert isinstance(order.coverage_snapshot, list)
 
 
 @pytest.mark.django_db

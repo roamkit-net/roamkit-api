@@ -9,10 +9,10 @@ from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.views import APIView
 
 
-class DeviceStatusRateThrottle(SimpleRateThrottle):
-    """Limit unauthenticated device status posts per client IP."""
+class _DeviceCredentialPostThrottle(SimpleRateThrottle):
+    """Shared IP throttle for unauthenticated device credential POSTs."""
 
-    scope = "device_status"
+    scope: str
 
     def get_rate(self) -> str | None:
         rates = settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {})
@@ -32,3 +32,15 @@ class DeviceStatusRateThrottle(SimpleRateThrottle):
         if not ident:
             return None
         return self.cache_format % {"scope": self.scope, "ident": ident}
+
+
+class DeviceStatusRateThrottle(_DeviceCredentialPostThrottle):
+    """Limit unauthenticated device status posts per client IP."""
+
+    scope = "device_status"
+
+
+class DeviceCoverageRateThrottle(_DeviceCredentialPostThrottle):
+    """Limit unauthenticated device coverage posts per client IP."""
+
+    scope = "device_coverage"

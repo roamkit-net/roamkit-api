@@ -912,6 +912,53 @@ paths:
       tags:
       - Billing
       - Vouchers
+  /api/v1/device/coverage/:
+    post:
+      description: 'Read-only purchase-time coverage list for managed devices. Authenticate with ``device_external_id``
+        + opaque ``credential`` in the body (same ownership boundary as device status). Never accepts
+        ``esim_id``. Legacy orders without a coverage snapshot return ``coverage: null``. No user JWT;
+        rate-limited by IP.'
+      operationId: device_coverage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceStatusRequestRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceCoverage'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      summary: Device-facing coverage snapshot
+      tags:
+      - Device
   /api/v1/device/status/:
     post:
       description: Read-only status for managed devices. Authenticate with ``device_external_id`` + opaque
@@ -3135,6 +3182,45 @@ components:
       - unbound
       - replaced
       type: string
+    DeviceCoverage:
+      description: Device-facing coverage list from Order.coverage_snapshot only.
+      properties:
+        checked_at:
+          format: date-time
+          type: string
+        coverage:
+          items:
+            $ref: '#/components/schemas/DeviceCoverageCountry'
+          nullable: true
+          type: array
+        coverage_type:
+          nullable: true
+          type: string
+        device_external_id:
+          type: string
+      required:
+      - checked_at
+      - coverage
+      - coverage_type
+      - device_external_id
+      type: object
+    DeviceCoverageCountry:
+      description: Stable purchase-time coverage row (no provider raw fields).
+      properties:
+        country_code:
+          type: string
+        country_name:
+          nullable: true
+          type: string
+        operators:
+          items:
+            type: string
+          type: array
+      required:
+      - country_code
+      - country_name
+      - operators
+      type: object
     DeviceStatus:
       description: Read-only UEM status contract (cached inventory/usage; no provider call).
       properties:
@@ -3149,6 +3235,10 @@ components:
           type: string
         esim:
           $ref: '#/components/schemas/DeviceStatusEsim'
+        plan:
+          allOf:
+          - $ref: '#/components/schemas/DeviceStatusPlan'
+          nullable: true
         usage:
           $ref: '#/components/schemas/DeviceStatusUsage'
       required:
@@ -3157,6 +3247,7 @@ components:
       - checked_at
       - device_external_id
       - esim
+      - plan
       - usage
       type: object
     DeviceStatusAutoTopup:
@@ -3165,6 +3256,17 @@ components:
           type: boolean
       required:
       - enabled
+      type: object
+    DeviceStatusCoverageSummary:
+      description: Light coverage affordance for status (no country list).
+      properties:
+        available:
+          type: boolean
+        country_count:
+          type: integer
+      required:
+      - available
+      - country_count
       type: object
     DeviceStatusEsim:
       properties:
@@ -3179,8 +3281,42 @@ components:
       - id
       - status
       type: object
+    DeviceStatusPlan:
+      description: Purchase-time plan metadata from Order snapshot (nullable parent field).
+      properties:
+        country_code:
+          nullable: true
+          type: string
+        coverage_summary:
+          allOf:
+          - $ref: '#/components/schemas/DeviceStatusCoverageSummary'
+          nullable: true
+        coverage_type:
+          nullable: true
+          type: string
+        data_allowance:
+          nullable: true
+          type: string
+        location_title:
+          nullable: true
+          type: string
+        title:
+          nullable: true
+          type: string
+        validity_days:
+          nullable: true
+          type: integer
+      required:
+      - country_code
+      - coverage_summary
+      - coverage_type
+      - data_allowance
+      - location_title
+      - title
+      - validity_days
+      type: object
     DeviceStatusRequestRequest:
-      description: Device-facing status request (credential in body, never in URL).
+      description: Device credential request body (status / coverage; never in URL).
       properties:
         credential:
           maxLength: 256
