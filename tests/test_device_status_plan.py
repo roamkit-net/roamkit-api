@@ -118,6 +118,8 @@ def test_plan_full_order_snapshot(client, owner, org):
         "country_code": "HR",
         "coverage_type": "local",
         "location_title": "Croatia",
+        # Local + empty coverages → snapshotted [] → not available for Coverage UI.
+        "coverage_summary": {"available": False, "country_count": 0},
     }
 
 
@@ -165,6 +167,7 @@ def test_plan_legacy_partial_snapshot_null_coverage(client, owner, org):
     assert plan["country_code"] is None
     assert plan["coverage_type"] is None
     assert plan["location_title"] is None
+    assert plan["coverage_summary"] is None
 
 
 @pytest.mark.django_db
@@ -255,3 +258,56 @@ def test_plan_snapshot_unit_prefers_package_title(owner, org):
     assert plan["title"] == "Eurolink"
     assert plan["coverage_type"] == "regional"
     assert plan["country_code"] is None
+    assert plan["coverage_summary"] is None
+
+
+@pytest.mark.django_db
+def test_coverage_summary_counts_normalized_list_and_available_for_regional(
+    client, owner, org
+):
+    location = Location.objects.create(
+        slug="eu-summary",
+        title="Europe",
+        coverage_type=Location.COVERAGE_REGIONAL,
+        coverages=[],
+    )
+    package = Package.objects.create(
+        external_id="pkg-summary",
+        title="EU",
+        operator_title="X",
+        location=location,
+        data_allowance="5 GB",
+        validity_days=30,
+        price_usd=Decimal("1.00"),
+        synced_at=timezone.now(),
+    )
+    order = Order.objects.create(
+        account=org.account,
+        package=package,
+        status=Order.Status.FULFILLED,
+        package_title="EU",
+        coverage_type="regional",
+        data_allowance="5 GB",
+        validity_days=30,
+        coverage_snapshot=[
+            {"country_code": "HR", "country_name": "Croatia", "operators": ["A1"]},
+            {"country_code": "SI", "country_name": "Slovenia", "operators": []},
+        ],
+    )
+    esim = Esim.objects.create(
+        user=owner,
+        account=org.account,
+        order=order,
+        iccid="891000000000100088",
+        status=Esim.Status.IN_USE,
+    )
+    binding = create_device_binding(owner, org.pk, esim_id=esim.pk).binding
+    resp = client.get(
+        f"/api/v1/orgs/{org.pk}/devices/{binding.device_external_id}/status/",
+        **_auth(client, owner),
+    )
+    assert resp.status_code == 200
+    summary = resp.json()["plan"]["coverage_summary"]
+    assert summary == {"available": True, "country_count": 2}
+    # Status must not embed the full list.
+    assert "operators" not in json.dumps(resp.json()["plan"])

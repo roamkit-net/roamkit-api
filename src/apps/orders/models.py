@@ -60,6 +60,16 @@ class Order(models.Model):
             "Empty for legacy orders; never re-read from live catalog at status time."
         ),
     )
+    coverage_snapshot = models.JSONField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "Purchase-time stable coverage list "
+            "[{country_code, country_name, operators}]. "
+            "null = legacy (never backfilled from live catalog)."
+        ),
+    )
     data_allowance = models.CharField(max_length=64, blank=True, default="")
     validity_days = models.PositiveIntegerField(null=True, blank=True)
     retail_price_usd = models.DecimalField(
