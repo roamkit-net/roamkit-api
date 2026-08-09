@@ -25,10 +25,12 @@ from apps.accounts.models import User
 from apps.organizations.exceptions import (
     DeviceBindingConflictError,
     DeviceBindingNotFoundError,
+    IccidNotFoundError,
     InviteConflictError,
     InviteInvalidError,
     LastOwnerError,
     NotAllowedError,
+    UemInventoryUnavailableError,
 )
 from apps.organizations.models import (
     Membership,
@@ -822,12 +824,18 @@ class OrganizationDeviceStatusView(OrganizationsAPIView):
             400: OpenApiResponse(response=ErrorDetailSerializer),
             404: OpenApiResponse(response=ErrorDetailSerializer),
             429: OpenApiResponse(response=ErrorDetailSerializer),
+            503: OpenApiResponse(response=ErrorDetailSerializer),
         },
         auth=[],
     ),
 )
 class DeviceStatusView(APIView):
-    """Unauthenticated device status via opaque credential (PR18)."""
+    """Unauthenticated device status via opaque credential (PR18).
+
+    Optional staging path (ADR 021 override): when the binding has
+    ``uem_device_guid``, resolve ICCID via read-only UEM and look up Esim on
+    the team Account. Classic PR18 ``binding.esim`` path when guid is empty.
+    """
 
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -841,10 +849,27 @@ class DeviceStatusView(APIView):
     def post(self, request: Request) -> Response:
         body = DeviceStatusRequestSerializer(data=request.data)
         body.is_valid(raise_exception=True)
-        snapshot = get_device_status_by_credential(
-            device_external_id=body.validated_data["device_external_id"],
-            credential=body.validated_data["credential"],
-        )
+        try:
+            snapshot = get_device_status_by_credential(
+                device_external_id=body.validated_data["device_external_id"],
+                credential=body.validated_data["credential"],
+            )
+        except UemInventoryUnavailableError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "UEM telephony inventory unavailable.",
+                    "code": "uem_inventory_unavailable",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except IccidNotFoundError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "No RoamKit data for this ICCID.",
+                    "code": "iccid_not_found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
         return Response(
             DeviceStatusSerializer(
                 {

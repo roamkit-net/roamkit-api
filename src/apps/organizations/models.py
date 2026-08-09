@@ -348,6 +348,17 @@ class DeviceBinding(models.Model):
         db_index=True,
         help_text="RoamKit-issued opaque device key (not a client authz signal).",
     )
+    uem_device_guid = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text=(
+            "BlackBerry UEM device.guid bridge for staging SIM/ICCID lookup "
+            "(ADR 021 option C proof). Empty = classic PR18 binding.esim path. "
+            "Not an auth secret."
+        ),
+    )
     credential_hash = models.CharField(
         max_length=64,
         blank=True,

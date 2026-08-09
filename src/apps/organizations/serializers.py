@@ -164,6 +164,7 @@ class DeviceBindingSerializer(serializers.ModelSerializer):
             "esim_id",
             "iccid",
             "device_external_id",
+            "uem_device_guid",
             "status",
             "bound_by_id",
             "unbound_by_id",

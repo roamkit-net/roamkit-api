@@ -103,6 +103,7 @@ class DeviceBindingAdmin(admin.ModelAdmin):
         "organization",
         "esim",
         "device_external_id",
+        "uem_device_guid",
         "status",
         "created_at",
     )
@@ -110,6 +111,7 @@ class DeviceBindingAdmin(admin.ModelAdmin):
     search_fields = (
         "id",
         "device_external_id",
+        "uem_device_guid",
         "organization__name",
         "organization__id",
         "esim__iccid",
@@ -121,6 +123,7 @@ class DeviceBindingAdmin(admin.ModelAdmin):
         "unbound_by",
         "replaced_by",
     )
+    # uem_device_guid is editable for staging ADR 021 proof (manual map).
     readonly_fields = (
         "id",
         "device_external_id",
