@@ -39,3 +39,11 @@ class DeviceBindingConflictError(DeviceBindingError):
 
 class DeviceBindingNotFoundError(DeviceBindingError):
     """Binding or eligible eSIM not found in organization scope."""
+
+
+class UemInventoryUnavailableError(DeviceBindingError):
+    """UEM telephony inventory missing/stale or unreadable (ADR 021)."""
+
+
+class IccidNotFoundError(DeviceBindingError):
+    """UEM ICCID present but no matching Esim on the team Account."""
