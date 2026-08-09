@@ -278,7 +278,17 @@ def test_backfill_tolerates_missing_package(
 def test_order_product_snapshot_migration_backfill() -> None:
     """orders.0004 backfills snapshots for pre-existing orders."""
     executor = MigrationExecutor(connection)
-    executor.migrate([("orders", "0003_order_idempotency_key")])
+    # Pin billing (and orgs that depend on Account.kind) back with orders so
+    # historical Account.create matches the DB (no kind column yet).
+    executor.migrate(
+        [
+            ("organizations", "0001_organization_membership_schema"),
+            ("billing", "0001_billing_schema"),
+            ("orders", "0003_order_idempotency_key"),
+            ("catalog", "0005_package_activation_policy"),
+            ("accounts", "0002_billing_schema"),
+        ]
+    )
     executor.loader.build_graph()
 
     state = executor.loader.project_state(

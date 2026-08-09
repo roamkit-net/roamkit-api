@@ -74,14 +74,34 @@ class SoftDeleteManager(models.Manager.from_queryset(SoftDeleteQuerySet)):
     """Default manager for soft-delete-only voucher entities."""
 
 
+class AccountKind(models.TextChoices):
+    """Account identity kind (ADR 020). Money path unchanged (ADR 010)."""
+
+    PERSONAL = "personal", "Personal"
+    ORGANIZATION = "organization", "Organization"
+
+
 class Account(models.Model):
-    """Billing account 1:1 with User. ``balance`` is a cache of the ledger."""
+    """Billing account. ``balance`` is a cache of the ledger.
+
+    Personal accounts are 1:1 with ``User``. Organization accounts have
+    ``user=null`` and are linked from ``organizations.Organization.account``
+    (ADR 020).
+    """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="billing_account",
+        null=True,
+        blank=True,
+    )
+    kind = models.CharField(
+        max_length=16,
+        choices=AccountKind.choices,
+        default=AccountKind.PERSONAL,
+        db_index=True,
     )
     balance = models.DecimalField(
         max_digits=20,
@@ -115,9 +135,27 @@ class Account(models.Model):
                 condition=models.Q(version__gte=0),
                 name="billing_account_version_gte_0",
             ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    kind__in=[
+                        AccountKind.PERSONAL,
+                        AccountKind.ORGANIZATION,
+                    ]
+                ),
+                name="billing_account_kind_valid",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(kind=AccountKind.PERSONAL, user__isnull=False)
+                    | models.Q(kind=AccountKind.ORGANIZATION, user__isnull=True)
+                ),
+                name="billing_account_kind_user_consistency",
+            ),
         ]
 
     def __str__(self) -> str:
+        if self.kind == AccountKind.ORGANIZATION:
+            return f"Account {self.pk} (organization)"
         return f"Account {self.pk} ({self.user})"
 
 

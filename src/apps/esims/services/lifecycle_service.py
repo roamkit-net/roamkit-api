@@ -115,13 +115,23 @@ class LifecycleService:
         qrcode_installation: str = "",
         installation_guide_url: str = "",
         activation_policy: str = ActivationPolicy.UNKNOWN,
+        account=None,
     ) -> Esim:
-        """Create an eSIM in ``purchased`` with purchase-time policy snapshot."""
+        """Create an eSIM in ``purchased`` with purchase-time policy snapshot.
+
+        ``account`` is the inventory owner (ADR 020). When omitted, the user's
+        personal Account is used. ``user`` is dual-written for cutover.
+        """
         policy = activation_policy or ActivationPolicy.UNKNOWN
         if policy not in ActivationPolicy.values:
             policy = ActivationPolicy.UNKNOWN
 
+        from apps.billing.services import ensure_billing_account
+
+        if account is None:
+            account = ensure_billing_account(user)
         esim = Esim.objects.create(
+            account=account,
             user=user,
             order=order,
             iccid=iccid,

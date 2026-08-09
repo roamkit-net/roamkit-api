@@ -10,7 +10,7 @@ from django.db import IntegrityError, transaction
 
 from apps.billing.exceptions import BillingDisabledError
 from apps.billing.models import LedgerReferenceType
-from apps.billing.services import credit_service, ensure_billing_account
+from apps.billing.services import credit_service
 from apps.esims.exceptions import TopupPackageNotFoundError
 from apps.esims.models import Topup
 from apps.orders.exceptions import (
@@ -53,17 +53,26 @@ class TopupService:
         *,
         package_id: str,
         idempotency_key: str,
+        account: Account | None = None,
     ) -> Topup:
         """Debit credits, reserve Topup, then submit via provider.
 
         Price is resolved once (never from the client), snapshotted on Topup,
         then debit/refund use the snapshot only.
+
+        ``account`` is the resolved spend Account (personal or team). When
+        omitted, defaults to ``esim.account`` (inventory owner SoT). Never
+        derives spend from ``esim.user``.
         """
         if not idempotency_key:
             raise IdempotencyKeyRequiredError("idempotency_key is required")
 
+        if account is None:
+            account = esim.account
+        elif account.pk != esim.account_id:
+            raise ValueError("Resolved Account does not own this eSIM")
+
         package = self._resolve_package(esim, package_id)
-        account = ensure_billing_account(esim.user)
 
         topup, debit_entry, replay = self._reserve_and_debit(
             account=account,
