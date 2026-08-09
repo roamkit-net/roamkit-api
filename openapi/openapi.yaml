@@ -914,17 +914,24 @@ paths:
       - Vouchers
   /api/v1/device/coverage/:
     post:
-      description: 'Read-only purchase-time coverage list for managed devices. Authenticate with ``device_external_id``
-        + opaque ``credential`` in the body (same ownership boundary as device status). Never accepts
-        ``esim_id``. Legacy orders without a coverage snapshot return ``coverage: null``. No user JWT;
-        rate-limited by IP.'
+      description: 'Read-only purchase-time coverage list for managed devices. Exactly one body shape
+        (same as device status):
+
+
+        - PR18 fallback: ``device_external_id`` + ``credential``
+
+        - Serial (ADR 021 Option C″): ``device_serial``
+
+
+        Mixed / incomplete / ``fleet_*`` fields → 400. Serial without an active DeviceBinding → ``binding_not_found``.
+        Never accepts ``esim_id``. Legacy orders without a coverage snapshot return ``coverage: null``.
+        No user JWT; rate-limited by IP.'
       operationId: device_coverage
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DeviceCredentialRequestRequest'
-        required: true
+              $ref: '#/components/schemas/DeviceStatusRequestRequest'
       responses:
         '200':
           content:
@@ -3230,21 +3237,6 @@ components:
       - country_name
       - operators
       type: object
-    DeviceCredentialRequestRequest:
-      description: PR18 device credential body (coverage; never in URL).
-      properties:
-        credential:
-          maxLength: 256
-          minLength: 1
-          type: string
-        device_external_id:
-          maxLength: 64
-          minLength: 1
-          type: string
-      required:
-      - credential
-      - device_external_id
-      type: object
     DeviceStatus:
       description: Read-only UEM status contract (cached inventory/usage; no provider call).
       properties:
@@ -3340,7 +3332,7 @@ components:
       - validity_days
       type: object
     DeviceStatusRequestRequest:
-      description: 'Device status body — exactly one of PR18 or serial shape (ADR 021 C″).
+      description: 'Device status/coverage body — PR18 or serial shape (ADR 021 C″).
 
 
         PR18: ``device_external_id`` + ``credential``
@@ -3348,7 +3340,9 @@ components:
         Serial: ``device_serial`` only
 
 
-        Mixed / incomplete / legacy ``fleet_*`` fields → 400 (no guessing).'
+        Mixed / incomplete / legacy ``fleet_*`` fields → 400 (no guessing).
+
+        Shared by ``POST /device/status/`` and ``POST /device/coverage/``.'
       properties:
         credential:
           maxLength: 256
