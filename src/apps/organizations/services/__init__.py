@@ -27,6 +27,7 @@ from apps.organizations.services.device_binding import (
     unbind_device_binding,
 )
 from apps.organizations.services.device_status import (
+    get_device_coverage_by_credential,
     get_device_status,
     get_device_status_by_credential,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "create_invite",
     "create_organization",
     "get_device_binding",
+    "get_device_coverage_by_credential",
     "get_device_status",
     "get_device_status_by_credential",
     "list_device_bindings",

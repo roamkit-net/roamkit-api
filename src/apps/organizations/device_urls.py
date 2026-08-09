@@ -2,8 +2,9 @@
 
 from django.urls import path
 
-from apps.organizations.views import DeviceStatusView
+from apps.organizations.views import DeviceCoverageView, DeviceStatusView
 
 urlpatterns = [
     path("status/", DeviceStatusView.as_view(), name="device-status"),
+    path("coverage/", DeviceCoverageView.as_view(), name="device-coverage"),
 ]
