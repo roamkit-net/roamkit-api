@@ -15,7 +15,12 @@ class ActivationPolicy(models.TextChoices):
 
 
 class Esim(models.Model):
-    """A provisioned eSIM owned by a user."""
+    """A provisioned eSIM.
+
+    Inventory owner is ``account`` (ADR 020). ``user`` is retained for
+    dual-read during cutover (personal Account's user). ``assigned_user`` is
+    presentation/ops only — never financial or inventory owner.
+    """
 
     class Status(models.TextChoices):
         PURCHASED = "purchased", "Purchased"
@@ -27,10 +32,31 @@ class Esim(models.Model):
         EXPIRED = "expired", "Expired"
         UNKNOWN = "unknown", "Unknown"
 
+    account = models.ForeignKey(
+        "billing.Account",
+        on_delete=models.CASCADE,
+        related_name="esims",
+        help_text="Inventory owner (personal or organization Account).",
+    )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="esims",
+        help_text=(
+            "Legacy dual-read owner link (personal Account user). "
+            "Do not use as inventory SoT — prefer ``account``."
+        ),
+    )
+    assigned_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_esims",
+        help_text=(
+            "Optional assignee (who uses the SIM). Not inventory or "
+            "financial owner — never used for authz or spend."
+        ),
     )
     order = models.ForeignKey(
         "orders.Order",
@@ -87,6 +113,8 @@ class Esim(models.Model):
     class Meta:
         ordering = ["-created_at"]
         indexes = [
+            models.Index(fields=["account", "status"]),
+            models.Index(fields=["account", "archived_at"]),
             models.Index(fields=["user", "status"]),
             models.Index(fields=["user", "archived_at"]),
         ]

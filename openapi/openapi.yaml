@@ -23,6 +23,12 @@ tags:
   name: Catalog
 - description: User eSIM inventory, usage, and top-ups
   name: eSIM
+- description: Team organizations and memberships (ADR 020). Authorize via organization_id; never via
+    client account_id.
+  name: Organizations
+- description: Device-facing endpoints authenticated by opaque device credential (not user JWT). Used
+    by managed devices / UEM.
+  name: Device
 - description: Authenticated user profile
   name: Users
 - description: Staff-only read-only Operations Dashboard (members, search, aggregates)
@@ -906,6 +912,46 @@ paths:
       tags:
       - Billing
       - Vouchers
+  /api/v1/device/status/:
+    post:
+      description: Read-only status for managed devices. Authenticate with ``device_external_id`` + opaque
+        ``credential`` in the body (never put the secret in the URL). Same snapshot shape as the org status
+        API. Unbound/replaced/wrong credential → 404. No user JWT; rate-limited by IP.
+      operationId: device_status
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceStatusRequestRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceStatus'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      summary: Device-facing status snapshot
+      tags:
+      - Device
   /api/v1/locations/:
     get:
       description: List catalog locations that have at least one active package.
@@ -956,8 +1002,9 @@ paths:
       - Catalog
   /api/v1/me/esims/:
     get:
-      description: List eSIMs owned by the authenticated user. By default archived eSIMs are omitted (``include_archived=false``).
-        Filtering is applied before pagination. ``archived_at`` is presentation-only and does not affect
+      description: List eSIMs owned by the resolved Account (``Esim.account``). Omit ``organization_id``
+        for personal Account; set it for team inventory (requires ``can_view``). By default archived eSIMs
+        are omitted (``include_archived=false``). ``archived_at`` is presentation-only and does not affect
         lifecycle, top-up, billing, or provider sync.
       operationId: esim_list
       parameters:
@@ -977,6 +1024,13 @@ paths:
         schema:
           default: false
           type: boolean
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       - description: A page number within the paginated result set.
         in: query
         name: page
@@ -996,6 +1050,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Membership not active / cannot view
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Organization not found
       security:
       - bearerAuth: []
       summary: List my eSIMs
@@ -1003,7 +1069,7 @@ paths:
       - eSIM
   /api/v1/me/esims/{id}/:
     get:
-      description: Retrieve a single eSIM owned by the authenticated user.
+      description: Retrieve a single eSIM owned by the resolved Account (``Esim.account``).
       operationId: esim_retrieve
       parameters:
       - in: path
@@ -1011,6 +1077,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '200':
           content:
@@ -1024,6 +1097,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Membership not active / cannot view
         '404':
           content:
             application/json:
@@ -1036,9 +1115,9 @@ paths:
       tags:
       - eSIM
     patch:
-      description: Partially update an owned eSIM. Only ``note`` is writable. ``note`` is user-local metadata
+      description: Partially update an owned eSIM. Only ``note`` is writable. ``note`` is local metadata
         and is never synchronized to Airalo. ``archived_at`` is not writable here — use POST archive/unarchive.
-        Auth-gated like other My eSIM endpoints (no dedicated throttle). PUT is not supported.
+        Team context requires ``can_assign_esim`` and an active Organization. PUT is not supported.
       operationId: esim_partial_update
       parameters:
       - in: path
@@ -1046,6 +1125,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       requestBody:
         content:
           application/json:
@@ -1070,6 +1156,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not allowed
         '404':
           content:
             application/json:
@@ -1083,10 +1175,10 @@ paths:
       - eSIM
   /api/v1/me/esims/{id}/archive/:
     post:
-      description: 'Set ``archived_at`` on an owned eSIM (user-local visibility). Idempotent: if already
+      description: 'Set ``archived_at`` on an owned eSIM (presentation visibility). Idempotent: if already
         archived, returns 200 with the current resource. Concurrent requests are safe; last committed
-        write wins. Does not change lifecycle ``status``, top-up eligibility, or provider state. Always
-        returns the full eSIM serializer body.'
+        write wins. Does not change lifecycle ``status``, top-up eligibility, or provider state. Team
+        context requires ``can_assign_esim`` and an active Organization.'
       operationId: esim_archive
       parameters:
       - in: path
@@ -1094,6 +1186,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '200':
           content:
@@ -1107,6 +1206,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not allowed
         '404':
           content:
             application/json:
@@ -1121,7 +1226,7 @@ paths:
   /api/v1/me/esims/{id}/auto-topup/:
     delete:
       description: Delete the auto top-up policy. Requires matching ``If-Match`` version (or ``version``
-        query param).
+        query param). Team context requires ``can_spend`` and an active Organization.
       operationId: esim_auto_topup_destroy
       parameters:
       - in: path
@@ -1129,6 +1234,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '204':
           description: Policy deleted
@@ -1138,6 +1250,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not allowed
         '404':
           content:
             application/json:
@@ -1156,7 +1274,7 @@ paths:
       tags:
       - eSIM
     get:
-      description: Return the auto top-up policy for an owned eSIM, if any.
+      description: Return the auto top-up policy for an eSIM owned by the resolved Account, if any.
       operationId: esim_auto_topup_retrieve
       parameters:
       - in: path
@@ -1164,6 +1282,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '200':
           content:
@@ -1177,6 +1302,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Membership not active / cannot view
         '404':
           content:
             application/json:
@@ -1191,7 +1322,9 @@ paths:
     put:
       description: 'Upsert auto top-up policy (v2: ``expiry_enabled`` + ``usage_mode``). ``package_id``
         must be in Available top-ups. Optimistic concurrency via body ``version`` and/or ``If-Match``
-        header (required when updating). Returns 409 if a purchase for this eSIM is still in progress.'
+        header (required when updating). Policy is bound to the resolved Account. Team context requires
+        ``can_spend`` and an active Organization. Returns 409 if a purchase for this eSIM is still in
+        progress.'
       operationId: esim_auto_topup_upsert
       parameters:
       - in: path
@@ -1199,6 +1332,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       requestBody:
         content:
           application/json:
@@ -1235,7 +1375,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
-          description: Rollout gate denied
+          description: Rollout gate denied or spend not allowed
         '404':
           content:
             application/json:
@@ -1255,7 +1395,7 @@ paths:
       - eSIM
   /api/v1/me/esims/{id}/events/:
     get:
-      description: Chronological install / lifecycle trail for an owned eSIM.
+      description: Chronological install / lifecycle trail for an eSIM owned by the resolved Account.
       operationId: esim_events_list
       parameters:
       - in: path
@@ -1263,6 +1403,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '200':
           content:
@@ -1276,6 +1423,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Membership not active / cannot view
         '404':
           content:
             application/json:
@@ -1289,6 +1442,7 @@ paths:
       - eSIM
     post:
       description: Record a client install/telemetry event. Idempotent on ``idempotency_key`` per eSIM.
+        Team context requires ``can_assign_esim`` and an active Organization.
       operationId: esim_events_create
       parameters:
       - in: path
@@ -1296,6 +1450,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       requestBody:
         content:
           application/json:
@@ -1327,6 +1488,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not allowed
         '404':
           content:
             application/json:
@@ -1340,8 +1507,10 @@ paths:
       - eSIM
   /api/v1/me/esims/{id}/topups/:
     get:
-      description: List available top-up packages for an owned eSIM. Additive pricing fields match catalog
-        packages (``price_usd`` customer charge, ``list_price_usd`` provider list).
+      description: List available top-up packages for an eSIM owned by the resolved Account (``Esim.account``).
+        Omit ``organization_id`` for personal Account; set the query param for team context. Additive
+        pricing fields match catalog packages (``price_usd`` customer charge, ``list_price_usd`` provider
+        list).
       operationId: esim_topups_list
       parameters:
       - in: path
@@ -1349,6 +1518,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '200':
           content:
@@ -1362,6 +1538,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Membership not active
         '404':
           content:
             application/json:
@@ -1374,7 +1556,10 @@ paths:
       tags:
       - eSIM
     post:
-      description: Purchase a top-up package using prepaid credits. Idempotent on ``idempotency_key``.
+      description: Purchase a top-up using prepaid credits on the resolved Account. Ownership requires
+        ``Esim.account`` to match the context Account (``Esim.user`` is not authz). Idempotent on ``idempotency_key``.
+        Omit ``organization_id`` for personal spend; set it for team spend (requires ``can_spend``). Client
+        ``account_id`` is rejected.
       operationId: esim_topups_purchase
       parameters:
       - in: path
@@ -1413,6 +1598,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/InsufficientCredits'
           description: Insufficient credits
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not allowed to spend in organization context
         '404':
           content:
             application/json:
@@ -1432,9 +1623,9 @@ paths:
       - eSIM
   /api/v1/me/esims/{id}/unarchive/:
     post:
-      description: 'Clear ``archived_at`` on an owned eSIM (user-local visibility). Idempotent: if not
-        archived, returns 200 with the current resource. Concurrent requests are safe; last committed
-        write wins. Always returns the full eSIM serializer body.'
+      description: 'Clear ``archived_at`` on an owned eSIM (presentation visibility). Idempotent: if not
+        archived, returns 200 with the current resource. Team context requires ``can_assign_esim`` and
+        an active Organization.'
       operationId: esim_unarchive
       parameters:
       - in: path
@@ -1442,6 +1633,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '200':
           content:
@@ -1455,6 +1653,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not allowed
         '404':
           content:
             application/json:
@@ -1468,7 +1672,7 @@ paths:
       - eSIM
   /api/v1/me/esims/{id}/usage/:
     get:
-      description: Fetch live usage for an owned eSIM and refresh the cache.
+      description: Fetch live usage for an eSIM owned by the resolved Account and refresh the cache.
       operationId: esim_usage
       parameters:
       - in: path
@@ -1476,6 +1680,13 @@ paths:
         required: true
         schema:
           type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
       responses:
         '200':
           content:
@@ -1489,6 +1700,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Membership not active / cannot view
         '404':
           content:
             application/json:
@@ -1503,16 +1720,24 @@ paths:
   /api/v1/orders/:
     post:
       description: Debit prepaid credits then fulfill via the order provider. Idempotent on ``idempotency_key``
-        (replay returns 201 with the same body).
+        (replay returns 201 with the same body). Omit ``organization_id`` for personal Account spend;
+        set it to purchase against a team Account (requires active membership with ``can_spend``). Client-supplied
+        ``account_id`` is never accepted.
       operationId: orders_create
       requestBody:
         content:
           application/json:
             examples:
-              CreateOrder:
-                summary: Create order
+              CreateOrder(personal):
+                summary: Create order (personal)
                 value:
                   idempotency_key: client-order-uuid-1
+                  package_id: airalo-pkg-123
+              CreateOrder(team):
+                summary: Create order (team)
+                value:
+                  idempotency_key: client-order-uuid-2
+                  organization_id: 11111111-1111-1111-1111-111111111111
                   package_id: airalo-pkg-123
             schema:
               $ref: '#/components/schemas/CreateOrderRequest'
@@ -1551,12 +1776,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/InsufficientCredits'
           description: Insufficient credits
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Not allowed to spend in organization context
         '404':
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
-          description: Package not found or billing disabled
+          description: Package/organization not found or billing disabled
         '409':
           content:
             application/json:
@@ -1568,6 +1799,814 @@ paths:
       summary: Create package order
       tags:
       - Orders
+  /api/v1/orgs/:
+    get:
+      description: Organizations where the caller has an **active** membership. Team Account is exposed
+        as ``account_id`` for display only — authorization always uses ``organization_id``.
+      operationId: organization_list
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Organization'
+                type: array
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Organizations feature disabled
+      security:
+      - bearerAuth: []
+      summary: List my organizations
+      tags:
+      - Organizations
+    post:
+      description: Creates an Organization with a new empty team Account and an active **owner** membership
+        for the caller. Does not convert or merge the caller's personal Account or move eSIM inventory.
+      operationId: organization_create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationCreateRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Organizations feature disabled
+      security:
+      - bearerAuth: []
+      summary: Create organization
+      tags:
+      - Organizations
+  /api/v1/orgs/invites/accept/:
+    post:
+      description: Accept by single-use token. Email on the authenticated user must match the invite.
+        Does not merge wallets or move eSIM inventory. Concurrent accepts are serialized; the second call
+        is idempotent for the same user.
+      operationId: organization_invites_accept
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationInviteAcceptRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationInviteAcceptResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Accept an organization invite
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/:
+    get:
+      description: Requires an **active** membership. Unknown or inaccessible ``organization_id`` returns
+        404. Suspended/revoked membership → 403.
+      operationId: organization_retrieve
+      parameters:
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Get organization
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/device-bindings/:
+    get:
+      description: List DeviceBinding rows for the organization. Requires ``can_view``. Bindings attach
+        team Account eSIMs to RoamKit-issued ``device_external_id`` values (ADR 020). No UEM sync in this
+        API.
+      operationId: organization_device_bindings_list
+      parameters:
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/DeviceBinding'
+                type: array
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: List device bindings
+      tags:
+      - Organizations
+    post:
+      description: Bind a team Account eSIM to a new RoamKit-issued ``device_external_id``. Requires ``can_device_bind``
+        and an active Organization. Personal-Account eSIMs are rejected (404). One active binding per
+        eSIM (use ``replace=true`` to rebind). Client ``account_id`` / ``device_external_id`` are rejected.
+      operationId: organization_device_bindings_create
+      parameters:
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceBindingCreateRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceBindingCredentialResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Create device binding
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/device-bindings/{binding_id}/:
+    get:
+      description: Get one DeviceBinding in organization scope (``can_view``).
+      operationId: organization_device_bindings_retrieve
+      parameters:
+      - in: path
+        name: binding_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceBinding'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Retrieve device binding
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/device-bindings/{binding_id}/credential/rotate/:
+    post:
+      description: Issue a new opaque device credential for an active binding. The previous secret stops
+        working immediately. Plaintext is returned only in this response. Requires ``can_device_bind``.
+      operationId: organization_device_bindings_rotate_credential
+      parameters:
+      - in: path
+        name: binding_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceBindingCredentialResponse'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Rotate device credential
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/device-bindings/{binding_id}/unbind/:
+    post:
+      description: Mark an active DeviceBinding as ``unbound`` (soft lifecycle). Requires ``can_device_bind``
+        and an active Organization.
+      operationId: organization_device_bindings_unbind
+      parameters:
+      - in: path
+        name: binding_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceBinding'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Unbind device binding
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/devices/{device_external_id}/status/:
+    get:
+      description: Read-only UEM status for an **active** DeviceBinding looked up by ``device_external_id``
+        within ``organization_id``. Requires ``can_view``. ``device_external_id`` is a lookup key only
+        — never a credential. Usage comes from the eSIM cache (no provider refresh). Unbound/replaced/cross-org
+        bindings return 404. No BlackBerry sync.
+      operationId: organization_device_status
+      parameters:
+      - in: path
+        name: device_external_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceStatus'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Device status snapshot
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/invites/:
+    get:
+      description: Requires ``can_invite`` (owner/admin) on an **active** organization. Does not accept
+        ``account_id`` as an authorization input.
+      operationId: organization_invites_list
+      parameters:
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/OrganizationInvite'
+                type: array
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: List pending organization invites
+      tags:
+      - Organizations
+    post:
+      description: Creates a pending invite, or refreshes the existing pending invite for the same normalized
+        email (token rotated). Owner role is not inviteable. Email delivery is out of scope for this endpoint.
+      operationId: organization_invites_create
+      parameters:
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationInviteCreateRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationInviteCreateResponse'
+          description: Existing pending invite refreshed.
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationInviteCreateResponse'
+          description: New pending invite created.
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Create or refresh a pending invite
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/invites/{invite_id}/revoke/:
+    post:
+      description: Requires ``can_invite``. Idempotent for already-revoked invites.
+      operationId: organization_invites_revoke
+      parameters:
+      - in: path
+        name: invite_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationInvite'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Revoke a pending invite
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/members/:
+    get:
+      description: Requires an **active** membership with ``can_view``. Does not accept ``account_id``
+        as an authorization input.
+      operationId: organization_members_list
+      parameters:
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Membership'
+                type: array
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: List organization members
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/members/{membership_id}/:
+    patch:
+      description: Requires ``can_manage_members`` on an **active** organization. Cannot assign ``owner``
+        (use transfer ownership) and cannot change the current owner's role. Business rules live in ``set_member_role``.
+      operationId: organization_members_update_role
+      parameters:
+      - in: path
+        name: membership_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedMembershipRoleUpdateRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Membership'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Update member role
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/members/{membership_id}/revoke/:
+    post:
+      description: Requires ``can_manage_members``. Cannot revoke the sole active owner. Idempotent when
+        already revoked. Business rules live in ``revoke_membership``.
+      operationId: organization_members_revoke
+      parameters:
+      - in: path
+        name: membership_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Membership'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Revoke membership
+      tags:
+      - Organizations
+  /api/v1/orgs/{organization_id}/transfer-ownership/:
+    post:
+      description: Requires ``can_transfer_ownership`` (owner) on an **active** organization. The new
+        owner must already be an active member. The previous owner is demoted to admin. Business rules
+        live in ``transfer_ownership``.
+      operationId: organization_transfer_ownership
+      parameters:
+      - in: path
+        name: organization_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationTransferOwnershipRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationTransferOwnershipResponse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      security:
+      - bearerAuth: []
+      summary: Transfer organization ownership
+      tags:
+      - Organizations
   /api/v1/packages/:
     get:
       description: 'List active packages synced from external providers. Additive pricing fields: ``price_usd``
@@ -1824,11 +2863,20 @@ components:
       - global
       type: string
     CreateOrderRequest:
-      description: Request body for POST /api/v1/orders/.
+      description: 'Request body for POST /api/v1/orders/.
+
+
+        Optional ``organization_id`` selects team Account context (ADR 020).
+
+        Client-supplied ``account_id`` is rejected — never an authz source.'
       properties:
         idempotency_key:
           maxLength: 128
           minLength: 1
+          type: string
+        organization_id:
+          format: uuid
+          nullable: true
           type: string
         package_id:
           maxLength: 64
@@ -1974,6 +3022,182 @@ components:
           type: string
       required:
       - detail
+      type: object
+    DeviceBinding:
+      properties:
+        bound_by_id:
+          nullable: true
+          readOnly: true
+          type: integer
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        device_external_id:
+          description: RoamKit-issued opaque device key (not a client authz signal).
+          readOnly: true
+          type: string
+        esim_id:
+          readOnly: true
+          type: integer
+        iccid:
+          readOnly: true
+          type: string
+        id:
+          format: uuid
+          readOnly: true
+          type: string
+        organization_id:
+          format: uuid
+          readOnly: true
+          type: string
+        replaced_by_id:
+          format: uuid
+          nullable: true
+          readOnly: true
+          type: string
+        status:
+          allOf:
+          - $ref: '#/components/schemas/DeviceBindingStatusEnum'
+          readOnly: true
+        unbound_at:
+          format: date-time
+          nullable: true
+          readOnly: true
+          type: string
+        unbound_by_id:
+          nullable: true
+          readOnly: true
+          type: integer
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+      required:
+      - bound_by_id
+      - created_at
+      - device_external_id
+      - esim_id
+      - iccid
+      - id
+      - organization_id
+      - replaced_by_id
+      - status
+      - unbound_at
+      - unbound_by_id
+      - updated_at
+      type: object
+    DeviceBindingCreateRequest:
+      properties:
+        esim_id:
+          minimum: 1
+          type: integer
+        replace:
+          default: false
+          description: When true, replace an existing active binding on this eSIM (old → replaced, new
+            → active).
+          type: boolean
+      required:
+      - esim_id
+      type: object
+    DeviceBindingCredentialResponse:
+      description: Binding plus one-time plaintext credential (create / rotate only).
+      properties:
+        binding:
+          $ref: '#/components/schemas/DeviceBinding'
+        credential:
+          description: Opaque device secret; shown only at issue/rotate time.
+          type: string
+      required:
+      - binding
+      - credential
+      type: object
+    DeviceBindingStatusEnum:
+      description: '* `active` - Active
+
+        * `unbound` - Unbound
+
+        * `replaced` - Replaced'
+      enum:
+      - active
+      - unbound
+      - replaced
+      type: string
+    DeviceStatus:
+      description: Read-only UEM status contract (cached inventory/usage; no provider call).
+      properties:
+        auto_topup:
+          $ref: '#/components/schemas/DeviceStatusAutoTopup'
+        binding_status:
+          type: string
+        checked_at:
+          format: date-time
+          type: string
+        device_external_id:
+          type: string
+        esim:
+          $ref: '#/components/schemas/DeviceStatusEsim'
+        usage:
+          $ref: '#/components/schemas/DeviceStatusUsage'
+      required:
+      - auto_topup
+      - binding_status
+      - checked_at
+      - device_external_id
+      - esim
+      - usage
+      type: object
+    DeviceStatusAutoTopup:
+      properties:
+        enabled:
+          type: boolean
+      required:
+      - enabled
+      type: object
+    DeviceStatusEsim:
+      properties:
+        iccid:
+          type: string
+        id:
+          type: integer
+        status:
+          type: string
+      required:
+      - iccid
+      - id
+      - status
+      type: object
+    DeviceStatusRequestRequest:
+      description: Device-facing status request (credential in body, never in URL).
+      properties:
+        credential:
+          maxLength: 256
+          minLength: 1
+          type: string
+        device_external_id:
+          maxLength: 64
+          minLength: 1
+          type: string
+      required:
+      - credential
+      - device_external_id
+      type: object
+    DeviceStatusUsage:
+      properties:
+        data_remaining:
+          nullable: true
+          type: string
+        data_used:
+          nullable: true
+          type: string
+        expires_at:
+          format: date-time
+          nullable: true
+          type: string
+      required:
+      - data_remaining
+      - data_used
+      - expires_at
       type: object
     ErrorDetail:
       description: 'Standard DRF ``{"detail": "..."}`` error body.'
@@ -2301,6 +3525,17 @@ components:
       - code
       - detail
       type: object
+    InviteRoleEnum:
+      description: '* `admin` - Admin
+
+        * `member` - Member
+
+        * `viewer` - Viewer'
+      enum:
+      - admin
+      - member
+      - viewer
+      type: string
     LifecycleEvent:
       description: Persisted lifecycle / install telemetry event.
       properties:
@@ -2469,6 +3704,520 @@ components:
       - slug
       - title
       type: object
+    Membership:
+      properties:
+        code:
+          type: string
+        count:
+          type: integer
+        severity:
+          type: string
+        title:
+          type: string
+      required:
+      - code
+      - count
+      - severity
+      - title
+      type: object
+    OpsDashboard:
+      properties:
+        activity:
+          items:
+            $ref: '#/components/schemas/OpsEvent'
+          type: array
+        alerts:
+          items:
+            $ref: '#/components/schemas/OpsAlert'
+          type: array
+        financial:
+          additionalProperties: {}
+          type: object
+        health:
+          $ref: '#/components/schemas/OpsHealth'
+        kpi:
+          additionalProperties: {}
+          type: object
+        pending_work:
+          additionalProperties: {}
+          type: object
+        schema_version:
+          type: integer
+        top_destinations:
+          items: {}
+          type: array
+        top_packages:
+          items: {}
+          type: array
+      required:
+      - activity
+      - alerts
+      - financial
+      - health
+      - kpi
+      - pending_work
+      - schema_version
+      - top_destinations
+      - top_packages
+      type: object
+    OpsDepositListItem:
+      properties:
+        amount_credited:
+          nullable: true
+          type: string
+        amount_requested:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        payment_method:
+          type: string
+        status:
+          type: string
+        tx_hash:
+          nullable: true
+          type: string
+        user_email:
+          format: email
+          type: string
+        user_id:
+          type: integer
+      required:
+      - amount_credited
+      - amount_requested
+      - created_at
+      - id
+      - payment_method
+      - status
+      - tx_hash
+      - user_email
+      - user_id
+      type: object
+    OpsEvent:
+      properties:
+        event_group:
+          $ref: '#/components/schemas/EventGroupEnum'
+        icon:
+          type: string
+        reference_id:
+          type: string
+        schema_version:
+          type: integer
+        severity:
+          $ref: '#/components/schemas/SeverityEnum'
+        subtitle:
+          type: string
+        timestamp:
+          format: date-time
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+        user_email:
+          format: email
+          nullable: true
+          type: string
+        user_id:
+          nullable: true
+          type: integer
+      required:
+      - event_group
+      - icon
+      - reference_id
+      - schema_version
+      - severity
+      - subtitle
+      - timestamp
+      - title
+      - type
+      type: object
+    OpsHealth:
+      properties:
+        checks:
+          additionalProperties:
+            $ref: '#/components/schemas/HealthItem'
+          type: object
+        dependencies:
+          additionalProperties:
+            $ref: '#/components/schemas/HealthItem'
+          type: object
+        generated_at:
+          type: string
+        metrics:
+          items:
+            $ref: '#/components/schemas/OpsHealthMetric'
+          type: array
+        overall_status:
+          type: string
+        providers:
+          additionalProperties:
+            $ref: '#/components/schemas/HealthItem'
+          type: object
+        schema_version:
+          type: integer
+        version:
+          additionalProperties: {}
+          type: object
+        workers:
+          additionalProperties:
+            $ref: '#/components/schemas/HealthItem'
+          type: object
+      required:
+      - checks
+      - dependencies
+      - generated_at
+      - metrics
+      - overall_status
+      - providers
+      - schema_version
+      - version
+      - workers
+      type: object
+    OpsHealthMetric:
+      properties:
+        key:
+          type: string
+        status:
+          type: string
+        unit:
+          type: string
+        value:
+          format: double
+          nullable: true
+          type: number
+      required:
+      - key
+      - status
+      - unit
+      - value
+      type: object
+    OpsOrderListItem:
+      properties:
+        country_code:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: integer
+        package_title:
+          type: string
+        retail_price_usd:
+          nullable: true
+          type: string
+        status:
+          type: string
+        user_email:
+          format: email
+          type: string
+        user_id:
+          type: integer
+      required:
+      - country_code
+      - created_at
+      - id
+      - package_title
+      - retail_price_usd
+      - status
+      - user_email
+      - user_id
+      type: object
+    OpsSearchHitDeposit:
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        match:
+          type: string
+        status:
+          type: string
+        user_email:
+          format: email
+          type: string
+        user_id:
+          type: integer
+      required:
+      - id
+      - label
+      - match
+      - status
+      - user_email
+      - user_id
+      type: object
+    OpsSearchHitEsim:
+      properties:
+        id:
+          type: integer
+        label:
+          type: string
+        match:
+          type: string
+        status:
+          type: string
+        user_email:
+          format: email
+          type: string
+        user_id:
+          type: integer
+      required:
+      - id
+      - label
+      - match
+      - status
+      - user_email
+      - user_id
+      type: object
+    OpsSearchHitOrder:
+      properties:
+        id:
+          type: integer
+        label:
+          type: string
+        match:
+          type: string
+        status:
+          type: string
+        user_email:
+          format: email
+          type: string
+        user_id:
+          type: integer
+      required:
+      - id
+      - label
+      - match
+      - status
+      - user_email
+      - user_id
+      type: object
+    OpsSearchHitUser:
+      properties:
+        id:
+          type: integer
+        label:
+          type: string
+        match:
+          type: string
+      required:
+      - id
+      - label
+      - match
+      type: object
+    OpsSearchHitVoucher:
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        match:
+          type: string
+        status:
+          type: string
+      required:
+      - id
+      - label
+      - match
+      - status
+      type: object
+    OpsSearchResponse:
+      properties:
+        deposits:
+          items:
+            $ref: '#/components/schemas/OpsSearchHitDeposit'
+          type: array
+        esims:
+          items:
+            $ref: '#/components/schemas/OpsSearchHitEsim'
+          type: array
+        orders:
+          items:
+            $ref: '#/components/schemas/OpsSearchHitOrder'
+          type: array
+        query:
+          type: string
+        schema_version:
+          type: integer
+        users:
+          items:
+            $ref: '#/components/schemas/OpsSearchHitUser'
+          type: array
+        vouchers:
+          items:
+            $ref: '#/components/schemas/OpsSearchHitVoucher'
+          type: array
+      required:
+      - deposits
+      - esims
+      - orders
+      - query
+      - schema_version
+      - users
+      - vouchers
+      type: object
+    OpsUserDetail:
+      properties:
+        account:
+          additionalProperties: {}
+          nullable: true
+          type: object
+        badges:
+          items:
+            type: string
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        device_hints:
+          additionalProperties: {}
+          type: object
+        email:
+          format: email
+          type: string
+        esims:
+          items: {}
+          type: array
+        id:
+          type: integer
+        is_active:
+          type: boolean
+        is_staff:
+          type: boolean
+        last_login:
+          format: date-time
+          nullable: true
+          type: string
+        schema_version:
+          type: integer
+        timeline:
+          items:
+            $ref: '#/components/schemas/OpsEvent'
+          type: array
+        wallet:
+          additionalProperties: {}
+          nullable: true
+          type: object
+      required:
+      - account
+      - badges
+      - created_at
+      - device_hints
+      - email
+      - esims
+      - id
+      - is_active
+      - is_staff
+      - last_login
+      - schema_version
+      - timeline
+      - wallet
+      type: object
+    OpsUserListItem:
+      properties:
+        badges:
+          items:
+            type: string
+          type: array
+        balance:
+          nullable: true
+          type: string
+        email:
+          format: email
+          type: string
+        id:
+          type: integer
+        is_active:
+          type: boolean
+        is_staff:
+          type: boolean
+        last_login:
+          format: date-time
+          nullable: true
+          type: string
+      required:
+      - badges
+      - balance
+      - email
+      - id
+      - is_active
+      - is_staff
+      - last_login
+      type: object
+    Order:
+      description: 'Order response including provisioned eSIMs when fulfilled.
+
+
+        Exposes purchase-time product snapshot (``paid_usd``, titles, …) for the
+
+        buyer. Never includes wholesale ``net_price_usd``.'
+      properties:
+        country_code:
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        id:
+          format: uuid
+          readOnly: true
+          type: string
+        role:
+          allOf:
+          - $ref: '#/components/schemas/MembershipRoleEnum'
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/MembershipStatusEnum'
+          readOnly: true
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+        user_email:
+          format: email
+          readOnly: true
+          type: string
+        user_id:
+          readOnly: true
+          type: integer
+      required:
+      - created_at
+      - id
+      - role
+      - status
+      - updated_at
+      - user_email
+      - user_id
+      type: object
+    MembershipRoleEnum:
+      description: '* `owner` - Owner
+
+        * `admin` - Admin
+
+        * `member` - Member
+
+        * `viewer` - Viewer'
+      enum:
+      - owner
+      - admin
+      - member
+      - viewer
+      type: string
+    MembershipStatusEnum:
+      description: '* `active` - Active
+
+        * `suspended` - Suspended
+
+        * `revoked` - Revoked'
+      enum:
+      - active
+      - suspended
+      - revoked
+      type: string
     OpsAlert:
       properties:
         code:
@@ -3043,6 +4792,218 @@ components:
       - package
       - topup
       type: string
+    Organization:
+      description: Organization plus the caller's role and permission flags.
+      properties:
+        account_id:
+          format: uuid
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        id:
+          format: uuid
+          readOnly: true
+          type: string
+        my_role:
+          readOnly: true
+          type: string
+        name:
+          readOnly: true
+          type: string
+        permissions:
+          additionalProperties: {}
+          readOnly: true
+          type: object
+        status:
+          allOf:
+          - $ref: '#/components/schemas/OrganizationStatusEnum'
+          readOnly: true
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+      required:
+      - account_id
+      - created_at
+      - id
+      - my_role
+      - name
+      - permissions
+      - status
+      - updated_at
+      type: object
+    OrganizationCreateRequest:
+      properties:
+        name:
+          maxLength: 128
+          minLength: 1
+          type: string
+      required:
+      - name
+      type: object
+    OrganizationInvite:
+      properties:
+        accepted_at:
+          format: date-time
+          nullable: true
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          readOnly: true
+          type: string
+        email:
+          description: Invitee email as entered (display).
+          format: email
+          readOnly: true
+          type: string
+        email_normalized:
+          description: Trimmed lowercase email for uniqueness / match.
+          format: email
+          readOnly: true
+          type: string
+        expires_at:
+          format: date-time
+          readOnly: true
+          type: string
+        id:
+          format: uuid
+          readOnly: true
+          type: string
+        invited_by_email:
+          format: email
+          readOnly: true
+          type: string
+        organization_id:
+          format: uuid
+          readOnly: true
+          type: string
+        revoked_at:
+          format: date-time
+          nullable: true
+          readOnly: true
+          type: string
+        role:
+          allOf:
+          - $ref: '#/components/schemas/InviteRoleEnum'
+          readOnly: true
+        status:
+          allOf:
+          - $ref: '#/components/schemas/OrganizationInviteStatusEnum'
+          readOnly: true
+        updated_at:
+          format: date-time
+          readOnly: true
+          type: string
+      required:
+      - accepted_at
+      - created_at
+      - email
+      - email_normalized
+      - expires_at
+      - id
+      - invited_by_email
+      - organization_id
+      - revoked_at
+      - role
+      - status
+      - updated_at
+      type: object
+    OrganizationInviteAcceptRequest:
+      properties:
+        token:
+          minLength: 1
+          type: string
+      required:
+      - token
+      type: object
+    OrganizationInviteAcceptResponse:
+      properties:
+        already_accepted:
+          type: boolean
+        membership:
+          $ref: '#/components/schemas/Membership'
+        organization_id:
+          format: uuid
+          type: string
+      required:
+      - already_accepted
+      - membership
+      - organization_id
+      type: object
+    OrganizationInviteCreateRequest:
+      properties:
+        email:
+          format: email
+          minLength: 1
+          type: string
+        role:
+          allOf:
+          - $ref: '#/components/schemas/InviteRoleEnum'
+          default: member
+      required:
+      - email
+      type: object
+    OrganizationInviteCreateResponse:
+      properties:
+        created:
+          type: boolean
+        invite:
+          $ref: '#/components/schemas/OrganizationInvite'
+        token:
+          description: Single-use invite token; shown only at create/refresh time.
+          type: string
+      required:
+      - created
+      - invite
+      - token
+      type: object
+    OrganizationInviteStatusEnum:
+      description: '* `pending` - Pending
+
+        * `accepted` - Accepted
+
+        * `revoked` - Revoked
+
+        * `expired` - Expired'
+      enum:
+      - pending
+      - accepted
+      - revoked
+      - expired
+      type: string
+    OrganizationStatusEnum:
+      description: '* `active` - Active
+
+        * `suspended` - Suspended
+
+        * `archived` - Archived'
+      enum:
+      - active
+      - suspended
+      - archived
+      type: string
+    OrganizationTransferOwnershipRequest:
+      properties:
+        new_owner_user_id:
+          minimum: 1
+          type: integer
+      required:
+      - new_owner_user_id
+      type: object
+    OrganizationTransferOwnershipResponse:
+      properties:
+        new_owner_membership:
+          $ref: '#/components/schemas/Membership'
+        organization:
+          $ref: '#/components/schemas/Organization'
+      required:
+      - new_owner_membership
+      - organization
+      type: object
     Package:
       description: 'Public package representation for the catalog API.
 
@@ -3353,6 +5314,11 @@ components:
           maxLength: 255
           type: string
       type: object
+    PatchedMembershipRoleUpdateRequest:
+      properties:
+        role:
+          $ref: '#/components/schemas/InviteRoleEnum'
+      type: object
     PricingPreviewRequestRequest:
       description: Preview inputs — package catalog id and/or explicit prices for topup.
       properties:
@@ -3428,11 +5394,22 @@ components:
       - snapshot_schema_version
       type: object
     PurchaseTopupRequest:
-      description: Request body for POST /api/v1/me/esims/{id}/topups/.
+      description: 'Request body for POST /api/v1/me/esims/{id}/topups/.
+
+
+        Optional ``organization_id`` selects team Account context (ADR 020).
+
+        Client-supplied ``account_id`` is rejected — never an authz source.
+
+        Ownership is ``Esim.account == resolved Account`` (not ``Esim.user``).'
       properties:
         idempotency_key:
           maxLength: 128
           minLength: 1
+          type: string
+        organization_id:
+          format: uuid
+          nullable: true
           type: string
         package_id:
           maxLength: 64

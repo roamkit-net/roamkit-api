@@ -138,8 +138,11 @@ class AutoTopupService:
         """
         with transaction.atomic():
             try:
+                # of=("self",): Account.user is nullable (ADR 020 org Accounts),
+                # so select_related("account__user") is an outer join — Postgres
+                # rejects FOR UPDATE on the nullable side of an outer join.
                 policy = (
-                    EsimAutoTopupPolicy.objects.select_for_update()
+                    EsimAutoTopupPolicy.objects.select_for_update(of=("self",))
                     .select_related("account", "account__user", "esim")
                     .get(pk=policy_id)
                 )

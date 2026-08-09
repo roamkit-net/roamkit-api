@@ -10,7 +10,9 @@ class EsimAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "iccid",
+        "account",
         "user",
+        "assigned_user",
         "order",
         "status",
         "activation_policy",
@@ -19,7 +21,14 @@ class EsimAdmin(admin.ModelAdmin):
         "created_at",
     )
     list_filter = ("status", "activation_policy", "archived_at")
-    search_fields = ("iccid", "user__email", "matching_id", "note")
+    search_fields = (
+        "iccid",
+        "user__email",
+        "assigned_user__email",
+        "account__id",
+        "matching_id",
+        "note",
+    )
     readonly_fields = (
         "created_at",
         "updated_at",
@@ -28,7 +37,14 @@ class EsimAdmin(admin.ModelAdmin):
         "setup_skipped_at",
         "archived_at",
     )
-    raw_id_fields = ("user", "order")
+    raw_id_fields = ("account", "user", "assigned_user", "order")
+
+    @admin.display(description="Note", ordering="note")
+    def note_preview(self, obj: Esim) -> str:
+        note = obj.note or ""
+        if len(note) <= 40:
+            return note
+        return f"{note[:40]}…"
 
     @admin.display(description="Note", ordering="note")
     def note_preview(self, obj: Esim) -> str:

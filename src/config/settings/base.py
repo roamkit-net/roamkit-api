@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "apps.billing",
     "apps.pricing",
     "apps.wallet",
+    "apps.organizations",
     "apps.catalog",
     "apps.orders",
     "apps.esims",
@@ -179,6 +180,7 @@ AUTH_PASSWORD_RESET_CONFIRM_RATE = os.environ.get(
 AUTH_GOOGLE_RATE = os.environ.get("AUTH_GOOGLE_RATE", "10/min")
 AUTH_TURNSTILE_DEGRADED_RATE = os.environ.get("AUTH_TURNSTILE_DEGRADED_RATE", "5/hour")
 BILLING_VOUCHER_REDEEM_RATE = os.environ.get("BILLING_VOUCHER_REDEEM_RATE", "10/5min")
+DEVICE_STATUS_RATE = os.environ.get("DEVICE_STATUS_RATE", "60/hour")
 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
@@ -204,6 +206,7 @@ REST_FRAMEWORK = {
         "auth_password_reset_confirm": AUTH_PASSWORD_RESET_CONFIRM_RATE,
         "auth_google": AUTH_GOOGLE_RATE,
         "billing_voucher_redeem": BILLING_VOUCHER_REDEEM_RATE,
+        "device_status": DEVICE_STATUS_RATE,
     },
 }
 
@@ -244,6 +247,20 @@ SPECTACULAR_SETTINGS = {
         {"name": "Orders", "description": "Package purchase orders"},
         {"name": "Catalog", "description": "Packages and locations"},
         {"name": "eSIM", "description": "User eSIM inventory, usage, and top-ups"},
+        {
+            "name": "Organizations",
+            "description": (
+                "Team organizations and memberships (ADR 020). "
+                "Authorize via organization_id; never via client account_id."
+            ),
+        },
+        {
+            "name": "Device",
+            "description": (
+                "Device-facing endpoints authenticated by opaque device "
+                "credential (not user JWT). Used by managed devices / UEM."
+            ),
+        },
         {"name": "Users", "description": "Authenticated user profile"},
         {
             "name": "Ops",
@@ -270,6 +287,8 @@ SPECTACULAR_SETTINGS = {
         "DepositRequestStatusEnum": "apps.billing.models.DepositRequest.Status",
         "DepositPaymentMethodEnum": "apps.billing.models.DepositRequest.PaymentMethod",
         "LedgerReferenceTypeEnum": "apps.billing.models.LedgerReferenceType",
+        "InviteRoleEnum": "apps.organizations.models.InviteRole",
+        "MembershipRoleEnum": "apps.organizations.models.MembershipRole",
     },
 }
 
@@ -312,6 +331,14 @@ AIRALO_BLOCKED_CLIENT_IDS = os.environ.get("AIRALO_BLOCKED_CLIENT_IDS", "")
 # Billing feature flags (ADR-010). Money endpoints under /api/v1/billing/*
 # return 404 when BILLING_ENABLED is false; GET …/billing/config/ stays public.
 BILLING_ENABLED = os.environ.get("BILLING_ENABLED", "true").lower() == "true"
+# ADR 020 — Organization / Membership HTTP surfaces under /api/v1/orgs/*
+ORGANIZATIONS_ENABLED = (
+    os.environ.get("ORGANIZATIONS_ENABLED", "true").lower() == "true"
+)
+# Pending org invite lifetime (ADR 020); accept is single-use regardless.
+ORGANIZATION_INVITE_TTL_SECONDS = int(
+    os.environ.get("ORGANIZATION_INVITE_TTL_SECONDS", str(7 * 24 * 3600))
+)
 SUBSCRIPTIONS_ENABLED = (
     os.environ.get("SUBSCRIPTIONS_ENABLED", "false").lower() == "true"
 )

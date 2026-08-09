@@ -25,6 +25,7 @@ from apps.catalog.models import Package
 from apps.orders.exceptions import IdempotencyKeyRequiredError, SpendInProgressError
 from apps.orders.serializers import CreateOrderSerializer, OrderSerializer
 from apps.orders.services.order_service import OrderService
+from apps.organizations.services import require_spend, resolve_account_context
 from core.openapi_serializers import (
     ErrorDetailSerializer,
     InsufficientCreditsSerializer,
@@ -39,18 +40,32 @@ from shared.providers.factory import get_order_provider
         summary="Create package order",
         description=(
             "Debit prepaid credits then fulfill via the order provider. "
-            "Idempotent on ``idempotency_key`` (replay returns 201 with the same body)."
+            "Idempotent on ``idempotency_key`` "
+            "(replay returns 201 with the same body). "
+            "Omit ``organization_id`` for personal Account spend; set it to "
+            "purchase against a team Account "
+            "(requires active membership with ``can_spend``). "
+            "Client-supplied ``account_id`` is never accepted."
         ),
         request=CreateOrderSerializer,
         examples=[
             OpenApiExample(
-                "Create order",
+                "Create order (personal)",
                 value={
                     "package_id": "airalo-pkg-123",
                     "idempotency_key": "client-order-uuid-1",
                 },
                 request_only=True,
-            )
+            ),
+            OpenApiExample(
+                "Create order (team)",
+                value={
+                    "package_id": "airalo-pkg-123",
+                    "idempotency_key": "client-order-uuid-2",
+                    "organization_id": "11111111-1111-1111-1111-111111111111",
+                },
+                request_only=True,
+            ),
         ],
         responses={
             201: OpenApiResponse(response=OrderSerializer, description="Order created"),
@@ -76,9 +91,13 @@ from shared.providers.factory import get_order_provider
                     )
                 ],
             ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="Not allowed to spend in organization context",
+            ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer,
-                description="Package not found or billing disabled",
+                description="Package/organization not found or billing disabled",
             ),
             409: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Spend already in progress"
@@ -99,6 +118,11 @@ class OrderCreateView(APIView):
         serializer.is_valid(raise_exception=True)
         package_id = serializer.validated_data["package_id"]
         idempotency_key = serializer.validated_data["idempotency_key"]
+        organization_id = serializer.validated_data.get("organization_id")
+
+        context = resolve_account_context(request.user, organization_id=organization_id)
+        if context.kind == "organization":
+            require_spend(context)
 
         try:
             package = Package.objects.get(external_id=package_id, is_active=True)
@@ -111,6 +135,7 @@ class OrderCreateView(APIView):
                 user=request.user,
                 package=package,
                 idempotency_key=idempotency_key,
+                account=context.account,
             )
         except BillingDisabledError as exc:
             raise NotFound(detail="Not found.") from exc

@@ -86,6 +86,7 @@ def test_billing_models_use_uuid_primary_keys() -> None:
     )
     esim = Esim.objects.create(
         user=user,
+        account=account,
         order=order,
         iccid="891000000000009001",
         status=Esim.Status.PURCHASED,
@@ -225,6 +226,7 @@ def test_check_constraints_reject_invalid_rows() -> None:
     order = Order.objects.create(account=account, package=package)
     esim = Esim.objects.create(
         user=user,
+        account=account,
         order=order,
         iccid="891000000000009002",
         status=Esim.Status.PURCHASED,
