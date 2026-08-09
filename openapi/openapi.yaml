@@ -3171,36 +3171,6 @@ components:
       required:
       - enabled
       type: object
-    DeviceStatusPlan:
-      description: Purchase-time plan metadata from Order snapshot (null when unavailable).
-      properties:
-        title:
-          nullable: true
-          type: string
-        data_allowance:
-          nullable: true
-          type: string
-        validity_days:
-          nullable: true
-          type: integer
-        country_code:
-          nullable: true
-          type: string
-        coverage_type:
-          description: local | regional | global from Order snapshot; null for legacy.
-          nullable: true
-          type: string
-        location_title:
-          nullable: true
-          type: string
-      required:
-      - title
-      - data_allowance
-      - validity_days
-      - country_code
-      - coverage_type
-      - location_title
-      type: object
     DeviceStatusEsim:
       properties:
         iccid:
@@ -3213,6 +3183,35 @@ components:
       - iccid
       - id
       - status
+      type: object
+    DeviceStatusPlan:
+      description: Purchase-time plan metadata from Order snapshot (nullable parent field).
+      properties:
+        country_code:
+          nullable: true
+          type: string
+        coverage_type:
+          nullable: true
+          type: string
+        data_allowance:
+          nullable: true
+          type: string
+        location_title:
+          nullable: true
+          type: string
+        title:
+          nullable: true
+          type: string
+        validity_days:
+          nullable: true
+          type: integer
+      required:
+      - country_code
+      - coverage_type
+      - data_allowance
+      - location_title
+      - title
+      - validity_days
       type: object
     DeviceStatusRequestRequest:
       description: Device-facing status request (credential in body, never in URL).
