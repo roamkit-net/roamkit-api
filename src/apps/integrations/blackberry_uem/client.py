@@ -112,6 +112,32 @@ class BlackberryUemClient:
                 return device
         return None
 
+    def get_device_by_serial(self, serial_number: str) -> dict[str, Any]:
+        """Return the single device matching ``serialNumber`` (ADR 021 C′).
+
+        Validated tenant path: ``GET /devices`` + exact ``serialNumber`` match.
+        ``query=serialNumber`` is not supported (HTTP 400 on S31564560).
+
+        Raises ``BlackberryUemClientError`` when match count is not exactly one.
+        """
+        serial = (serial_number or "").strip()
+        if not serial:
+            raise BlackberryUemClientError("UEM serialNumber is required")
+        matches = [
+            device
+            for device in self.list_devices()
+            if str(device.get("serialNumber") or "").strip() == serial
+        ]
+        if len(matches) == 0:
+            raise BlackberryUemClientError(
+                "UEM serialNumber match count is 0 (fail closed)"
+            )
+        if len(matches) > 1:
+            raise BlackberryUemClientError(
+                f"UEM serialNumber match count is {len(matches)} (fail closed)"
+            )
+        return matches[0]
+
     def list_devices(self) -> list[dict[str, Any]]:
         """GET /devices (read-only)."""
         payload = self._request(

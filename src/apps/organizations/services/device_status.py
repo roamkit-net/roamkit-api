@@ -1,9 +1,8 @@
-"""Read-only device status snapshot (ADR 020 / ADR 021 staging proof).
+"""Read-only device status snapshot (ADR 020 / ADR 021 Option C″).
 
-Shared builder for org-authenticated (PR17) and device-credential (PR18)
-paths. Classic path uses ``binding.esim``. When ``uem_device_guid`` is set on
-the PR18 path, status resolves via read-only UEM ICCID lookup (no provider
-refresh, no binding/inventory mutation).
+Shared builder for org-authenticated (PR17), device-credential (PR18), and
+serial+binding (Option C″) paths. No provider refresh; no binding/inventory
+mutation except refreshable ``uem_device_guid`` cache on unique serial match.
 """
 
 from __future__ import annotations
@@ -25,13 +24,16 @@ from apps.integrations.blackberry_uem.client import (
     BlackberryUemClientError,
 )
 from apps.organizations.exceptions import (
+    BindingNotFoundError,
     IccidNotFoundError,
     UemInventoryUnavailableError,
+    UemSerialMatchError,
 )
 from apps.organizations.models import DeviceBinding, DeviceBindingStatus
 from apps.organizations.services.authz import require_view
 from apps.organizations.services.context import resolve_organization_context
 from apps.organizations.services.uem_iccid import resolve_top_level_iccid
+from apps.organizations.services.uem_serial import refresh_binding_uem_guid_from_serial
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
@@ -318,6 +320,60 @@ def get_device_status_by_credential(
         device_external_id=device_external_id,
         credential=credential,
     )
+    return build_device_status_snapshot(binding, esim=esim)
+
+
+def _esim_for_team_iccid(*, organization, iccid: str) -> Esim:
+    esim = (
+        Esim.objects.select_related("order")
+        .filter(account_id=organization.account_id, iccid=iccid)
+        .first()
+    )
+    if esim is None:
+        raise IccidNotFoundError("No RoamKit data for this ICCID.")
+    if esim.account_id != organization.account_id:
+        raise IccidNotFoundError("No RoamKit data for this ICCID.")
+    return esim
+
+
+def get_device_status_by_serial(*, device_serial: str) -> DeviceStatusSnapshot:
+    """Device-facing status via serial + active binding (ADR 021 Option C″).
+
+    Serial is an identifier, not a secret. Gate: exactly one active
+    ``DeviceBinding`` for that serial, then UEM ICCID → team-Account Esim.
+    Read-only; no mutations.
+    """
+    serial = (device_serial or "").strip()
+    if not serial:
+        raise BindingNotFoundError("Device binding not found.")
+
+    matches = list(
+        DeviceBinding.objects.select_related(
+            "esim", "esim__account", "esim__order", "organization"
+        ).filter(
+            uem_serial_number=serial,
+            status=DeviceBindingStatus.ACTIVE,
+        )
+    )
+    if len(matches) != 1:
+        raise BindingNotFoundError("Device binding not found.")
+    binding = matches[0]
+
+    try:
+        device = refresh_binding_uem_guid_from_serial(binding)
+    except UemSerialMatchError as exc:
+        logger.warning(
+            "UEM serial resolve failed for binding=%s serial=%s: %s",
+            binding.pk,
+            serial,
+            exc,
+        )
+        raise UemInventoryUnavailableError(
+            "UEM telephony inventory unavailable"
+        ) from exc
+
+    iccid = resolve_top_level_iccid(device)
+    esim = _esim_for_team_iccid(organization=binding.organization, iccid=iccid)
     return build_device_status_snapshot(binding, esim=esim)
 
 

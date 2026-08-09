@@ -285,33 +285,113 @@ class DeviceBindingCredentialResponseSerializer(serializers.Serializer):
     )
 
 
-class DeviceStatusRequestSerializer(serializers.Serializer):
-    """Device credential request body (status / coverage; never in URL)."""
+def _reject_client_scope_fields(initial_data) -> None:
+    if "organization_id" in initial_data:
+        raise serializers.ValidationError(
+            {
+                "organization_id": (
+                    "organization_id is not accepted on device credential "
+                    "endpoints; credential scopes the binding."
+                )
+            }
+        )
+    if "account_id" in initial_data:
+        raise serializers.ValidationError(
+            {"account_id": "Client-supplied account_id is not accepted."}
+        )
+    if "esim_id" in initial_data:
+        raise serializers.ValidationError(
+            {
+                "esim_id": (
+                    "esim_id is not accepted; coverage/status resolve the "
+                    "eSIM via the authenticated device binding only."
+                )
+            }
+        )
+
+
+class DeviceCredentialRequestSerializer(serializers.Serializer):
+    """PR18 device credential body (coverage; never in URL)."""
 
     device_external_id = serializers.CharField(max_length=64)
     credential = serializers.CharField(max_length=256)
 
     def validate(self, attrs: dict) -> dict:
-        if "organization_id" in self.initial_data:
-            raise serializers.ValidationError(
-                {
-                    "organization_id": (
-                        "organization_id is not accepted on device credential "
-                        "endpoints; credential scopes the binding."
-                    )
-                }
-            )
-        if "account_id" in self.initial_data:
-            raise serializers.ValidationError(
-                {"account_id": "Client-supplied account_id is not accepted."}
-            )
-        if "esim_id" in self.initial_data:
-            raise serializers.ValidationError(
-                {
-                    "esim_id": (
-                        "esim_id is not accepted; coverage/status resolve the "
-                        "eSIM via the authenticated device binding only."
-                    )
-                }
-            )
+        _reject_client_scope_fields(self.initial_data)
         return attrs
+
+
+class DeviceStatusRequestSerializer(serializers.Serializer):
+    """Device status body — exactly one of PR18 or serial shape (ADR 021 C″).
+
+    PR18: ``device_external_id`` + ``credential``
+    Serial: ``device_serial`` only
+
+    Mixed / incomplete / legacy ``fleet_*`` fields → 400 (no guessing).
+    """
+
+    device_external_id = serializers.CharField(
+        max_length=64, required=False, allow_blank=False
+    )
+    credential = serializers.CharField(
+        max_length=256, required=False, allow_blank=False
+    )
+    device_serial = serializers.CharField(
+        max_length=128, required=False, allow_blank=False
+    )
+
+    _PR18_KEYS = ("device_external_id", "credential")
+    _SERIAL_KEYS = ("device_serial",)
+    _REMOVED_FLEET_KEYS = ("fleet_external_id", "fleet_credential")
+
+    def validate(self, attrs: dict) -> dict:
+        _reject_client_scope_fields(self.initial_data)
+        data = self.initial_data or {}
+
+        if any(key in data for key in self._REMOVED_FLEET_KEYS):
+            raise serializers.ValidationError(
+                "fleet_external_id / fleet_credential are not accepted on v1 "
+                "device status; use device_serial or PR18 credentials."
+            )
+
+        pr18_present = any(key in data for key in self._PR18_KEYS)
+        serial_present = any(key in data for key in self._SERIAL_KEYS)
+
+        if pr18_present and serial_present:
+            raise serializers.ValidationError(
+                "Cannot mix PR18 fields (device_external_id, credential) with "
+                "serial field (device_serial)."
+            )
+
+        if pr18_present:
+            missing = [
+                key for key in self._PR18_KEYS if not str(data.get(key) or "").strip()
+            ]
+            if missing:
+                raise serializers.ValidationError(
+                    {
+                        key: "This field is required for PR18 device auth."
+                        for key in missing
+                    }
+                )
+            return {
+                "auth_shape": "pr18",
+                "device_external_id": str(data["device_external_id"]).strip(),
+                "credential": str(data["credential"]),
+            }
+
+        if serial_present:
+            serial = str(data.get("device_serial") or "").strip()
+            if not serial:
+                raise serializers.ValidationError(
+                    {"device_serial": "This field is required for serial status."}
+                )
+            return {
+                "auth_shape": "serial",
+                "device_serial": serial,
+            }
+
+        raise serializers.ValidationError(
+            "Provide either device_external_id+credential (PR18) or "
+            "device_serial (ADR 021 Option C″)."
+        )

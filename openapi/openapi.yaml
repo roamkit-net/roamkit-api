@@ -923,7 +923,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DeviceStatusRequestRequest'
+              $ref: '#/components/schemas/DeviceCredentialRequestRequest'
         required: true
       responses:
         '200':
@@ -961,16 +961,24 @@ paths:
       - Device
   /api/v1/device/status/:
     post:
-      description: Read-only status for managed devices. Authenticate with ``device_external_id`` + opaque
-        ``credential`` in the body (never put the secret in the URL). Same snapshot shape as the org status
-        API. Unbound/replaced/wrong credential → 404. No user JWT; rate-limited by IP.
+      description: 'Read-only status for managed devices. Exactly one body shape (never put secrets in
+        the URL):
+
+
+        - PR18 fallback: ``device_external_id`` + ``credential``
+
+        - Serial (ADR 021 Option C″): ``device_serial``
+
+
+        Mixed / incomplete / ``fleet_*`` fields → 400. Serial without an active DeviceBinding → ``binding_not_found``.
+        Same snapshot shape as the org status API. No user JWT; rate-limited by IP. Mutations are never
+        authorized on this endpoint.'
       operationId: device_status
       requestBody:
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/DeviceStatusRequestRequest'
-        required: true
       responses:
         '200':
           content:
@@ -3114,8 +3122,9 @@ components:
           - $ref: '#/components/schemas/DeviceBindingStatusEnum'
           readOnly: true
         uem_device_guid:
-          description: BlackBerry UEM device.guid bridge for staging SIM/ICCID lookup (ADR 021 option
-            C proof). Empty = classic PR18 binding.esim path. Not an auth secret.
+          description: Current BlackBerry UEM device.guid correlation/cache (ADR 021 Option C′). Refreshable
+            after re-enroll when serial match is unique. Not an auth secret. Empty = classic PR18 path
+            or guid not yet resolved.
           readOnly: true
           type: string
         unbound_at:
@@ -3221,6 +3230,21 @@ components:
       - country_name
       - operators
       type: object
+    DeviceCredentialRequestRequest:
+      description: PR18 device credential body (coverage; never in URL).
+      properties:
+        credential:
+          maxLength: 256
+          minLength: 1
+          type: string
+        device_external_id:
+          maxLength: 64
+          minLength: 1
+          type: string
+      required:
+      - credential
+      - device_external_id
+      type: object
     DeviceStatus:
       description: Read-only UEM status contract (cached inventory/usage; no provider call).
       properties:
@@ -3316,7 +3340,15 @@ components:
       - validity_days
       type: object
     DeviceStatusRequestRequest:
-      description: Device credential request body (status / coverage; never in URL).
+      description: 'Device status body — exactly one of PR18 or serial shape (ADR 021 C″).
+
+
+        PR18: ``device_external_id`` + ``credential``
+
+        Serial: ``device_serial`` only
+
+
+        Mixed / incomplete / legacy ``fleet_*`` fields → 400 (no guessing).'
       properties:
         credential:
           maxLength: 256
@@ -3326,9 +3358,10 @@ components:
           maxLength: 64
           minLength: 1
           type: string
-      required:
-      - credential
-      - device_external_id
+        device_serial:
+          maxLength: 128
+          minLength: 1
+          type: string
       type: object
     DeviceStatusUsage:
       properties:

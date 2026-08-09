@@ -47,3 +47,23 @@ class UemInventoryUnavailableError(DeviceBindingError):
 
 class IccidNotFoundError(DeviceBindingError):
     """UEM ICCID present but no matching Esim on the team Account."""
+
+
+class UemSerialMatchError(DeviceBindingError):
+    """UEM serialNumber match is not exactly one device (0 or >1)."""
+
+
+class BindingNotFoundError(DeviceBindingError):
+    """Fleet/PR18 binding auth failed or no active binding for the device."""
+
+
+class FleetCredentialError(OrganizationError):
+    """Base fleet credential domain error (ADR 021 Option C′)."""
+
+
+class FleetCredentialConflictError(FleetCredentialError):
+    """Fleet credential already exists or conflicts with org invariants."""
+
+
+class FleetCredentialInvalidError(FleetCredentialError):
+    """Fleet external id / secret missing, wrong, or outside grace window."""

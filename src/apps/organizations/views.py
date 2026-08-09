@@ -23,6 +23,7 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import User
 from apps.organizations.exceptions import (
+    BindingNotFoundError,
     DeviceBindingConflictError,
     DeviceBindingNotFoundError,
     IccidNotFoundError,
@@ -44,6 +45,7 @@ from apps.organizations.serializers import (
     DeviceBindingCredentialResponseSerializer,
     DeviceBindingSerializer,
     DeviceCoverageSerializer,
+    DeviceCredentialRequestSerializer,
     DeviceStatusRequestSerializer,
     DeviceStatusSerializer,
     MembershipRoleUpdateSerializer,
@@ -72,6 +74,7 @@ from apps.organizations.services.device_status import (
     get_device_coverage_by_credential,
     get_device_status,
     get_device_status_by_credential,
+    get_device_status_by_serial,
 )
 from apps.organizations.services.invites import (
     accept_invite,
@@ -806,11 +809,14 @@ class OrganizationDeviceStatusView(OrganizationsAPIView):
         operation_id="device_status",
         summary="Device-facing status snapshot",
         description=(
-            "Read-only status for managed devices. Authenticate with "
-            "``device_external_id`` + opaque ``credential`` in the body "
-            "(never put the secret in the URL). Same snapshot shape as the "
-            "org status API. Unbound/replaced/wrong credential → 404. "
-            "No user JWT; rate-limited by IP."
+            "Read-only status for managed devices. Exactly one body shape "
+            "(never put secrets in the URL):\n\n"
+            "- PR18 fallback: ``device_external_id`` + ``credential``\n"
+            "- Serial (ADR 021 Option C″): ``device_serial``\n\n"
+            "Mixed / incomplete / ``fleet_*`` fields → 400. Serial without an "
+            "active DeviceBinding → ``binding_not_found``. Same snapshot "
+            "shape as the org status API. No user JWT; rate-limited by IP. "
+            "Mutations are never authorized on this endpoint."
         ),
         request=DeviceStatusRequestSerializer,
         responses={
@@ -824,12 +830,7 @@ class OrganizationDeviceStatusView(OrganizationsAPIView):
     ),
 )
 class DeviceStatusView(APIView):
-    """Unauthenticated device status via opaque credential (PR18).
-
-    Optional staging path (ADR 021 override): when the binding has
-    ``uem_device_guid``, resolve ICCID via read-only UEM and look up Esim on
-    the team Account. Classic PR18 ``binding.esim`` path when guid is empty.
-    """
+    """Device status via PR18 credential or serial + active binding (C″)."""
 
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -843,10 +844,24 @@ class DeviceStatusView(APIView):
     def post(self, request: Request) -> Response:
         body = DeviceStatusRequestSerializer(data=request.data)
         body.is_valid(raise_exception=True)
+        data = body.validated_data
         try:
-            snapshot = get_device_status_by_credential(
-                device_external_id=body.validated_data["device_external_id"],
-                credential=body.validated_data["credential"],
+            if data["auth_shape"] == "serial":
+                snapshot = get_device_status_by_serial(
+                    device_serial=data["device_serial"],
+                )
+            else:
+                snapshot = get_device_status_by_credential(
+                    device_external_id=data["device_external_id"],
+                    credential=data["credential"],
+                )
+        except BindingNotFoundError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "Device binding not found.",
+                    "code": "binding_not_found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
             )
         except UemInventoryUnavailableError as exc:
             return Response(
@@ -880,7 +895,7 @@ class DeviceStatusView(APIView):
             "snapshot return ``coverage: null``. No user JWT; rate-limited "
             "by IP."
         ),
-        request=DeviceStatusRequestSerializer,
+        request=DeviceCredentialRequestSerializer,
         responses={
             200: OpenApiResponse(response=DeviceCoverageSerializer),
             400: OpenApiResponse(response=ErrorDetailSerializer),
@@ -904,7 +919,7 @@ class DeviceCoverageView(APIView):
             raise NotFound(detail="Not found.")
 
     def post(self, request: Request) -> Response:
-        body = DeviceStatusRequestSerializer(data=request.data)
+        body = DeviceCredentialRequestSerializer(data=request.data)
         body.is_valid(raise_exception=True)
         try:
             snapshot = get_device_coverage_by_credential(

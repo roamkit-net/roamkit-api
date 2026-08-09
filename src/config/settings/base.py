@@ -344,6 +344,12 @@ BLACKBERRY_UEM_TOKEN_URL = os.environ.get("BLACKBERRY_UEM_TOKEN_URL", "")
 BLACKBERRY_UEM_SCOPE = os.environ.get("BLACKBERRY_UEM_SCOPE", "openid MDMBWS.All")
 BLACKBERRY_UEM_TIMEOUT = float(os.environ.get("BLACKBERRY_UEM_TIMEOUT", "30"))
 
+# ADR 021 Option C′ — fleet credential previous-secret grace window (seconds).
+# Default 72h so UEM App Configuration can roll out before old secret dies.
+FLEET_CREDENTIAL_GRACE_SECONDS = int(
+    os.environ.get("FLEET_CREDENTIAL_GRACE_SECONDS", str(72 * 60 * 60))
+)
+
 # Billing feature flags (ADR-010). Money endpoints under /api/v1/billing/*
 # return 404 when BILLING_ENABLED is false; GET …/billing/config/ stays public.
 BILLING_ENABLED = os.environ.get("BILLING_ENABLED", "true").lower() == "true"
