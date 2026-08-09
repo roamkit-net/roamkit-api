@@ -46,13 +46,6 @@ class EsimAdmin(admin.ModelAdmin):
             return note
         return f"{note[:40]}…"
 
-    @admin.display(description="Note", ordering="note")
-    def note_preview(self, obj: Esim) -> str:
-        note = obj.note or ""
-        if len(note) <= 40:
-            return note
-        return f"{note[:40]}…"
-
 
 @admin.register(EsimLifecycleEvent)
 class EsimLifecycleEventAdmin(admin.ModelAdmin):

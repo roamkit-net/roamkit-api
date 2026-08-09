@@ -26,7 +26,6 @@ from apps.billing.exceptions import (
     InsufficientFundsError,
     InvalidAmountError,
 )
-from apps.billing.services import ensure_billing_account
 from apps.esims.exceptions import (
     TopupPackageNotFoundError,
     UnknownLifecycleEventTypeError,
@@ -78,13 +77,6 @@ ORGANIZATION_CONTEXT_PARAMETER = OpenApiParameter(
         "or ``Esim.user``."
     ),
 )
-
-
-def _truthy_query_flag(raw: str | None) -> bool:
-    """Parse a boolean query flag; missing/empty → False."""
-    if raw is None:
-        return False
-    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _truthy_query_flag(raw: str | None) -> bool:
@@ -262,31 +254,6 @@ class EsimListView(OwnedEsimMixin, ListAPIView):
             ),
             403: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Not allowed"
-            ),
-            404: OpenApiResponse(
-                response=ErrorDetailSerializer, description="eSIM not found"
-            ),
-        },
-    ),
-    patch=extend_schema(
-        tags=["eSIM"],
-        operation_id="esim_partial_update",
-        summary="Update my eSIM note",
-        description=(
-            "Partially update an owned eSIM. Only ``note`` is writable. "
-            "``note`` is user-local metadata and is never synchronized to Airalo. "
-            "``archived_at`` is not writable here — use POST archive/unarchive. "
-            "Auth-gated like other My eSIM endpoints (no dedicated throttle). "
-            "PUT is not supported."
-        ),
-        request=EsimSerializer,
-        responses={
-            200: OpenApiResponse(response=EsimSerializer, description="eSIM"),
-            400: OpenApiResponse(
-                response=ErrorDetailSerializer, description="Invalid request"
-            ),
-            401: OpenApiResponse(
-                response=ErrorDetailSerializer, description="Authentication required"
             ),
             404: OpenApiResponse(
                 response=ErrorDetailSerializer, description="eSIM not found"
