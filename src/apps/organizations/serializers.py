@@ -322,12 +322,12 @@ class DeviceCredentialRequestSerializer(serializers.Serializer):
 
 
 class DeviceStatusRequestSerializer(serializers.Serializer):
-    """Device status auth body — exactly one of PR18 or fleet shape (ADR 021 C′).
+    """Device status body — exactly one of PR18 or serial shape (ADR 021 C″).
 
     PR18: ``device_external_id`` + ``credential``
-    Fleet: ``fleet_external_id`` + ``fleet_credential`` + ``device_serial``
+    Serial: ``device_serial`` only
 
-    Mixed or incomplete shapes → 400 (no guessing).
+    Mixed / incomplete / legacy ``fleet_*`` fields → 400 (no guessing).
     """
 
     device_external_id = serializers.CharField(
@@ -336,30 +336,31 @@ class DeviceStatusRequestSerializer(serializers.Serializer):
     credential = serializers.CharField(
         max_length=256, required=False, allow_blank=False
     )
-    fleet_external_id = serializers.CharField(
-        max_length=64, required=False, allow_blank=False
-    )
-    fleet_credential = serializers.CharField(
-        max_length=256, required=False, allow_blank=False
-    )
     device_serial = serializers.CharField(
         max_length=128, required=False, allow_blank=False
     )
 
     _PR18_KEYS = ("device_external_id", "credential")
-    _FLEET_KEYS = ("fleet_external_id", "fleet_credential", "device_serial")
+    _SERIAL_KEYS = ("device_serial",)
+    _REMOVED_FLEET_KEYS = ("fleet_external_id", "fleet_credential")
 
     def validate(self, attrs: dict) -> dict:
         _reject_client_scope_fields(self.initial_data)
         data = self.initial_data or {}
-        pr18_present = any(key in data for key in self._PR18_KEYS)
-        fleet_present = any(key in data for key in self._FLEET_KEYS)
 
-        if pr18_present and fleet_present:
+        if any(key in data for key in self._REMOVED_FLEET_KEYS):
+            raise serializers.ValidationError(
+                "fleet_external_id / fleet_credential are not accepted on v1 "
+                "device status; use device_serial or PR18 credentials."
+            )
+
+        pr18_present = any(key in data for key in self._PR18_KEYS)
+        serial_present = any(key in data for key in self._SERIAL_KEYS)
+
+        if pr18_present and serial_present:
             raise serializers.ValidationError(
                 "Cannot mix PR18 fields (device_external_id, credential) with "
-                "fleet fields (fleet_external_id, fleet_credential, "
-                "device_serial)."
+                "serial field (device_serial)."
             )
 
         if pr18_present:
@@ -379,25 +380,18 @@ class DeviceStatusRequestSerializer(serializers.Serializer):
                 "credential": str(data["credential"]),
             }
 
-        if fleet_present:
-            missing = [
-                key for key in self._FLEET_KEYS if not str(data.get(key) or "").strip()
-            ]
-            if missing:
+        if serial_present:
+            serial = str(data.get("device_serial") or "").strip()
+            if not serial:
                 raise serializers.ValidationError(
-                    {
-                        key: "This field is required for fleet device auth."
-                        for key in missing
-                    }
+                    {"device_serial": "This field is required for serial status."}
                 )
             return {
-                "auth_shape": "fleet",
-                "fleet_external_id": str(data["fleet_external_id"]).strip(),
-                "fleet_credential": str(data["fleet_credential"]),
-                "device_serial": str(data["device_serial"]).strip(),
+                "auth_shape": "serial",
+                "device_serial": serial,
             }
 
         raise serializers.ValidationError(
             "Provide either device_external_id+credential (PR18) or "
-            "fleet_external_id+fleet_credential+device_serial (fleet)."
+            "device_serial (ADR 021 Option C″)."
         )

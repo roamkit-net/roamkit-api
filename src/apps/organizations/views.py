@@ -74,7 +74,7 @@ from apps.organizations.services.device_status import (
     get_device_coverage_by_credential,
     get_device_status,
     get_device_status_by_credential,
-    get_device_status_by_fleet,
+    get_device_status_by_serial,
 )
 from apps.organizations.services.invites import (
     accept_invite,
@@ -809,14 +809,14 @@ class OrganizationDeviceStatusView(OrganizationsAPIView):
         operation_id="device_status",
         summary="Device-facing status snapshot",
         description=(
-            "Read-only status for managed devices. Authenticate with exactly "
-            "one body shape (never put secrets in the URL):\n\n"
-            "- PR18: ``device_external_id`` + ``credential``\n"
-            "- Fleet (ADR 021 Option C′): ``fleet_external_id`` + "
-            "``fleet_credential`` + ``device_serial``\n\n"
-            "Mixed or incomplete shapes → 400. Fleet auth failures / missing "
-            "active binding → ``binding_not_found``. Same snapshot shape as "
-            "the org status API. No user JWT; rate-limited by IP."
+            "Read-only status for managed devices. Exactly one body shape "
+            "(never put secrets in the URL):\n\n"
+            "- PR18 fallback: ``device_external_id`` + ``credential``\n"
+            "- Serial (ADR 021 Option C″): ``device_serial``\n\n"
+            "Mixed / incomplete / ``fleet_*`` fields → 400. Serial without an "
+            "active DeviceBinding → ``binding_not_found``. Same snapshot "
+            "shape as the org status API. No user JWT; rate-limited by IP. "
+            "Mutations are never authorized on this endpoint."
         ),
         request=DeviceStatusRequestSerializer,
         responses={
@@ -830,7 +830,7 @@ class OrganizationDeviceStatusView(OrganizationsAPIView):
     ),
 )
 class DeviceStatusView(APIView):
-    """Unauthenticated device status via PR18 credential or fleet+serial."""
+    """Device status via PR18 credential or serial + active binding (C″)."""
 
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -846,10 +846,8 @@ class DeviceStatusView(APIView):
         body.is_valid(raise_exception=True)
         data = body.validated_data
         try:
-            if data["auth_shape"] == "fleet":
-                snapshot = get_device_status_by_fleet(
-                    fleet_external_id=data["fleet_external_id"],
-                    fleet_credential=data["fleet_credential"],
+            if data["auth_shape"] == "serial":
+                snapshot = get_device_status_by_serial(
                     device_serial=data["device_serial"],
                 )
             else:

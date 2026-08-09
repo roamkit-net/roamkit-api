@@ -1,7 +1,7 @@
-"""Read-only device status snapshot (ADR 020 / ADR 021 Option C′).
+"""Read-only device status snapshot (ADR 020 / ADR 021 Option C″).
 
 Shared builder for org-authenticated (PR17), device-credential (PR18), and
-fleet+serial (Option C′) paths. No provider refresh; no binding/inventory
+serial+binding (Option C″) paths. No provider refresh; no binding/inventory
 mutation except refreshable ``uem_device_guid`` cache on unique serial match.
 """
 
@@ -25,7 +25,6 @@ from apps.integrations.blackberry_uem.client import (
 )
 from apps.organizations.exceptions import (
     BindingNotFoundError,
-    FleetCredentialInvalidError,
     IccidNotFoundError,
     UemInventoryUnavailableError,
     UemSerialMatchError,
@@ -33,7 +32,6 @@ from apps.organizations.exceptions import (
 from apps.organizations.models import DeviceBinding, DeviceBindingStatus
 from apps.organizations.services.authz import require_view
 from apps.organizations.services.context import resolve_organization_context
-from apps.organizations.services.fleet_credential import verify_fleet_credential
 from apps.organizations.services.uem_iccid import resolve_top_level_iccid
 from apps.organizations.services.uem_serial import refresh_binding_uem_guid_from_serial
 
@@ -338,39 +336,28 @@ def _esim_for_team_iccid(*, organization, iccid: str) -> Esim:
     return esim
 
 
-def get_device_status_by_fleet(
-    *,
-    fleet_external_id: str,
-    fleet_credential: str,
-    device_serial: str,
-) -> DeviceStatusSnapshot:
-    """Device-facing status via fleet credential + serial (ADR 021 Option C′).
+def get_device_status_by_serial(*, device_serial: str) -> DeviceStatusSnapshot:
+    """Device-facing status via serial + active binding (ADR 021 Option C″).
 
-    Auth boundary: valid fleet credential AND active DeviceBinding(org, serial)
-    AND Esim on the organization team Account. Serial alone is never enough.
+    Serial is an identifier, not a secret. Gate: exactly one active
+    ``DeviceBinding`` for that serial, then UEM ICCID → team-Account Esim.
+    Read-only; no mutations.
     """
-    try:
-        fleet = verify_fleet_credential(fleet_external_id, fleet_credential)
-    except FleetCredentialInvalidError as exc:
-        raise BindingNotFoundError("Device binding not found.") from exc
-
     serial = (device_serial or "").strip()
     if not serial:
         raise BindingNotFoundError("Device binding not found.")
 
-    binding = (
+    matches = list(
         DeviceBinding.objects.select_related(
             "esim", "esim__account", "esim__order", "organization"
-        )
-        .filter(
-            organization=fleet.organization,
+        ).filter(
             uem_serial_number=serial,
             status=DeviceBindingStatus.ACTIVE,
         )
-        .first()
     )
-    if binding is None:
+    if len(matches) != 1:
         raise BindingNotFoundError("Device binding not found.")
+    binding = matches[0]
 
     try:
         device = refresh_binding_uem_guid_from_serial(binding)
