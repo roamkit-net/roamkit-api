@@ -79,6 +79,48 @@ def _auto_topup_snapshot(esim: Esim) -> dict[str, bool]:
     return {"enabled": enabled}
 
 
+def _plan_snapshot(esim: Esim) -> dict[str, Any] | None:
+    """Read-only plan metadata from Order purchase snapshot only.
+
+    Never reads live ``order.package`` / ``location`` — avoids mixing
+    immutable snapshot fields with current catalog. ``coverage_type`` is
+    null for legacy orders that predate the snapshot column.
+    """
+    order = getattr(esim, "order", None)
+    if order is None:
+        return None
+
+    package_title = (getattr(order, "package_title", None) or "").strip()
+    location_title = (getattr(order, "location_title", None) or "").strip()
+    country_code = (getattr(order, "country_code", None) or "").strip().upper()
+    data_allowance = (getattr(order, "data_allowance", None) or "").strip()
+    validity_days = getattr(order, "validity_days", None)
+    coverage_raw = (getattr(order, "coverage_type", None) or "").strip().lower()
+    coverage_type = (
+        coverage_raw if coverage_raw in {"local", "regional", "global"} else ""
+    )
+
+    title = package_title or location_title
+    has_any = bool(
+        title
+        or data_allowance
+        or validity_days is not None
+        or country_code
+        or coverage_type
+    )
+    if not has_any:
+        return None
+
+    return {
+        "title": title or None,
+        "data_allowance": data_allowance or None,
+        "validity_days": validity_days,
+        "country_code": country_code or None,
+        "coverage_type": coverage_type or None,
+        "location_title": location_title or None,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class DeviceStatusSnapshot:
     device_external_id: str
@@ -86,7 +128,19 @@ class DeviceStatusSnapshot:
     esim: dict[str, Any]
     usage: dict[str, Any]
     auto_topup: dict[str, bool]
+    plan: dict[str, Any] | None
     checked_at: datetime
+
+    def as_response_dict(self) -> dict[str, Any]:
+        return {
+            "device_external_id": self.device_external_id,
+            "binding_status": self.binding_status,
+            "esim": self.esim,
+            "usage": self.usage,
+            "auto_topup": self.auto_topup,
+            "plan": self.plan,
+            "checked_at": self.checked_at,
+        }
 
 
 def build_device_status_snapshot(
@@ -106,6 +160,7 @@ def build_device_status_snapshot(
         },
         usage=_usage_snapshot(resolved),
         auto_topup=_auto_topup_snapshot(resolved),
+        plan=_plan_snapshot(resolved),
         checked_at=timezone.now(),
     )
 
@@ -126,7 +181,7 @@ def get_device_status(
     org = ctx.organization
 
     binding = (
-        DeviceBinding.objects.select_related("esim", "esim__account")
+        DeviceBinding.objects.select_related("esim", "esim__account", "esim__order")
         .filter(
             organization=org,
             device_external_id=device_external_id,
@@ -179,7 +234,11 @@ def _resolve_esim_via_uem(binding: DeviceBinding) -> Esim:
 
     iccid = resolve_top_level_iccid(device)
     account_id = binding.organization.account_id
-    esim = Esim.objects.filter(account_id=account_id, iccid=iccid).first()
+    esim = (
+        Esim.objects.select_related("order")
+        .filter(account_id=account_id, iccid=iccid)
+        .first()
+    )
     if esim is None:
         raise IccidNotFoundError("No RoamKit data for this ICCID.")
     return esim
@@ -205,7 +264,9 @@ def get_device_status_by_credential(
 
     digest = _hash_credential(credential)
     binding = (
-        DeviceBinding.objects.select_related("esim", "esim__account", "organization")
+        DeviceBinding.objects.select_related(
+            "esim", "esim__account", "esim__order", "organization"
+        )
         .filter(
             device_external_id=device_external_id,
             status=DeviceBindingStatus.ACTIVE,

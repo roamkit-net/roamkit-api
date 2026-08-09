@@ -3149,6 +3149,10 @@ components:
           type: string
         esim:
           $ref: '#/components/schemas/DeviceStatusEsim'
+        plan:
+          allOf:
+          - $ref: '#/components/schemas/DeviceStatusPlan'
+          nullable: true
         usage:
           $ref: '#/components/schemas/DeviceStatusUsage'
       required:
@@ -3157,6 +3161,7 @@ components:
       - checked_at
       - device_external_id
       - esim
+      - plan
       - usage
       type: object
     DeviceStatusAutoTopup:
@@ -3165,6 +3170,36 @@ components:
           type: boolean
       required:
       - enabled
+      type: object
+    DeviceStatusPlan:
+      description: Purchase-time plan metadata from Order snapshot (null when unavailable).
+      properties:
+        title:
+          nullable: true
+          type: string
+        data_allowance:
+          nullable: true
+          type: string
+        validity_days:
+          nullable: true
+          type: integer
+        country_code:
+          nullable: true
+          type: string
+        coverage_type:
+          description: local | regional | global from Order snapshot; null for legacy.
+          nullable: true
+          type: string
+        location_title:
+          nullable: true
+          type: string
+      required:
+      - title
+      - data_allowance
+      - validity_days
+      - country_code
+      - coverage_type
+      - location_title
       type: object
     DeviceStatusEsim:
       properties:
