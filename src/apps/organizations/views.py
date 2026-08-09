@@ -45,7 +45,6 @@ from apps.organizations.serializers import (
     DeviceBindingCredentialResponseSerializer,
     DeviceBindingSerializer,
     DeviceCoverageSerializer,
-    DeviceCredentialRequestSerializer,
     DeviceStatusRequestSerializer,
     DeviceStatusSerializer,
     MembershipRoleUpdateSerializer,
@@ -72,6 +71,7 @@ from apps.organizations.services.device_binding import (
 )
 from apps.organizations.services.device_status import (
     get_device_coverage_by_credential,
+    get_device_coverage_by_serial,
     get_device_status,
     get_device_status_by_credential,
     get_device_status_by_serial,
@@ -889,13 +889,15 @@ class DeviceStatusView(APIView):
         summary="Device-facing coverage snapshot",
         description=(
             "Read-only purchase-time coverage list for managed devices. "
-            "Authenticate with ``device_external_id`` + opaque ``credential`` "
-            "in the body (same ownership boundary as device status). "
-            "Never accepts ``esim_id``. Legacy orders without a coverage "
-            "snapshot return ``coverage: null``. No user JWT; rate-limited "
-            "by IP."
+            "Exactly one body shape (same as device status):\n\n"
+            "- PR18 fallback: ``device_external_id`` + ``credential``\n"
+            "- Serial (ADR 021 Option C″): ``device_serial``\n\n"
+            "Mixed / incomplete / ``fleet_*`` fields → 400. Serial without "
+            "an active DeviceBinding → ``binding_not_found``. Never accepts "
+            "``esim_id``. Legacy orders without a coverage snapshot return "
+            "``coverage: null``. No user JWT; rate-limited by IP."
         ),
-        request=DeviceCredentialRequestSerializer,
+        request=DeviceStatusRequestSerializer,
         responses={
             200: OpenApiResponse(response=DeviceCoverageSerializer),
             400: OpenApiResponse(response=ErrorDetailSerializer),
@@ -907,7 +909,7 @@ class DeviceStatusView(APIView):
     ),
 )
 class DeviceCoverageView(APIView):
-    """Unauthenticated device coverage via opaque credential."""
+    """Device coverage via PR18 credential or serial + active binding (C″)."""
 
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -919,12 +921,26 @@ class DeviceCoverageView(APIView):
             raise NotFound(detail="Not found.")
 
     def post(self, request: Request) -> Response:
-        body = DeviceCredentialRequestSerializer(data=request.data)
+        body = DeviceStatusRequestSerializer(data=request.data)
         body.is_valid(raise_exception=True)
+        data = body.validated_data
         try:
-            snapshot = get_device_coverage_by_credential(
-                device_external_id=body.validated_data["device_external_id"],
-                credential=body.validated_data["credential"],
+            if data["auth_shape"] == "serial":
+                snapshot = get_device_coverage_by_serial(
+                    device_serial=data["device_serial"],
+                )
+            else:
+                snapshot = get_device_coverage_by_credential(
+                    device_external_id=data["device_external_id"],
+                    credential=data["credential"],
+                )
+        except BindingNotFoundError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "Device binding not found.",
+                    "code": "binding_not_found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
             )
         except UemInventoryUnavailableError as exc:
             return Response(

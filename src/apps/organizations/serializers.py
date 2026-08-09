@@ -310,24 +310,14 @@ def _reject_client_scope_fields(initial_data) -> None:
         )
 
 
-class DeviceCredentialRequestSerializer(serializers.Serializer):
-    """PR18 device credential body (coverage; never in URL)."""
-
-    device_external_id = serializers.CharField(max_length=64)
-    credential = serializers.CharField(max_length=256)
-
-    def validate(self, attrs: dict) -> dict:
-        _reject_client_scope_fields(self.initial_data)
-        return attrs
-
-
 class DeviceStatusRequestSerializer(serializers.Serializer):
-    """Device status body — exactly one of PR18 or serial shape (ADR 021 C″).
+    """Device status/coverage body — PR18 or serial shape (ADR 021 C″).
 
     PR18: ``device_external_id`` + ``credential``
     Serial: ``device_serial`` only
 
     Mixed / incomplete / legacy ``fleet_*`` fields → 400 (no guessing).
+    Shared by ``POST /device/status/`` and ``POST /device/coverage/``.
     """
 
     device_external_id = serializers.CharField(
@@ -351,7 +341,7 @@ class DeviceStatusRequestSerializer(serializers.Serializer):
         if any(key in data for key in self._REMOVED_FLEET_KEYS):
             raise serializers.ValidationError(
                 "fleet_external_id / fleet_credential are not accepted on v1 "
-                "device status; use device_serial or PR18 credentials."
+                "device status/coverage; use device_serial or PR18 credentials."
             )
 
         pr18_present = any(key in data for key in self._PR18_KEYS)
@@ -384,7 +374,11 @@ class DeviceStatusRequestSerializer(serializers.Serializer):
             serial = str(data.get("device_serial") or "").strip()
             if not serial:
                 raise serializers.ValidationError(
-                    {"device_serial": "This field is required for serial status."}
+                    {
+                        "device_serial": (
+                            "This field is required for serial device auth."
+                        )
+                    }
                 )
             return {
                 "auth_shape": "serial",
