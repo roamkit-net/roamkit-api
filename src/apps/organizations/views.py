@@ -792,18 +792,7 @@ class OrganizationDeviceStatusView(OrganizationsAPIView):
             organization_id,
             device_external_id=device_external_id,
         )
-        return Response(
-            DeviceStatusSerializer(
-                {
-                    "device_external_id": snapshot.device_external_id,
-                    "binding_status": snapshot.binding_status,
-                    "esim": snapshot.esim,
-                    "usage": snapshot.usage,
-                    "auto_topup": snapshot.auto_topup,
-                    "checked_at": snapshot.checked_at,
-                }
-            ).data
-        )
+        return Response(DeviceStatusSerializer(snapshot.as_response_dict()).data)
 
 
 @extend_schema_view(
@@ -870,15 +859,4 @@ class DeviceStatusView(APIView):
                 },
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(
-            DeviceStatusSerializer(
-                {
-                    "device_external_id": snapshot.device_external_id,
-                    "binding_status": snapshot.binding_status,
-                    "esim": snapshot.esim,
-                    "usage": snapshot.usage,
-                    "auto_topup": snapshot.auto_topup,
-                    "checked_at": snapshot.checked_at,
-                }
-            ).data
-        )
+        return Response(DeviceStatusSerializer(snapshot.as_response_dict()).data)

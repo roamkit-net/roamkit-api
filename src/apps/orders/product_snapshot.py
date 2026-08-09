@@ -20,11 +20,13 @@ def product_snapshot_kwargs(package: Any) -> dict[str, Any]:
     """
     location_title = ""
     country_code = getattr(package, "country_code", None) or ""
+    coverage_type = ""
     location = getattr(package, "location", None)
     if location is not None:
         location_title = getattr(location, "title", None) or ""
         if not country_code:
             country_code = getattr(location, "country_code", None) or ""
+        coverage_type = getattr(location, "coverage_type", None) or ""
 
     return {
         "package_external_id": getattr(package, "external_id", None) or "",
@@ -32,6 +34,7 @@ def product_snapshot_kwargs(package: Any) -> dict[str, Any]:
         "operator_title": package.operator_title or "",
         "location_title": location_title,
         "country_code": country_code,
+        "coverage_type": coverage_type,
         "data_allowance": package.data_allowance or "",
         "validity_days": package.validity_days,
         "retail_price_usd": package.price_usd,
