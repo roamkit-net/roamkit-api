@@ -923,7 +923,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DeviceStatusRequestRequest'
+              $ref: '#/components/schemas/DeviceCredentialRequestRequest'
         required: true
       responses:
         '200':
@@ -961,16 +961,23 @@ paths:
       - Device
   /api/v1/device/status/:
     post:
-      description: Read-only status for managed devices. Authenticate with ``device_external_id`` + opaque
-        ``credential`` in the body (never put the secret in the URL). Same snapshot shape as the org status
-        API. Unbound/replaced/wrong credential → 404. No user JWT; rate-limited by IP.
+      description: 'Read-only status for managed devices. Authenticate with exactly one body shape (never
+        put secrets in the URL):
+
+
+        - PR18: ``device_external_id`` + ``credential``
+
+        - Fleet (ADR 021 Option C′): ``fleet_external_id`` + ``fleet_credential`` + ``device_serial``
+
+
+        Mixed or incomplete shapes → 400. Fleet auth failures / missing active binding → ``binding_not_found``.
+        Same snapshot shape as the org status API. No user JWT; rate-limited by IP.'
       operationId: device_status
       requestBody:
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/DeviceStatusRequestRequest'
-        required: true
       responses:
         '200':
           content:
@@ -3222,6 +3229,21 @@ components:
       - country_name
       - operators
       type: object
+    DeviceCredentialRequestRequest:
+      description: PR18 device credential body (coverage; never in URL).
+      properties:
+        credential:
+          maxLength: 256
+          minLength: 1
+          type: string
+        device_external_id:
+          maxLength: 64
+          minLength: 1
+          type: string
+      required:
+      - credential
+      - device_external_id
+      type: object
     DeviceStatus:
       description: Read-only UEM status contract (cached inventory/usage; no provider call).
       properties:
@@ -3317,7 +3339,15 @@ components:
       - validity_days
       type: object
     DeviceStatusRequestRequest:
-      description: Device credential request body (status / coverage; never in URL).
+      description: 'Device status auth body — exactly one of PR18 or fleet shape (ADR 021 C′).
+
+
+        PR18: ``device_external_id`` + ``credential``
+
+        Fleet: ``fleet_external_id`` + ``fleet_credential`` + ``device_serial``
+
+
+        Mixed or incomplete shapes → 400 (no guessing).'
       properties:
         credential:
           maxLength: 256
@@ -3327,9 +3357,18 @@ components:
           maxLength: 64
           minLength: 1
           type: string
-      required:
-      - credential
-      - device_external_id
+        device_serial:
+          maxLength: 128
+          minLength: 1
+          type: string
+        fleet_credential:
+          maxLength: 256
+          minLength: 1
+          type: string
+        fleet_external_id:
+          maxLength: 64
+          minLength: 1
+          type: string
       type: object
     DeviceStatusUsage:
       properties:
