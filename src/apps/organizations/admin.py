@@ -7,8 +7,10 @@ from django.contrib import admin
 from apps.organizations.models import (
     DeviceBinding,
     DeviceBindingEvent,
+    FleetCredentialEvent,
     Membership,
     Organization,
+    OrganizationFleetCredential,
     OrganizationInvite,
 )
 
@@ -103,6 +105,7 @@ class DeviceBindingAdmin(admin.ModelAdmin):
         "organization",
         "esim",
         "device_external_id",
+        "uem_serial_number",
         "uem_device_guid",
         "status",
         "created_at",
@@ -111,6 +114,7 @@ class DeviceBindingAdmin(admin.ModelAdmin):
     search_fields = (
         "id",
         "device_external_id",
+        "uem_serial_number",
         "uem_device_guid",
         "organization__name",
         "organization__id",
@@ -123,7 +127,7 @@ class DeviceBindingAdmin(admin.ModelAdmin):
         "unbound_by",
         "replaced_by",
     )
-    # uem_device_guid is editable for staging ADR 021 proof (manual map).
+    # Serial/guid editable for staging ADR 021 Option C′ ops map.
     readonly_fields = (
         "id",
         "device_external_id",
@@ -174,6 +178,75 @@ class DeviceBindingEventAdmin(admin.ModelAdmin):
         "actor",
         "device_external_id",
         "previous_binding",
+        "created_at",
+    )
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False
+
+    def has_add_permission(self, request) -> bool:
+        return False
+
+
+@admin.register(OrganizationFleetCredential)
+class OrganizationFleetCredentialAdmin(admin.ModelAdmin):
+    list_display = (
+        "fleet_external_id",
+        "organization",
+        "current_issued_at",
+        "previous_valid_until",
+        "created_at",
+    )
+    search_fields = (
+        "fleet_external_id",
+        "organization__name",
+        "organization__id",
+    )
+    raw_id_fields = ("organization",)
+    readonly_fields = (
+        "id",
+        "fleet_external_id",
+        "current_credential_hash",
+        "current_issued_at",
+        "previous_credential_hash",
+        "previous_valid_until",
+        "created_at",
+        "updated_at",
+    )
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False
+
+    def has_add_permission(self, request) -> bool:
+        return False
+
+
+@admin.register(FleetCredentialEvent)
+class FleetCredentialEventAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "organization",
+        "action",
+        "fleet_external_id",
+        "actor",
+        "previous_valid_until",
+        "created_at",
+    )
+    list_filter = ("action",)
+    search_fields = (
+        "id",
+        "fleet_external_id",
+        "organization__id",
+    )
+    raw_id_fields = ("organization", "fleet_credential", "actor")
+    readonly_fields = (
+        "id",
+        "organization",
+        "fleet_credential",
+        "action",
+        "actor",
+        "fleet_external_id",
+        "previous_valid_until",
         "created_at",
     )
 

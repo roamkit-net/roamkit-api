@@ -31,6 +31,11 @@ from apps.organizations.services.device_status import (
     get_device_status,
     get_device_status_by_credential,
 )
+from apps.organizations.services.fleet_credential import (
+    issue_fleet_credential,
+    rotate_fleet_credential,
+    verify_fleet_credential,
+)
 from apps.organizations.services.invites import (
     accept_invite,
     create_invite,
@@ -43,6 +48,10 @@ from apps.organizations.services.membership import (
     set_organization_status,
     transfer_ownership,
 )
+from apps.organizations.services.uem_serial import (
+    refresh_binding_uem_guid_from_serial,
+    resolve_uem_device_by_serial,
+)
 
 __all__ = [
     "AccountContext",
@@ -54,9 +63,13 @@ __all__ = [
     "get_device_coverage_by_credential",
     "get_device_status",
     "get_device_status_by_credential",
+    "issue_fleet_credential",
     "list_device_bindings",
     "list_pending_invites",
+    "refresh_binding_uem_guid_from_serial",
+    "resolve_uem_device_by_serial",
     "rotate_device_credential",
+    "rotate_fleet_credential",
     "require_archive_org",
     "require_assign_esim",
     "require_device_bind",
@@ -76,4 +89,5 @@ __all__ = [
     "set_organization_status",
     "transfer_ownership",
     "unbind_device_binding",
+    "verify_fleet_credential",
 ]

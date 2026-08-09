@@ -348,15 +348,27 @@ class DeviceBinding(models.Model):
         db_index=True,
         help_text="RoamKit-issued opaque device key (not a client authz signal).",
     )
+    uem_serial_number = models.CharField(
+        max_length=128,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text=(
+            "Stable UEM serialNumber bootstrap identity (ADR 021 Option C′). "
+            "Maps to App Config roamkit.device_serial=%SerialNumber%. "
+            "Not an auth secret. Empty = PR18-only binding without fleet serial."
+        ),
+    )
     uem_device_guid = models.CharField(
         max_length=64,
         blank=True,
         default="",
         db_index=True,
         help_text=(
-            "BlackBerry UEM device.guid bridge for staging SIM/ICCID lookup "
-            "(ADR 021 option C proof). Empty = classic PR18 binding.esim path. "
-            "Not an auth secret."
+            "Current BlackBerry UEM device.guid correlation/cache "
+            "(ADR 021 Option C′). Refreshable after re-enroll when serial "
+            "match is unique. Not an auth secret. Empty = classic PR18 path "
+            "or guid not yet resolved."
         ),
     )
     credential_hash = models.CharField(
@@ -414,6 +426,13 @@ class DeviceBinding(models.Model):
                 fields=["organization", "device_external_id"],
                 condition=Q(status=DeviceBindingStatus.ACTIVE),
                 name="organizations_devicebinding_one_active_device_per_org",
+            ),
+            models.UniqueConstraint(
+                fields=["organization", "uem_serial_number"],
+                condition=(
+                    Q(status=DeviceBindingStatus.ACTIVE) & ~Q(uem_serial_number="")
+                ),
+                name="organizations_devicebinding_one_active_serial_per_org",
             ),
             models.CheckConstraint(
                 condition=Q(
@@ -506,3 +525,117 @@ class DeviceBindingEvent(models.Model):
 
     def delete(self, using=None, keep_parents=False):
         raise HardDeleteViolation("DeviceBindingEvent must not be hard-deleted")
+
+
+class FleetCredentialEventAction(models.TextChoices):
+    ISSUE = "fleet_credential_issued", "Fleet credential issued"
+    ROTATE = "fleet_credential_rotated", "Fleet credential rotated"
+
+
+class OrganizationFleetCredential(models.Model):
+    """Org-scoped fleet App Config credentials (ADR 021 Option C′).
+
+    ``fleet_external_id`` is an opaque public lookup key — never the Organization
+    UUID. Plaintext secrets exist only at issue/rotate; hashes at rest.
+    ``previous_credential_hash`` remains valid until ``previous_valid_until``.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.OneToOneField(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="fleet_credential",
+    )
+    fleet_external_id = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        help_text="Opaque fleet lookup id for UEM App Config (not Organization.id).",
+    )
+    current_credential_hash = models.CharField(
+        max_length=64,
+        help_text="SHA-256 hex of current fleet credential; plaintext never stored.",
+    )
+    current_issued_at = models.DateTimeField()
+    previous_credential_hash = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="Prior credential hash valid only until previous_valid_until.",
+    )
+    previous_valid_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Grace window end for previous_credential_hash; null = no grace.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = SoftLifecycleManager()
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "organization fleet credential"
+        verbose_name_plural = "organization fleet credentials"
+        constraints = [
+            models.CheckConstraint(
+                condition=~Q(fleet_external_id=""),
+                name="organizations_fleetcred_external_id_nonempty",
+            ),
+            models.CheckConstraint(
+                condition=~Q(current_credential_hash=""),
+                name="organizations_fleetcred_current_hash_nonempty",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"FleetCredential {self.fleet_external_id} org={self.organization_id}"
+
+    def delete(self, using=None, keep_parents=False):
+        raise HardDeleteViolation(
+            "OrganizationFleetCredential must not be hard-deleted"
+        )
+
+
+class FleetCredentialEvent(models.Model):
+    """Append-only audit for fleet credential issue/rotate (ADR 021)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="fleet_credential_events",
+    )
+    fleet_credential = models.ForeignKey(
+        OrganizationFleetCredential,
+        on_delete=models.CASCADE,
+        related_name="events",
+    )
+    action = models.CharField(max_length=32, choices=FleetCredentialEventAction.choices)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="fleet_credential_events",
+    )
+    fleet_external_id = models.CharField(max_length=64)
+    previous_valid_until = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "fleet credential event"
+        verbose_name_plural = "fleet credential events"
+        indexes = [
+            models.Index(
+                fields=["organization", "created_at"],
+                name="org_fcevt_org_created",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"FleetCredentialEvent {self.action} {self.fleet_external_id}"
+
+    def delete(self, using=None, keep_parents=False):
+        raise HardDeleteViolation("FleetCredentialEvent must not be hard-deleted")
