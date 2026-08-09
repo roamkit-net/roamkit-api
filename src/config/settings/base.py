@@ -124,11 +124,14 @@ CORS_ALLOWED_ORIGINS = [
     "https://roamkit.net",
 ]
 
-# Browser clients send X-Request-ID on voucher redeem (and future tracing).
-# django-cors-headers defaults omit it → preflight fails → "Failed to fetch".
+# Browser clients send headers that django-cors-headers defaults omit.
+# Missing entries → OPTIONS preflight fails → "Failed to fetch" in the web app.
+# - x-request-id: voucher redeem / request tracing
+# - if-match: auto top-up optimistic concurrency (me API PUT/DELETE)
 CORS_ALLOW_HEADERS = (
     *default_headers,
     "x-request-id",
+    "if-match",
 )
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
