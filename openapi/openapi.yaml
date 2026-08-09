@@ -961,17 +961,18 @@ paths:
       - Device
   /api/v1/device/status/:
     post:
-      description: 'Read-only status for managed devices. Authenticate with exactly one body shape (never
-        put secrets in the URL):
+      description: 'Read-only status for managed devices. Exactly one body shape (never put secrets in
+        the URL):
 
 
-        - PR18: ``device_external_id`` + ``credential``
+        - PR18 fallback: ``device_external_id`` + ``credential``
 
-        - Fleet (ADR 021 Option C′): ``fleet_external_id`` + ``fleet_credential`` + ``device_serial``
+        - Serial (ADR 021 Option C″): ``device_serial``
 
 
-        Mixed or incomplete shapes → 400. Fleet auth failures / missing active binding → ``binding_not_found``.
-        Same snapshot shape as the org status API. No user JWT; rate-limited by IP.'
+        Mixed / incomplete / ``fleet_*`` fields → 400. Serial without an active DeviceBinding → ``binding_not_found``.
+        Same snapshot shape as the org status API. No user JWT; rate-limited by IP. Mutations are never
+        authorized on this endpoint.'
       operationId: device_status
       requestBody:
         content:
@@ -3339,15 +3340,15 @@ components:
       - validity_days
       type: object
     DeviceStatusRequestRequest:
-      description: 'Device status auth body — exactly one of PR18 or fleet shape (ADR 021 C′).
+      description: 'Device status body — exactly one of PR18 or serial shape (ADR 021 C″).
 
 
         PR18: ``device_external_id`` + ``credential``
 
-        Fleet: ``fleet_external_id`` + ``fleet_credential`` + ``device_serial``
+        Serial: ``device_serial`` only
 
 
-        Mixed or incomplete shapes → 400 (no guessing).'
+        Mixed / incomplete / legacy ``fleet_*`` fields → 400 (no guessing).'
       properties:
         credential:
           maxLength: 256
@@ -3359,14 +3360,6 @@ components:
           type: string
         device_serial:
           maxLength: 128
-          minLength: 1
-          type: string
-        fleet_credential:
-          maxLength: 256
-          minLength: 1
-          type: string
-        fleet_external_id:
-          maxLength: 64
           minLength: 1
           type: string
       type: object

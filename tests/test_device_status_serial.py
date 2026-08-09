@@ -1,4 +1,4 @@
-"""Fleet auth shape on device status (ADR 021 Option C′)."""
+"""Serial-only device status shape (ADR 021 Option C″)."""
 
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ from apps.organizations.serializers import DeviceStatusRequestSerializer
 from apps.organizations.services import (
     create_device_binding,
     create_organization,
-    issue_fleet_credential,
 )
 
 User = get_user_model()
@@ -37,13 +36,15 @@ def client() -> Client:
 
 @pytest.fixture
 def owner(db):
-    return User.objects.create_user(email="fleet-status@example.com", password=PASSWORD)
+    return User.objects.create_user(
+        email="serial-status@example.com", password=PASSWORD
+    )
 
 
 @pytest.fixture
 def package(db) -> Package:
     return Package.objects.create(
-        external_id="pkg-fleet-status",
+        external_id="pkg-serial-status",
         title="1 GB - 7 Days",
         operator_title="Change",
         country_code="HR",
@@ -57,7 +58,7 @@ def package(db) -> Package:
 
 @pytest.fixture
 def org(owner):
-    return create_organization(name="Fleet Status Org", actor=owner)
+    return create_organization(name="Serial Status Org", actor=owner)
 
 
 def _make_esim(*, account, user, package: Package, iccid: str) -> Esim:
@@ -88,16 +89,10 @@ def _bind_serial(*, owner, org, package, iccid: str, serial: str):
     return binding, esim
 
 
-def _fleet_status(client, *, fleet_external_id, fleet_credential, device_serial):
+def _serial_status(client, *, device_serial):
     return client.post(
         "/api/v1/device/status/",
-        data=json.dumps(
-            {
-                "fleet_external_id": fleet_external_id,
-                "fleet_credential": fleet_credential,
-                "device_serial": device_serial,
-            }
-        ),
+        data=json.dumps({"device_serial": device_serial}),
         content_type="application/json",
     )
 
@@ -116,60 +111,53 @@ def _uem_device(*, guid=GUID, serial=SERIAL, iccid=ICCID):
     [
         {"device_external_id": "x"},
         {"credential": "y"},
-        {"fleet_external_id": "f"},
-        {"fleet_external_id": "f", "fleet_credential": "s"},
+        {"device_serial": ""},
+        {"device_serial": "   "},
         {
             "device_external_id": "x",
             "credential": "y",
+            "device_serial": SERIAL,
+        },
+        {
             "fleet_external_id": "f",
             "fleet_credential": "s",
             "device_serial": SERIAL,
         },
+        {"fleet_external_id": "f", "fleet_credential": "s"},
         {},
     ],
 )
-def test_serializer_rejects_incomplete_or_mixed_shapes(payload):
+def test_serializer_rejects_incomplete_mixed_or_fleet_shapes(payload):
     ser = DeviceStatusRequestSerializer(data=payload)
     assert not ser.is_valid()
 
 
-def test_serializer_accepts_pr18_and_fleet_shapes():
+def test_serializer_accepts_pr18_and_serial_shapes():
     pr18 = DeviceStatusRequestSerializer(
         data={"device_external_id": "dev-1", "credential": "secret"}
     )
     assert pr18.is_valid(), pr18.errors
     assert pr18.validated_data["auth_shape"] == "pr18"
 
-    fleet = DeviceStatusRequestSerializer(
-        data={
-            "fleet_external_id": "fleet-1",
-            "fleet_credential": "secret",
-            "device_serial": SERIAL,
-        }
-    )
-    assert fleet.is_valid(), fleet.errors
-    assert fleet.validated_data["auth_shape"] == "fleet"
+    serial = DeviceStatusRequestSerializer(data={"device_serial": SERIAL})
+    assert serial.is_valid(), serial.errors
+    assert serial.validated_data["auth_shape"] == "serial"
+    assert serial.validated_data["device_serial"] == SERIAL
 
 
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
-def test_fleet_status_happy_path_refreshes_guid(client, owner, org, package):
+def test_serial_status_happy_path_refreshes_guid(client, owner, org, package):
     binding, esim = _bind_serial(
         owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL
     )
     assert binding.uem_device_guid == ""
-    issued = issue_fleet_credential(org, actor=owner)
 
     with patch(
         "apps.organizations.services.uem_serial.BlackberryUemClient"
     ) as client_cls:
         client_cls.return_value.get_device_by_serial.return_value = _uem_device()
-        resp = _fleet_status(
-            client,
-            fleet_external_id=issued.fleet_external_id,
-            fleet_credential=issued.credential,
-            device_serial=SERIAL,
-        )
+        resp = _serial_status(client, device_serial=SERIAL)
 
     assert resp.status_code == 200, resp.content
     payload = resp.json()
@@ -183,42 +171,54 @@ def test_fleet_status_happy_path_refreshes_guid(client, owner, org, package):
 
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
-def test_fleet_status_binding_not_found_for_bad_secret(client, owner, org, package):
-    _bind_serial(owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL)
-    issued = issue_fleet_credential(org, actor=owner)
-    resp = _fleet_status(
-        client,
-        fleet_external_id=issued.fleet_external_id,
-        fleet_credential="wrong-secret",
-        device_serial=SERIAL,
-    )
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "binding_not_found"
-
-
-@pytest.mark.django_db
-@override_settings(BLACKBERRY_UEM_ENABLED=True)
-def test_fleet_status_binding_not_found_without_serial_binding(
+def test_serial_status_binding_not_found_without_serial_binding(
     client, owner, org, package
 ):
     _make_esim(account=org.account, user=owner, package=package, iccid=ICCID)
-    # Binding exists but without uem_serial_number → no fleet match.
     esim = Esim.objects.get(iccid=ICCID)
     create_device_binding(owner, org.id, esim_id=esim.pk)
-    issued = issue_fleet_credential(org, actor=owner)
-    resp = _fleet_status(
-        client,
-        fleet_external_id=issued.fleet_external_id,
-        fleet_credential=issued.credential,
-        device_serial=SERIAL,
-    )
+    resp = _serial_status(client, device_serial=SERIAL)
     assert resp.status_code == 404
     assert resp.json()["code"] == "binding_not_found"
 
 
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
-def test_fleet_status_iccid_not_found(client, owner, org, package):
+def test_serial_status_binding_not_found_for_unknown_serial(
+    client, owner, org, package
+):
+    _bind_serial(owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL)
+    resp = _serial_status(client, device_serial="UNKNOWN-SERIAL")
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "binding_not_found"
+
+
+@pytest.mark.django_db
+@override_settings(BLACKBERRY_UEM_ENABLED=True)
+def test_serial_status_binding_not_found_when_serial_ambiguous(
+    client, owner, org, package
+):
+    """Fail closed if more than one active binding shares the serial."""
+    other_owner = User.objects.create_user(
+        email="serial-status-other@example.com", password=PASSWORD
+    )
+    other_org = create_organization(name="Other Serial Org", actor=other_owner)
+    _bind_serial(owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL)
+    _bind_serial(
+        owner=other_owner,
+        org=other_org,
+        package=package,
+        iccid="89852350326100304892",
+        serial=SERIAL,
+    )
+    resp = _serial_status(client, device_serial=SERIAL)
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "binding_not_found"
+
+
+@pytest.mark.django_db
+@override_settings(BLACKBERRY_UEM_ENABLED=True)
+def test_serial_status_iccid_not_found(client, owner, org, package):
     _bind_serial(
         owner=owner,
         org=org,
@@ -226,44 +226,32 @@ def test_fleet_status_iccid_not_found(client, owner, org, package):
         iccid="8900000000000000999",
         serial=SERIAL,
     )
-    issued = issue_fleet_credential(org, actor=owner)
     with patch(
         "apps.organizations.services.uem_serial.BlackberryUemClient"
     ) as client_cls:
         client_cls.return_value.get_device_by_serial.return_value = _uem_device(
             iccid=ICCID
         )
-        resp = _fleet_status(
-            client,
-            fleet_external_id=issued.fleet_external_id,
-            fleet_credential=issued.credential,
-            device_serial=SERIAL,
-        )
+        resp = _serial_status(client, device_serial=SERIAL)
     assert resp.status_code == 404
     assert resp.json()["code"] == "iccid_not_found"
 
 
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
-def test_fleet_status_uem_inventory_unavailable_on_ambiguous_serial(
+def test_serial_status_uem_inventory_unavailable_on_ambiguous_serial(
     client, owner, org, package
 ):
     from apps.integrations.blackberry_uem.client import BlackberryUemClientError
 
     _bind_serial(owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL)
-    issued = issue_fleet_credential(org, actor=owner)
     with patch(
         "apps.organizations.services.uem_serial.BlackberryUemClient"
     ) as client_cls:
         client_cls.return_value.get_device_by_serial.side_effect = (
             BlackberryUemClientError("UEM serialNumber match count is 2 (fail closed)")
         )
-        resp = _fleet_status(
-            client,
-            fleet_external_id=issued.fleet_external_id,
-            fleet_credential=issued.credential,
-            device_serial=SERIAL,
-        )
+        resp = _serial_status(client, device_serial=SERIAL)
     assert resp.status_code == 503
     assert resp.json()["code"] == "uem_inventory_unavailable"
 
@@ -288,18 +276,31 @@ def test_pr18_status_still_works_unchanged(client, owner, org, package):
 
 
 @pytest.mark.django_db
-def test_mixed_shape_http_400(client, owner, org, package):
-    esim = _make_esim(account=org.account, user=owner, package=package, iccid=ICCID)
-    issued_bind = create_device_binding(owner, org.id, esim_id=esim.pk)
-    issued_fleet = issue_fleet_credential(org, actor=owner)
+def test_fleet_fields_http_400(client):
     resp = client.post(
         "/api/v1/device/status/",
         data=json.dumps(
             {
-                "device_external_id": issued_bind.binding.device_external_id,
-                "credential": issued_bind.credential,
-                "fleet_external_id": issued_fleet.fleet_external_id,
-                "fleet_credential": issued_fleet.credential,
+                "fleet_external_id": "fleet-1",
+                "fleet_credential": "secret",
+                "device_serial": SERIAL,
+            }
+        ),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.django_db
+def test_mixed_pr18_serial_http_400(client, owner, org, package):
+    esim = _make_esim(account=org.account, user=owner, package=package, iccid=ICCID)
+    issued = create_device_binding(owner, org.id, esim_id=esim.pk)
+    resp = client.post(
+        "/api/v1/device/status/",
+        data=json.dumps(
+            {
+                "device_external_id": issued.binding.device_external_id,
+                "credential": issued.credential,
                 "device_serial": SERIAL,
             }
         ),

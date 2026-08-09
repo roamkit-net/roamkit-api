@@ -30,7 +30,7 @@ from apps.organizations.services.device_status import (
     get_device_coverage_by_credential,
     get_device_status,
     get_device_status_by_credential,
-    get_device_status_by_fleet,
+    get_device_status_by_serial,
 )
 from apps.organizations.services.fleet_credential import (
     issue_fleet_credential,
@@ -64,7 +64,7 @@ __all__ = [
     "get_device_coverage_by_credential",
     "get_device_status",
     "get_device_status_by_credential",
-    "get_device_status_by_fleet",
+    "get_device_status_by_serial",
     "issue_fleet_credential",
     "list_device_bindings",
     "list_pending_invites",
