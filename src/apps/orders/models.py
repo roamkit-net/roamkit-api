@@ -51,6 +51,15 @@ class Order(models.Model):
     operator_title = models.CharField(max_length=255, blank=True, default="")
     location_title = models.CharField(max_length=255, blank=True, default="")
     country_code = models.CharField(max_length=2, blank=True, default="")
+    coverage_type = models.CharField(
+        max_length=16,
+        blank=True,
+        default="",
+        help_text=(
+            "Purchase-time location coverage snapshot: local | regional | global. "
+            "Empty for legacy orders; never re-read from live catalog at status time."
+        ),
+    )
     data_allowance = models.CharField(max_length=64, blank=True, default="")
     validity_days = models.PositiveIntegerField(null=True, blank=True)
     retail_price_usd = models.DecimalField(

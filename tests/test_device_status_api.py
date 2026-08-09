@@ -171,6 +171,8 @@ def test_member_can_read_status_from_cache(client, owner, member_user, org, pack
     assert payload["usage"]["data_used"] == "512 MB"
     assert payload["usage"]["expires_at"] is not None
     assert payload["auto_topup"]["enabled"] is True
+    # Empty Order snapshot (test helper does not copy product fields) → null plan.
+    assert payload["plan"] is None
     assert payload["checked_at"]
 
 
