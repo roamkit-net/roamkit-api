@@ -133,6 +133,58 @@ def _unbind_url(org_id, binding_id):
     return f"/api/v1/orgs/{org_id}/device-bindings/{binding_id}/unbind/"
 
 
+def _rotate_url(org_id, binding_id):
+    return f"/api/v1/orgs/{org_id}/device-bindings/{binding_id}/credential/rotate/"
+
+
+@pytest.mark.django_db
+def test_create_binding_does_not_change_esim_account(client, owner, org, package):
+    """MDM bind is enrollment only — never rewrites Esim.account (ADR 021)."""
+    esim = _make_esim(
+        account=org.account,
+        user=owner,
+        package=package,
+        iccid="891000000000009901",
+    )
+    account_before = esim.account_id
+    resp = client.post(
+        _list_url(org.pk),
+        data=json.dumps({"esim_id": esim.pk}),
+        content_type="application/json",
+        **_auth(client, owner),
+    )
+    assert resp.status_code == 201, resp.content
+    esim.refresh_from_db()
+    assert esim.account_id == account_before
+
+
+@pytest.mark.django_db
+def test_rotate_credential_does_not_change_esim_account(client, owner, org, package):
+    """Credential rotate must not rewrite Esim.account (ADR 021)."""
+    esim = _make_esim(
+        account=org.account,
+        user=owner,
+        package=package,
+        iccid="891000000000009902",
+    )
+    headers = _auth(client, owner)
+    created = client.post(
+        _list_url(org.pk),
+        data=json.dumps({"esim_id": esim.pk}),
+        content_type="application/json",
+        **headers,
+    )
+    assert created.status_code == 201, created.content
+    binding_id = created.json()["binding"]["id"]
+    account_before = esim.account_id
+
+    rotated = client.post(_rotate_url(org.pk, binding_id), **headers)
+    assert rotated.status_code == 200, rotated.content
+    assert rotated.json()["credential"]
+    esim.refresh_from_db()
+    assert esim.account_id == account_before
+
+
 @pytest.mark.django_db
 def test_owner_can_create_list_retrieve_unbind(client, owner, org, package):
     esim = _make_esim(

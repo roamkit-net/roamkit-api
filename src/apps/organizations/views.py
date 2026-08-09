@@ -26,6 +26,7 @@ from apps.organizations.exceptions import (
     BindingNotFoundError,
     DeviceBindingConflictError,
     DeviceBindingNotFoundError,
+    IccidAmbiguousError,
     IccidNotFoundError,
     InviteConflictError,
     InviteInvalidError,
@@ -879,6 +880,14 @@ class DeviceStatusView(APIView):
                 },
                 status=status.HTTP_404_NOT_FOUND,
             )
+        except IccidAmbiguousError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "Multiple RoamKit eSIMs match this ICCID.",
+                    "code": "iccid_ambiguous",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
         return Response(DeviceStatusSerializer(snapshot.as_response_dict()).data)
 
 
@@ -955,6 +964,14 @@ class DeviceCoverageView(APIView):
                 {
                     "detail": str(exc) or "No RoamKit data for this ICCID.",
                     "code": "iccid_not_found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except IccidAmbiguousError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "Multiple RoamKit eSIMs match this ICCID.",
+                    "code": "iccid_ambiguous",
                 },
                 status=status.HTTP_404_NOT_FOUND,
             )

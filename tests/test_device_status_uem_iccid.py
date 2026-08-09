@@ -103,7 +103,7 @@ def _bind_with_uem_guid(*, owner, org, package, bound_iccid: str, uem_guid: str)
 
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
-def test_uem_path_returns_status_for_matching_team_iccid(client, owner, org, package):
+def test_uem_path_returns_status_for_matching_iccid(client, owner, org, package):
     binding, credential, bound_esim = _bind_with_uem_guid(
         owner=owner,
         org=org,
@@ -146,7 +146,7 @@ def test_uem_path_returns_status_for_matching_team_iccid(client, owner, org, pac
 
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
-def test_uem_path_miss_when_iccid_not_on_team_account(client, owner, org, package):
+def test_uem_path_miss_when_iccid_unknown(client, owner, org, package):
     binding, credential, _ = _bind_with_uem_guid(
         owner=owner,
         org=org,
@@ -173,6 +173,48 @@ def test_uem_path_miss_when_iccid_not_on_team_account(client, owner, org, packag
     body = resp.json()
     assert body["code"] == "iccid_not_found"
     assert "ICCID" in body["detail"]
+
+
+@pytest.mark.django_db
+@override_settings(BLACKBERRY_UEM_ENABLED=True)
+def test_uem_path_resolves_personal_account_esim(client, owner, org, package):
+    from apps.billing.services import ensure_billing_account
+
+    binding, credential, bound_esim = _bind_with_uem_guid(
+        owner=owner,
+        org=org,
+        package=package,
+        bound_iccid="8900000000000000012",
+        uem_guid=UEM_GUID,
+    )
+    personal = ensure_billing_account(owner)
+    personal_esim = _make_esim(
+        account=personal,
+        user=owner,
+        package=package,
+        iccid="89852350326100304891",
+    )
+    device = {
+        "guid": UEM_GUID,
+        "iccid": "89852350326100304891",
+        "sims": [{"iccid": "89852350326100304891"}],
+    }
+    with patch(
+        "apps.organizations.services.device_status.BlackberryUemClient"
+    ) as client_cls:
+        client_cls.return_value.get_device_by_guid.return_value = device
+        resp = _device_status(
+            client,
+            device_external_id=binding.device_external_id,
+            credential=credential,
+        )
+
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["esim"]["id"] == personal_esim.pk
+    personal_esim.refresh_from_db()
+    assert personal_esim.account_id == personal.id
+    binding.refresh_from_db()
+    assert binding.esim_id == bound_esim.pk
 
 
 @pytest.mark.django_db

@@ -46,7 +46,11 @@ class UemInventoryUnavailableError(DeviceBindingError):
 
 
 class IccidNotFoundError(DeviceBindingError):
-    """UEM ICCID present but no matching Esim on the team Account."""
+    """UEM ICCID present but no matching non-archived Esim in RoamKit."""
+
+
+class IccidAmbiguousError(DeviceBindingError):
+    """UEM ICCID matches more than one non-archived Esim (fail closed)."""
 
 
 class UemSerialMatchError(DeviceBindingError):
