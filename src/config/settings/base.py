@@ -328,6 +328,20 @@ AIRALO_ENABLED = os.environ.get("AIRALO_ENABLED", "true").lower() == "true"
 # Comma-separated denylist (staging). Never commit Fine Star live client_id.
 AIRALO_BLOCKED_CLIENT_IDS = os.environ.get("AIRALO_BLOCKED_CLIENT_IDS", "")
 
+# BlackBerry UEM Cloud REST (ADR 021 option C staging proof — read-only).
+# Default off: classic PR18 device status ignores UEM until explicitly enabled
+# and DeviceBinding.uem_device_guid is set (manual/admin).
+BLACKBERRY_UEM_ENABLED = (
+    os.environ.get("BLACKBERRY_UEM_ENABLED", "false").lower() == "true"
+)
+BLACKBERRY_UEM_TENANT_ID = os.environ.get("BLACKBERRY_UEM_TENANT_ID", "")
+BLACKBERRY_UEM_HOST = os.environ.get("BLACKBERRY_UEM_HOST", "")
+BLACKBERRY_UEM_CLIENT_ID = os.environ.get("BLACKBERRY_UEM_CLIENT_ID", "")
+BLACKBERRY_UEM_CLIENT_SECRET = os.environ.get("BLACKBERRY_UEM_CLIENT_SECRET", "")
+BLACKBERRY_UEM_TOKEN_URL = os.environ.get("BLACKBERRY_UEM_TOKEN_URL", "")
+BLACKBERRY_UEM_SCOPE = os.environ.get("BLACKBERRY_UEM_SCOPE", "openid MDMBWS.All")
+BLACKBERRY_UEM_TIMEOUT = float(os.environ.get("BLACKBERRY_UEM_TIMEOUT", "30"))
+
 # Billing feature flags (ADR-010). Money endpoints under /api/v1/billing/*
 # return 404 when BILLING_ENABLED is false; GET …/billing/config/ stays public.
 BILLING_ENABLED = os.environ.get("BILLING_ENABLED", "true").lower() == "true"

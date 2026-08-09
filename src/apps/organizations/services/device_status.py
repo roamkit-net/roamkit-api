@@ -1,28 +1,42 @@
-"""Read-only UEM device status snapshot (ADR 020).
+"""Read-only device status snapshot (ADR 020 / ADR 021 staging proof).
 
 Shared builder for org-authenticated (PR17) and device-credential (PR18)
-paths. No provider refresh, no BlackBerry sync.
+paths. Classic path uses ``binding.esim``. When ``uem_device_guid`` is set on
+the PR18 path, status resolves via read-only UEM ICCID lookup (no provider
+refresh, no binding/inventory mutation).
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from django.conf import settings
 from django.utils import timezone
 from rest_framework.exceptions import NotFound
 
-from apps.esims.models import EsimAutoTopupPolicy
+from apps.esims.models import Esim, EsimAutoTopupPolicy
+from apps.integrations.blackberry_uem.client import (
+    BlackberryUemClient,
+    BlackberryUemClientError,
+)
+from apps.organizations.exceptions import (
+    IccidNotFoundError,
+    UemInventoryUnavailableError,
+)
 from apps.organizations.models import DeviceBinding, DeviceBindingStatus
 from apps.organizations.services.authz import require_view
 from apps.organizations.services.context import resolve_organization_context
+from apps.organizations.services.uem_iccid import resolve_top_level_iccid
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
-    from apps.esims.models import Esim
+
+logger = logging.getLogger(__name__)
 
 
 def _format_mb(value: int | None) -> str | None:
@@ -75,19 +89,23 @@ class DeviceStatusSnapshot:
     checked_at: datetime
 
 
-def build_device_status_snapshot(binding: DeviceBinding) -> DeviceStatusSnapshot:
+def build_device_status_snapshot(
+    binding: DeviceBinding,
+    *,
+    esim: Esim | None = None,
+) -> DeviceStatusSnapshot:
     """Pure status snapshot from an already-authorized active binding."""
-    esim = binding.esim
+    resolved = esim if esim is not None else binding.esim
     return DeviceStatusSnapshot(
         device_external_id=binding.device_external_id,
         binding_status=binding.status,
         esim={
-            "id": esim.pk,
-            "iccid": esim.iccid,
-            "status": esim.status,
+            "id": resolved.pk,
+            "iccid": resolved.iccid,
+            "status": resolved.status,
         },
-        usage=_usage_snapshot(esim),
-        auto_topup=_auto_topup_snapshot(esim),
+        usage=_usage_snapshot(resolved),
+        auto_topup=_auto_topup_snapshot(resolved),
         checked_at=timezone.now(),
     )
 
@@ -101,6 +119,7 @@ def get_device_status(
     """Return status for an active org-scoped DeviceBinding.
 
     ``device_external_id`` is a lookup key only — never sufficient authz.
+    Org JWT path keeps classic ``binding.esim`` resolution (no UEM in this PR).
     """
     ctx = resolve_organization_context(actor, organization_id)
     require_view(ctx)
@@ -130,6 +149,42 @@ def _hash_credential(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _resolve_esim_via_uem(binding: DeviceBinding) -> Esim:
+    """Read-only UEM ICCID → team Account Esim (ADR 021 staging proof).
+
+    Side-effect free: never creates/transfers/unbinds inventory.
+    """
+    guid = (binding.uem_device_guid or "").strip()
+    if not guid:
+        raise UemInventoryUnavailableError("UEM device guid is not configured")
+
+    if not getattr(settings, "BLACKBERRY_UEM_ENABLED", False):
+        raise UemInventoryUnavailableError("UEM integration is not enabled")
+
+    try:
+        device = BlackberryUemClient().get_device_by_guid(guid)
+    except BlackberryUemClientError as exc:
+        logger.warning(
+            "UEM device read failed for binding=%s guid=%s: %s",
+            binding.pk,
+            guid,
+            exc,
+        )
+        raise UemInventoryUnavailableError(
+            "UEM telephony inventory unavailable"
+        ) from exc
+
+    if device is None:
+        raise UemInventoryUnavailableError("UEM device not found for mapped guid")
+
+    iccid = resolve_top_level_iccid(device)
+    account_id = binding.organization.account_id
+    esim = Esim.objects.filter(account_id=account_id, iccid=iccid).first()
+    if esim is None:
+        raise IccidNotFoundError("No RoamKit data for this ICCID.")
+    return esim
+
+
 def get_device_status_by_credential(
     *,
     device_external_id: str,
@@ -137,8 +192,11 @@ def get_device_status_by_credential(
 ) -> DeviceStatusSnapshot:
     """Device-facing status via opaque credential (PR18).
 
-    ``device_external_id`` alone is never enough. Failures return 404 without
-    distinguishing missing binding vs bad credential.
+    ``device_external_id`` alone is never enough. Auth failures return 404
+    without distinguishing missing binding vs bad credential.
+
+    When ``DeviceBinding.uem_device_guid`` is set, resolve status Esim via
+    read-only UEM ICCID lookup (staging proof). Otherwise use ``binding.esim``.
     """
     device_external_id = (device_external_id or "").strip()
     credential = credential or ""
@@ -160,5 +218,9 @@ def get_device_status_by_credential(
         raise NotFound(detail="Not found.")
     if binding.esim.account_id != binding.organization.account_id:
         raise NotFound(detail="Not found.")
+
+    if (binding.uem_device_guid or "").strip():
+        esim = _resolve_esim_via_uem(binding)
+        return build_device_status_snapshot(binding, esim=esim)
 
     return build_device_status_snapshot(binding)
