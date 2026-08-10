@@ -923,9 +923,10 @@ paths:
         - Serial (ADR 021 Option C″): ``device_serial``
 
 
-        Mixed / incomplete / ``fleet_*`` fields → 400. Serial path is UEM-authoritative (no DeviceBinding
-        gate); serial success returns ``device_external_id: null``. Never accepts ``esim_id``. Legacy
-        orders without a coverage snapshot return ``coverage: null``. No user JWT; rate-limited by IP.'
+        Mixed / incomplete / ``fleet_*`` fields → 400. Serial path is UEM-authoritative (same codes as
+        device status). Serial success returns ``device_external_id: null``. Never accepts ``esim_id``.
+        Legacy orders without a coverage snapshot return ``coverage: null``. No user JWT; rate-limited
+        by IP.'
       operationId: device_coverage
       requestBody:
         content:
