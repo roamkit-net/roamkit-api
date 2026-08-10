@@ -1,10 +1,9 @@
 """Read-only device status snapshot (ADR 020 / ADR 021 Option C″).
 
 Shared builder for org-authenticated (PR17), device-credential (PR18), and
-serial+binding (Option C″) paths. No provider refresh; no ownership transfer.
-UEM ICCID resolve is global (unique non-archived Esim) — not scoped to
-``organization.account``. Only refreshable ``uem_device_guid`` cache may
-mutate on unique serial match.
+serial (Option C″) paths. No provider refresh; no ownership transfer.
+Serial path: UEM inventory → ICCID → unique non-archived Esim (no
+DeviceBinding gate, write, or fallback).
 """
 
 from __future__ import annotations
@@ -26,7 +25,8 @@ from apps.integrations.blackberry_uem.client import (
     BlackberryUemClientError,
 )
 from apps.organizations.exceptions import (
-    BindingNotFoundError,
+    DeviceAmbiguousError,
+    DeviceNotFoundError,
     IccidAmbiguousError,
     IccidNotFoundError,
     UemInventoryUnavailableError,
@@ -36,7 +36,7 @@ from apps.organizations.models import DeviceBinding, DeviceBindingStatus
 from apps.organizations.services.authz import require_view
 from apps.organizations.services.context import resolve_organization_context
 from apps.organizations.services.uem_iccid import resolve_top_level_iccid
-from apps.organizations.services.uem_serial import refresh_binding_uem_guid_from_serial
+from apps.organizations.services.uem_serial import resolve_uem_device_by_serial
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
@@ -150,8 +150,8 @@ def _plan_snapshot(esim: Esim) -> dict[str, Any] | None:
 
 @dataclass(frozen=True, slots=True)
 class DeviceStatusSnapshot:
-    device_external_id: str
-    binding_status: str
+    device_external_id: str | None
+    binding_status: str | None
     esim: dict[str, Any]
     usage: dict[str, Any]
     auto_topup: dict[str, bool]
@@ -171,15 +171,24 @@ class DeviceStatusSnapshot:
 
 
 def build_device_status_snapshot(
-    binding: DeviceBinding,
+    binding: DeviceBinding | None = None,
     *,
     esim: Esim | None = None,
+    device_external_id: str | None = None,
+    binding_status: str | None = None,
 ) -> DeviceStatusSnapshot:
-    """Pure status snapshot from an already-authorized active binding."""
-    resolved = esim if esim is not None else binding.esim
+    """Pure status snapshot from binding and/or resolved Esim."""
+    if binding is not None:
+        resolved = esim if esim is not None else binding.esim
+        device_external_id = binding.device_external_id
+        binding_status = binding.status
+    else:
+        if esim is None:
+            raise ValueError("esim is required when binding is omitted")
+        resolved = esim
     return DeviceStatusSnapshot(
-        device_external_id=binding.device_external_id,
-        binding_status=binding.status,
+        device_external_id=device_external_id,
+        binding_status=binding_status,
         esim={
             "id": resolved.pk,
             "iccid": resolved.iccid,
@@ -337,58 +346,44 @@ def get_device_status_by_credential(
     return build_device_status_snapshot(binding, esim=esim)
 
 
-def _resolve_binding_and_esim_by_serial(
-    *, device_serial: str
-) -> tuple[DeviceBinding, Esim]:
-    """Shared serial resolution for device status/coverage (C″).
+def _resolve_esim_by_serial(*, device_serial: str) -> Esim:
+    """Serial → current UEM → ICCID → unique Esim (ADR 021).
 
-    Serial is an identifier, not a secret. Gate: exactly one active
-    ``DeviceBinding`` for that serial, then UEM ICCID → unique Esim by
-    ICCID (any Account; no ownership rewrite).
+    No ``DeviceBinding`` read, write, or cache fallback.
     """
     serial = (device_serial or "").strip()
     if not serial:
-        raise BindingNotFoundError("Device binding not found.")
-
-    matches = list(
-        DeviceBinding.objects.select_related(
-            "esim", "esim__account", "esim__order", "organization"
-        ).filter(
-            uem_serial_number=serial,
-            status=DeviceBindingStatus.ACTIVE,
-        )
-    )
-    if len(matches) != 1:
-        raise BindingNotFoundError("Device binding not found.")
-    binding = matches[0]
+        raise DeviceNotFoundError("Device not found in UEM.")
 
     try:
-        device = refresh_binding_uem_guid_from_serial(binding)
+        device = resolve_uem_device_by_serial(serial)
+    except DeviceNotFoundError:
+        raise
+    except DeviceAmbiguousError:
+        raise
     except UemSerialMatchError as exc:
-        logger.warning(
-            "UEM serial resolve failed for binding=%s serial=%s: %s",
-            binding.pk,
-            serial,
-            exc,
-        )
+        logger.warning("UEM serial resolve failed for serial=%s: %s", serial, exc)
         raise UemInventoryUnavailableError(
             "UEM telephony inventory unavailable"
         ) from exc
 
     iccid = resolve_top_level_iccid(device)
-    esim = _esim_for_iccid(iccid)
-    return binding, esim
+    return _esim_for_iccid(iccid)
 
 
 def get_device_status_by_serial(*, device_serial: str) -> DeviceStatusSnapshot:
-    """Device-facing status via serial + active binding (ADR 021 Option C″)."""
-    binding, esim = _resolve_binding_and_esim_by_serial(device_serial=device_serial)
-    return build_device_status_snapshot(binding, esim=esim)
+    """Device-facing status via serial → UEM → ICCID (ADR 021 Option C″)."""
+    esim = _resolve_esim_by_serial(device_serial=device_serial)
+    return build_device_status_snapshot(
+        esim=esim,
+        device_external_id=None,
+        binding_status=None,
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class DeviceCoverageSnapshot:
-    device_external_id: str
+    device_external_id: str | None
     coverage_type: str | None
     coverage: list[dict[str, Any]] | None
     checked_at: datetime
@@ -403,12 +398,19 @@ class DeviceCoverageSnapshot:
 
 
 def build_device_coverage_snapshot(
-    binding: DeviceBinding,
+    binding: DeviceBinding | None = None,
     *,
     esim: Esim | None = None,
+    device_external_id: str | None = None,
 ) -> DeviceCoverageSnapshot:
     """Coverage list from Order.coverage_snapshot only (never live catalog)."""
-    resolved = esim if esim is not None else binding.esim
+    if binding is not None:
+        resolved = esim if esim is not None else binding.esim
+        device_external_id = binding.device_external_id
+    else:
+        if esim is None:
+            raise ValueError("esim is required when binding is omitted")
+        resolved = esim
     order = getattr(resolved, "order", None)
     coverage_type: str | None = None
     coverage: list[dict[str, Any]] | None = None
@@ -432,7 +434,7 @@ def build_device_coverage_snapshot(
         else:
             coverage = []
     return DeviceCoverageSnapshot(
-        device_external_id=binding.device_external_id,
+        device_external_id=device_external_id,
         coverage_type=coverage_type,
         coverage=coverage,
         checked_at=timezone.now(),
@@ -453,6 +455,9 @@ def get_device_coverage_by_credential(
 
 
 def get_device_coverage_by_serial(*, device_serial: str) -> DeviceCoverageSnapshot:
-    """Device-facing coverage via serial + active binding (ADR 021 Option C″)."""
-    binding, esim = _resolve_binding_and_esim_by_serial(device_serial=device_serial)
-    return build_device_coverage_snapshot(binding, esim=esim)
+    """Device-facing coverage via serial → UEM → ICCID (ADR 021 Option C″)."""
+    esim = _resolve_esim_by_serial(device_serial=device_serial)
+    return build_device_coverage_snapshot(
+        esim=esim,
+        device_external_id=None,
+    )

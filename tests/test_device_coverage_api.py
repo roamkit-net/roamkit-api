@@ -302,7 +302,9 @@ def _serial_coverage(client, *, device_serial: str):
 
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
-def test_serial_coverage_returns_snapshot(client, owner, org):
+def test_serial_coverage_returns_snapshot_without_binding(client, owner, org):
+    from apps.organizations.models import DeviceBinding
+
     snapshot = [
         {
             "country_code": "HR",
@@ -310,12 +312,46 @@ def test_serial_coverage_returns_snapshot(client, owner, org):
             "operators": ["A1", "Telemach"],
         }
     ]
-    binding, _credential, order, _location = _bind_with_order(
-        owner, org, coverage_snapshot=snapshot, coverage_type="global"
+    suffix = uuid.uuid4().hex[:12]
+    location = Location.objects.create(
+        slug=f"loc-global-{suffix}",
+        title="World",
+        country_code="",
+        coverage_type="global",
+        coverages=[],
     )
-    binding.uem_serial_number = SERIAL
-    binding.save(update_fields=["uem_serial_number", "updated_at"])
-    iccid = binding.esim.iccid
+    package = Package.objects.create(
+        external_id=f"pkg-serial-cov-{suffix}",
+        title="Global",
+        operator_title="Airalo",
+        country_code="",
+        location=location,
+        data_allowance="1 GB",
+        validity_days=7,
+        price_usd=Decimal("10.00"),
+        synced_at=timezone.now(),
+        is_active=True,
+    )
+    order = Order.objects.create(
+        account=org.account,
+        package=package,
+        status=Order.Status.FULFILLED,
+        package_title="Global",
+        location_title="World",
+        coverage_type="global",
+        data_allowance="1 GB",
+        validity_days=7,
+        coverage_snapshot=snapshot,
+    )
+    iccid = f"891111{suffix.zfill(12)[:12]}"
+    Esim.objects.create(
+        user=owner,
+        account=org.account,
+        order=order,
+        iccid=iccid,
+        status=Esim.Status.IN_USE,
+    )
+    binding_count_before = DeviceBinding.objects.count()
 
     with patch(
         "apps.organizations.services.uem_serial.BlackberryUemClient"
@@ -330,26 +366,27 @@ def test_serial_coverage_returns_snapshot(client, owner, org):
 
     assert resp.status_code == 200, resp.content
     body = resp.json()
-    assert body["device_external_id"] == binding.device_external_id
+    assert "device_external_id" in body
+    assert body["device_external_id"] is None
     assert body["coverage_type"] == "global"
     assert body["coverage"] == snapshot
-    order.refresh_from_db()
-    assert order.coverage_snapshot == snapshot
+    assert DeviceBinding.objects.count() == binding_count_before
 
 
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
-def test_serial_coverage_binding_not_found(client, owner, org):
-    _bind_with_order(
-        owner,
-        org,
-        coverage_snapshot=[
-            {"country_code": "HR", "country_name": "Croatia", "operators": []}
-        ],
-    )
-    resp = _serial_coverage(client, device_serial=SERIAL)
+def test_serial_coverage_device_not_found(client, owner, org):
+    from apps.integrations.blackberry_uem.client import BlackberryUemClientError
+
+    with patch(
+        "apps.organizations.services.uem_serial.BlackberryUemClient"
+    ) as client_cls:
+        client_cls.return_value.get_device_by_serial.side_effect = (
+            BlackberryUemClientError("UEM serialNumber match count is 0 (fail closed)")
+        )
+        resp = _serial_coverage(client, device_serial=SERIAL)
     assert resp.status_code == 404
-    assert resp.json()["code"] == "binding_not_found"
+    assert resp.json()["code"] == "device_not_found"
 
 
 @pytest.mark.django_db
