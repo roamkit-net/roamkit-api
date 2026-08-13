@@ -580,6 +580,8 @@ class AutoTopupService:
             else:
                 if expected_version is None or existing.version != expected_version:
                     raise LookupError("version_conflict")
+                before_status = existing.status
+                before_reason = existing.reason or ""
                 before_config = (
                     existing.expiry_enabled,
                     existing.usage_mode,
@@ -611,6 +613,11 @@ class AutoTopupService:
                 existing.save()
                 policy = existing
                 created = False
+                if self._is_manual_funds_resume(before_status, before_reason, policy):
+                    policy_id = policy.pk
+                    transaction.on_commit(
+                        lambda pid=policy_id: self._enqueue_evaluate_policy(pid)
+                    )
 
         if created:
             self.publish_policy_created(policy, actor=actor)
@@ -634,6 +641,32 @@ class AutoTopupService:
                     )
                 )
         return policy
+
+    @staticmethod
+    def _is_manual_funds_resume(
+        before_status: str, before_reason: str, policy: EsimAutoTopupPolicy
+    ) -> bool:
+        """True only for Me PUT paused+insufficient_funds → active+empty reason."""
+        return (
+            before_status == EsimAutoTopupPolicy.Status.PAUSED
+            and before_reason == EsimAutoTopupPolicy.Reason.INSUFFICIENT_FUNDS
+            and policy.enabled
+            and policy.status == EsimAutoTopupPolicy.Status.ACTIVE
+            and (policy.reason or "") == ""
+        )
+
+    @staticmethod
+    def _enqueue_evaluate_policy(policy_id) -> None:
+        """Best-effort async evaluate; beat remains the fallback if broker fails."""
+        from apps.esims.tasks import evaluate_auto_topup_policy
+
+        try:
+            evaluate_auto_topup_policy.delay(str(policy_id))
+        except Exception:
+            logger.exception(
+                "Failed to enqueue auto-topup evaluate for policy %s",
+                policy_id,
+            )
 
     def delete_policy(
         self,
