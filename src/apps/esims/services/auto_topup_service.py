@@ -230,11 +230,17 @@ class AutoTopupService:
 
     @staticmethod
     def _expiry_met(esim: Esim, *, now) -> bool:
-        if esim.status == Esim.Status.EXPIRED:
-            return True
+        """Expiry trigger follows the usage clock (v2 idempotency epoch).
+
+        ``Esim.status == expired`` is terminal (ADR 014) and can lag a
+        fulfilled top-up. When ``usage_expired_at`` is set, it is the sole
+        signal so a new validity window is not treated as still-expired.
+        """
+        if esim.usage_expired_at is not None:
+            return esim.usage_expired_at <= now
         if (esim.usage_status or "").upper() == "EXPIRED":
             return True
-        if esim.usage_expired_at is not None and esim.usage_expired_at <= now:
+        if esim.status == Esim.Status.EXPIRED:
             return True
         return False
 
