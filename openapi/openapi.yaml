@@ -3412,6 +3412,11 @@ components:
           nullable: true
           readOnly: true
           type: string
+        auto_topup:
+          allOf:
+          - $ref: '#/components/schemas/EsimAutoTopupSnapshot'
+          nullable: true
+          readOnly: true
         country_code:
           readOnly: true
           type: string
@@ -3537,6 +3542,7 @@ components:
       - activated_at
       - activation_policy
       - archived_at
+      - auto_topup
       - country_code
       - created_at
       - currency
@@ -3568,6 +3574,20 @@ components:
       - usage_synced_at
       - usage_total_mb
       - validity_days
+      type: object
+    EsimAutoTopupSnapshot:
+      description: Read-only policy summary for eSIM list/detail (Action required).
+      properties:
+        enabled:
+          type: boolean
+        reason:
+          type: string
+        status:
+          type: string
+      required:
+      - enabled
+      - reason
+      - status
       type: object
     EsimStatusEnum:
       description: '* `purchased` - Purchased

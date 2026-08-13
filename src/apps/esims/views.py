@@ -134,7 +134,13 @@ class OwnedEsimMixin:
                         event_type=ACTIVATED_EVENT_TYPE
                     ).order_by("created_at"),
                     to_attr="_activated_events",
-                )
+                ),
+                Prefetch(
+                    "auto_topup_policies",
+                    queryset=EsimAutoTopupPolicy.objects.only(
+                        "id", "esim_id", "enabled", "status", "reason"
+                    ),
+                ),
             )
         )
 
