@@ -12,7 +12,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.catalog.models import Package
-from apps.esims.models import Esim
+from apps.esims.models import Esim, EsimAutoTopupPolicy
 from apps.orders.models import Order
 from apps.orders.product_snapshot import product_snapshot_kwargs
 from shared.providers.esim import TopupPackage, UsageDTO
@@ -185,6 +185,7 @@ def test_list_esims_returns_only_own(
     assert item["issued_at"]
     assert item["activated_at"] is None
     assert item["archived_at"] is None
+    assert item["auto_topup"] is None
     assert "net_price_usd" not in item
     assert "net_price" not in item
     assert bob_esim.iccid not in {row["iccid"] for row in payload["results"]}
@@ -209,6 +210,7 @@ def test_detail_returns_own_esim(client: Client, user: User, alice_esim: Esim) -
     assert payload["package_title"] == "1 GB - 7 Days"
     assert payload["issued_at"] == payload["created_at"]
     assert payload["activated_at"] is None
+    assert payload["auto_topup"] is None
     assert "net_price_usd" not in payload
 
 
@@ -561,6 +563,11 @@ def test_patch_note_does_not_mutate_other_fields(
             "package_title": "hijacked",
             "activation_policy": "installation",
             "archived_at": "2026-01-01T00:00:00Z",
+            "auto_topup": {
+                "enabled": True,
+                "status": "active",
+                "reason": "",
+            },
         },
     )
     assert response.status_code == 200
@@ -575,6 +582,7 @@ def test_patch_note_does_not_mutate_other_fields(
         "matching_id",
         "qrcode",
         "archived_at",
+        "auto_topup",
     ):
         assert after[key] == before[key], key
 
@@ -748,3 +756,102 @@ def test_detail_returns_archived_esim(
     )
     assert response.status_code == 200
     assert response.json()["archived_at"] is not None
+
+
+def _paused_funds_policy(*, user: User, esim: Esim) -> EsimAutoTopupPolicy:
+    return EsimAutoTopupPolicy.objects.create(
+        account=user.billing_account,
+        esim=esim,
+        package_id="topup-1gb",
+        expiry_enabled=True,
+        usage_mode=EsimAutoTopupPolicy.UsageMode.DISABLED,
+        renew_mode=EsimAutoTopupPolicy.RenewMode.UNTIL_FUNDS,
+        enabled=True,
+        status=EsimAutoTopupPolicy.Status.PAUSED,
+        reason=EsimAutoTopupPolicy.Reason.INSUFFICIENT_FUNDS,
+    )
+
+
+@pytest.mark.django_db
+def test_list_auto_topup_snapshot_null_without_policy(
+    client: Client, user: User, alice_esim: Esim
+) -> None:
+    access = _access_token(client, user.email)
+    response = client.get(
+        "/api/v1/me/esims/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert response.status_code == 200
+    item = response.json()["results"][0]
+    assert item["id"] == alice_esim.pk
+    assert item["auto_topup"] is None
+
+
+@pytest.mark.django_db
+def test_list_and_detail_auto_topup_snapshot_paused_funds(
+    client: Client, user: User, alice_esim: Esim
+) -> None:
+    _paused_funds_policy(user=user, esim=alice_esim)
+    access = _access_token(client, user.email)
+
+    listed = client.get(
+        "/api/v1/me/esims/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert listed.status_code == 200
+    snap = listed.json()["results"][0]["auto_topup"]
+    assert snap == {
+        "enabled": True,
+        "status": EsimAutoTopupPolicy.Status.PAUSED,
+        "reason": EsimAutoTopupPolicy.Reason.INSUFFICIENT_FUNDS,
+    }
+    assert set(snap) == {"enabled", "status", "reason"}
+
+    detail = client.get(
+        f"/api/v1/me/esims/{alice_esim.pk}/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert detail.status_code == 200
+    assert detail.json()["auto_topup"] == snap
+
+
+@pytest.mark.django_db
+def test_list_auto_topup_snapshot_present_when_archived(
+    client: Client, user: User, alice_esim: Esim
+) -> None:
+    """API still returns the snapshot; Action required filtering is the client."""
+    _paused_funds_policy(user=user, esim=alice_esim)
+    alice_esim.archived_at = timezone.now()
+    alice_esim.save(update_fields=["archived_at"])
+    access = _access_token(client, user.email)
+    response = client.get(
+        "/api/v1/me/esims/?include_archived=true",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert response.status_code == 200
+    item = next(row for row in response.json()["results"] if row["id"] == alice_esim.pk)
+    assert item["archived_at"] is not None
+    assert item["auto_topup"]["reason"] == (
+        EsimAutoTopupPolicy.Reason.INSUFFICIENT_FUNDS
+    )
+
+
+def test_openapi_esim_has_auto_topup_snapshot() -> None:
+    from pathlib import Path
+
+    import yaml
+
+    doc = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / "openapi" / "openapi.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    schemas = doc["components"]["schemas"]
+    esim_props = schemas["Esim"]["properties"]
+    assert "auto_topup" in esim_props
+    assert esim_props["auto_topup"].get("nullable") is True
+    snap = schemas["EsimAutoTopupSnapshot"]["properties"]
+    assert set(snap) == {"enabled", "status", "reason"}
+    assert "package_id" not in snap
+    assert "net_price_usd" not in snap
+    assert "net_price" not in snap

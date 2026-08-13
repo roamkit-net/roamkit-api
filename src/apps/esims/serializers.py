@@ -12,6 +12,14 @@ from apps.esims.models import Esim, EsimAutoTopupPolicy, EsimLifecycleEvent, Top
 ACTIVATED_EVENT_TYPE = "system.status.activated"
 
 
+class EsimAutoTopupSnapshotSerializer(serializers.Serializer):
+    """Read-only policy summary for eSIM list/detail (Action required)."""
+
+    enabled = serializers.BooleanField()
+    status = serializers.CharField()
+    reason = serializers.CharField()
+
+
 class EsimSerializer(serializers.ModelSerializer):
     """Owned eSIM with ICCID, install, setup, lifecycle, and order snapshot.
 
@@ -43,6 +51,7 @@ class EsimSerializer(serializers.ModelSerializer):
     currency = serializers.CharField(source="order.currency", read_only=True)
     issued_at = serializers.DateTimeField(source="created_at", read_only=True)
     activated_at = serializers.SerializerMethodField()
+    auto_topup = serializers.SerializerMethodField()
     note = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -90,6 +99,7 @@ class EsimSerializer(serializers.ModelSerializer):
             "currency",
             "issued_at",
             "activated_at",
+            "auto_topup",
             "created_at",
             "updated_at",
         ]
@@ -126,6 +136,7 @@ class EsimSerializer(serializers.ModelSerializer):
             "currency",
             "issued_at",
             "activated_at",
+            "auto_topup",
             "created_at",
             "updated_at",
         ]
@@ -146,6 +157,26 @@ class EsimSerializer(serializers.ModelSerializer):
             .first()
         )
         return event
+
+    @extend_schema_field(EsimAutoTopupSnapshotSerializer(allow_null=True))
+    def get_auto_topup(self, obj: Esim) -> dict | None:
+        """One policy per eSIM, or null when none exists.
+
+        Prefetch ``auto_topup_policies`` on the queryset to avoid N+1 on list.
+        """
+        cache = getattr(obj, "_prefetched_objects_cache", None)
+        if cache is not None and "auto_topup_policies" in cache:
+            policies = cache["auto_topup_policies"]
+        else:
+            policies = list(obj.auto_topup_policies.all()[:1])
+        if not policies:
+            return None
+        policy = policies[0]
+        return {
+            "enabled": bool(policy.enabled),
+            "status": policy.status,
+            "reason": policy.reason or "",
+        }
 
 
 class UsageSerializer(serializers.Serializer):
