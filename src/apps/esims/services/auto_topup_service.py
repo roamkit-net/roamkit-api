@@ -33,6 +33,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_UNKNOWN_EPOCH = "unknown"
+
+
+def canonical_utc_stamp(value: datetime) -> str:
+    """UTC second-precision ISO stamp — one format for expiry episode identity."""
+    if timezone.is_naive(value):
+        value = timezone.make_aware(value, UTC)
+    return value.astimezone(UTC).replace(microsecond=0).isoformat()
+
 
 class AutoTopupService:
     """Evaluate enabled policies and purchase via ``TopupService`` when triggered."""
@@ -187,6 +196,11 @@ class AutoTopupService:
             reason = self._select_fire_reason(policy, esim, now=now)
             if reason is None:
                 return "skipped"
+            if (
+                reason == EsimAutoTopupPolicy.LEGACY_TRIGGER_EXPIRY
+                and self._same_expiry_episode(policy, esim)
+            ):
+                return "skipped"
 
             return (
                 esim,
@@ -230,13 +244,15 @@ class AutoTopupService:
 
     @staticmethod
     def _expiry_met(esim: Esim, *, now) -> bool:
-        if esim.status == Esim.Status.EXPIRED:
-            return True
-        if (esim.usage_status or "").upper() == "EXPIRED":
-            return True
-        if esim.usage_expired_at is not None and esim.usage_expired_at <= now:
-            return True
-        return False
+        """Expiry fires only on a dated usage clock, never sticky ``Esim.status``.
+
+        ``usage_expired_at is None`` is fail-closed: no stable episode identity,
+        so this trigger must not purchase.
+        """
+        expired_at = esim.usage_expired_at
+        if expired_at is None:
+            return False
+        return expired_at <= now
 
     @classmethod
     def _select_fire_reason(
@@ -278,18 +294,35 @@ class AutoTopupService:
         policy: EsimAutoTopupPolicy, esim: Esim, *, reason: str
     ) -> str:
         if reason == EsimAutoTopupPolicy.LEGACY_TRIGGER_EXPIRY:
-            stamp = (
-                esim.usage_expired_at.isoformat()
-                if esim.usage_expired_at is not None
-                else "unknown"
-            )
+            if esim.usage_expired_at is None:
+                raise ValueError("expiry idempotency requires usage_expired_at")
+            stamp = canonical_utc_stamp(esim.usage_expired_at)
             return f"auto-topup:{policy.pk}:{reason}:{stamp}"
         stamp = (
             esim.usage_synced_at.isoformat()
             if esim.usage_synced_at is not None
-            else "unknown"
+            else _UNKNOWN_EPOCH
         )
         return f"auto-topup:{policy.pk}:{reason}:{stamp}"
+
+    @staticmethod
+    def _same_expiry_episode(policy: EsimAutoTopupPolicy, esim: Esim) -> bool:
+        """True when this policy already succeeded for the same usage_expired_at."""
+        expired_at = esim.usage_expired_at
+        if expired_at is None:
+            return False
+        last = policy.last_idempotency_key or ""
+        prefix = f"auto-topup:{policy.pk}:{EsimAutoTopupPolicy.LEGACY_TRIGGER_EXPIRY}:"
+        if not last.startswith(prefix):
+            return False
+        stamp = last[len(prefix) :]
+        if not stamp or stamp == _UNKNOWN_EPOCH:
+            return False
+        try:
+            previous = datetime.fromisoformat(stamp)
+        except ValueError:
+            return False
+        return canonical_utc_stamp(previous) == canonical_utc_stamp(expired_at)
 
     def _on_success(
         self, policy_id, topup, idempotency_key: str, *, fire_reason: str
