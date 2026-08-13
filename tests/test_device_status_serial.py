@@ -1,4 +1,4 @@
-"""Serial-only device status shape (ADR 021 Option C″)."""
+"""Serial-only device status shape (ADR 021 Option C″ — no DeviceBinding gate)."""
 
 from __future__ import annotations
 
@@ -15,8 +15,9 @@ from django.utils import timezone
 from apps.billing.services import ensure_billing_account
 from apps.catalog.models import Package
 from apps.esims.models import Esim
+from apps.integrations.blackberry_uem.client import BlackberryUemClientError
 from apps.orders.models import Order
-from apps.organizations.models import DeviceBindingStatus
+from apps.organizations.models import DeviceBinding
 from apps.organizations.serializers import DeviceStatusRequestSerializer
 from apps.organizations.services import (
     create_device_binding,
@@ -81,15 +82,6 @@ def _make_esim(*, account, user, package: Package, iccid: str) -> Esim:
     )
 
 
-def _bind_serial(*, owner, org, package, iccid: str, serial: str):
-    esim = _make_esim(account=org.account, user=owner, package=package, iccid=iccid)
-    result = create_device_binding(owner, org.id, esim_id=esim.pk)
-    binding = result.binding
-    binding.uem_serial_number = serial
-    binding.save(update_fields=["uem_serial_number", "updated_at"])
-    return binding, esim
-
-
 def _serial_status(client, *, device_serial):
     return client.post(
         "/api/v1/device/status/",
@@ -148,11 +140,11 @@ def test_serializer_accepts_pr18_and_serial_shapes():
 
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
-def test_serial_status_happy_path_refreshes_guid(client, owner, org, package):
-    binding, esim = _bind_serial(
-        owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL
-    )
-    assert binding.uem_device_guid == ""
+def test_serial_status_without_binding_returns_null_external_id(
+    client, owner, org, package
+):
+    esim = _make_esim(account=org.account, user=owner, package=package, iccid=ICCID)
+    binding_count_before = DeviceBinding.objects.count()
 
     with patch(
         "apps.organizations.services.uem_serial.BlackberryUemClient"
@@ -162,70 +154,81 @@ def test_serial_status_happy_path_refreshes_guid(client, owner, org, package):
 
     assert resp.status_code == 200, resp.content
     payload = resp.json()
-    assert payload["device_external_id"] == binding.device_external_id
-    assert payload["binding_status"] == DeviceBindingStatus.ACTIVE
+    assert "device_external_id" in payload
+    assert payload["device_external_id"] is None
+    assert payload["binding_status"] is None
     assert payload["esim"]["iccid"] == ICCID
     assert payload["esim"]["id"] == esim.pk
+    assert DeviceBinding.objects.count() == binding_count_before
+
+
+@pytest.mark.django_db
+@override_settings(BLACKBERRY_UEM_ENABLED=True)
+def test_serial_status_ignores_stale_binding_when_uem_misses(
+    client, owner, org, package
+):
+    """Stale DeviceBinding must not rescue a UEM failure (no cache fallback)."""
+    esim = _make_esim(account=org.account, user=owner, package=package, iccid=ICCID)
+    issued = create_device_binding(owner, org.id, esim_id=esim.pk)
+    binding = issued.binding
+    binding.uem_serial_number = SERIAL
+    binding.uem_device_guid = GUID
+    binding.save(update_fields=["uem_serial_number", "uem_device_guid", "updated_at"])
+    updated_at = binding.updated_at
+
+    with patch(
+        "apps.organizations.services.uem_serial.BlackberryUemClient"
+    ) as client_cls:
+        client_cls.return_value.get_device_by_serial.side_effect = (
+            BlackberryUemClientError("UEM serialNumber match count is 0 (fail closed)")
+        )
+        resp = _serial_status(client, device_serial=SERIAL)
+
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "device_not_found"
     binding.refresh_from_db()
     assert binding.uem_device_guid == GUID
+    assert binding.updated_at == updated_at
 
 
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
-def test_serial_status_binding_not_found_without_serial_binding(
-    client, owner, org, package
-):
+def test_serial_status_device_not_found(client, owner, org, package):
     _make_esim(account=org.account, user=owner, package=package, iccid=ICCID)
-    esim = Esim.objects.get(iccid=ICCID)
-    create_device_binding(owner, org.id, esim_id=esim.pk)
-    resp = _serial_status(client, device_serial=SERIAL)
+    with patch(
+        "apps.organizations.services.uem_serial.BlackberryUemClient"
+    ) as client_cls:
+        client_cls.return_value.get_device_by_serial.side_effect = (
+            BlackberryUemClientError("UEM serialNumber match count is 0 (fail closed)")
+        )
+        resp = _serial_status(client, device_serial=SERIAL)
     assert resp.status_code == 404
-    assert resp.json()["code"] == "binding_not_found"
+    assert resp.json()["code"] == "device_not_found"
 
 
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
-def test_serial_status_binding_not_found_for_unknown_serial(
-    client, owner, org, package
-):
-    _bind_serial(owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL)
-    resp = _serial_status(client, device_serial="UNKNOWN-SERIAL")
+def test_serial_status_device_ambiguous(client, owner, org, package):
+    _make_esim(account=org.account, user=owner, package=package, iccid=ICCID)
+    with patch(
+        "apps.organizations.services.uem_serial.BlackberryUemClient"
+    ) as client_cls:
+        client_cls.return_value.get_device_by_serial.side_effect = (
+            BlackberryUemClientError("UEM serialNumber match count is 2 (fail closed)")
+        )
+        resp = _serial_status(client, device_serial=SERIAL)
     assert resp.status_code == 404
-    assert resp.json()["code"] == "binding_not_found"
-
-
-@pytest.mark.django_db
-@override_settings(BLACKBERRY_UEM_ENABLED=True)
-def test_serial_status_binding_not_found_when_serial_ambiguous(
-    client, owner, org, package
-):
-    """Fail closed if more than one active binding shares the serial."""
-    other_owner = User.objects.create_user(
-        email="serial-status-other@example.com", password=PASSWORD
-    )
-    other_org = create_organization(name="Other Serial Org", actor=other_owner)
-    _bind_serial(owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL)
-    _bind_serial(
-        owner=other_owner,
-        org=other_org,
-        package=package,
-        iccid="89852350326100304892",
-        serial=SERIAL,
-    )
-    resp = _serial_status(client, device_serial=SERIAL)
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "binding_not_found"
+    assert resp.json()["code"] == "device_ambiguous"
 
 
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
 def test_serial_status_iccid_not_found(client, owner, org, package):
-    _bind_serial(
-        owner=owner,
-        org=org,
+    _make_esim(
+        account=org.account,
+        user=owner,
         package=package,
         iccid="8900000000000000999",
-        serial=SERIAL,
     )
     with patch(
         "apps.organizations.services.uem_serial.BlackberryUemClient"
@@ -241,10 +244,7 @@ def test_serial_status_iccid_not_found(client, owner, org, package):
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
 def test_serial_status_resolves_personal_account_esim(client, owner, org, package):
-    """MDM enrollment must not require Esim.account == organization.account."""
-    binding, esim = _bind_serial(
-        owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL
-    )
+    esim = _make_esim(account=org.account, user=owner, package=package, iccid=ICCID)
     personal = ensure_billing_account(owner)
     esim.account = personal
     esim.save(update_fields=["account", "updated_at"])
@@ -257,11 +257,9 @@ def test_serial_status_resolves_personal_account_esim(client, owner, org, packag
 
     assert resp.status_code == 200, resp.content
     assert resp.json()["esim"]["id"] == esim.pk
-    assert resp.json()["esim"]["iccid"] == ICCID
+    assert resp.json()["device_external_id"] is None
     esim.refresh_from_db()
     assert esim.account_id == personal.id
-    binding.refresh_from_db()
-    assert binding.organization_id == org.id
 
 
 @pytest.mark.django_db
@@ -290,7 +288,7 @@ def test_esim_for_iccid_ambiguous_fails_closed(owner, org, package):
 def test_serial_status_iccid_ambiguous_http_code(client, owner, org, package):
     from apps.organizations.exceptions import IccidAmbiguousError
 
-    _bind_serial(owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL)
+    _make_esim(account=org.account, user=owner, package=package, iccid=ICCID)
     with patch(
         "apps.organizations.services.uem_serial.BlackberryUemClient"
     ) as client_cls:
@@ -308,8 +306,7 @@ def test_serial_status_iccid_ambiguous_http_code(client, owner, org, package):
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
 def test_serial_status_skips_archived_esim(client, owner, org, package):
-    _bind_serial(owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL)
-    esim = Esim.objects.get(iccid=ICCID)
+    esim = _make_esim(account=org.account, user=owner, package=package, iccid=ICCID)
     esim.archived_at = timezone.now()
     esim.save(update_fields=["archived_at", "updated_at"])
 
@@ -325,18 +322,19 @@ def test_serial_status_skips_archived_esim(client, owner, org, package):
 
 @pytest.mark.django_db
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
-def test_serial_status_uem_inventory_unavailable_on_ambiguous_serial(
+def test_serial_status_uem_inventory_unavailable_without_iccid(
     client, owner, org, package
 ):
-    from apps.integrations.blackberry_uem.client import BlackberryUemClientError
-
-    _bind_serial(owner=owner, org=org, package=package, iccid=ICCID, serial=SERIAL)
+    _make_esim(account=org.account, user=owner, package=package, iccid=ICCID)
     with patch(
         "apps.organizations.services.uem_serial.BlackberryUemClient"
     ) as client_cls:
-        client_cls.return_value.get_device_by_serial.side_effect = (
-            BlackberryUemClientError("UEM serialNumber match count is 2 (fail closed)")
-        )
+        client_cls.return_value.get_device_by_serial.return_value = {
+            "guid": GUID,
+            "serialNumber": SERIAL,
+            "iccid": None,
+            "sims": [],
+        }
         resp = _serial_status(client, device_serial=SERIAL)
     assert resp.status_code == 503
     assert resp.json()["code"] == "uem_inventory_unavailable"
@@ -359,6 +357,7 @@ def test_pr18_status_still_works_unchanged(client, owner, org, package):
     )
     assert resp.status_code == 200, resp.content
     assert resp.json()["esim"]["iccid"] == ICCID
+    assert resp.json()["device_external_id"] == issued.binding.device_external_id
 
 
 @pytest.mark.django_db

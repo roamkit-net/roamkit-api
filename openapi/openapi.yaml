@@ -923,9 +923,10 @@ paths:
         - Serial (ADR 021 Option C″): ``device_serial``
 
 
-        Mixed / incomplete / ``fleet_*`` fields → 400. Serial without an active DeviceBinding → ``binding_not_found``.
-        Never accepts ``esim_id``. Legacy orders without a coverage snapshot return ``coverage: null``.
-        No user JWT; rate-limited by IP.'
+        Mixed / incomplete / ``fleet_*`` fields → 400. Serial path is UEM-authoritative (same codes as
+        device status). Serial success returns ``device_external_id: null``. Never accepts ``esim_id``.
+        Legacy orders without a coverage snapshot return ``coverage: null``. No user JWT; rate-limited
+        by IP.'
       operationId: device_coverage
       requestBody:
         content:
@@ -977,9 +978,11 @@ paths:
         - Serial (ADR 021 Option C″): ``device_serial``
 
 
-        Mixed / incomplete / ``fleet_*`` fields → 400. Serial without an active DeviceBinding → ``binding_not_found``.
-        Same snapshot shape as the org status API. No user JWT; rate-limited by IP. Mutations are never
-        authorized on this endpoint.'
+        Mixed / incomplete / ``fleet_*`` fields → 400. Serial path is UEM-authoritative (no DeviceBinding
+        gate): ``device_not_found`` / ``device_ambiguous`` / ``uem_inventory_unavailable`` / ``iccid_not_found``
+        / ``iccid_ambiguous``. Serial success returns ``device_external_id: null``. Same snapshot shape
+        as the org status API. No user JWT; rate-limited by IP. Mutations are never authorized on this
+        endpoint.'
       operationId: device_status
       requestBody:
         content:
@@ -3213,6 +3216,7 @@ components:
           nullable: true
           type: string
         device_external_id:
+          nullable: true
           type: string
       required:
       - checked_at
@@ -3243,11 +3247,13 @@ components:
         auto_topup:
           $ref: '#/components/schemas/DeviceStatusAutoTopup'
         binding_status:
+          nullable: true
           type: string
         checked_at:
           format: date-time
           type: string
         device_external_id:
+          nullable: true
           type: string
         esim:
           $ref: '#/components/schemas/DeviceStatusEsim'
