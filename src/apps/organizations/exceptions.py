@@ -54,7 +54,15 @@ class IccidAmbiguousError(DeviceBindingError):
 
 
 class UemSerialMatchError(DeviceBindingError):
-    """UEM serialNumber match is not exactly one device (0 or >1)."""
+    """UEM serialNumber resolve failed for a non-count reason (transport/config)."""
+
+
+class DeviceNotFoundError(DeviceBindingError):
+    """UEM serialNumber match count is 0 (ADR 021)."""
+
+
+class DeviceAmbiguousError(DeviceBindingError):
+    """UEM serialNumber match count is greater than 1 (ADR 021)."""
 
 
 class BindingNotFoundError(DeviceBindingError):

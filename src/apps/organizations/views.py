@@ -24,8 +24,10 @@ from rest_framework.views import APIView
 from apps.accounts.models import User
 from apps.organizations.exceptions import (
     BindingNotFoundError,
+    DeviceAmbiguousError,
     DeviceBindingConflictError,
     DeviceBindingNotFoundError,
+    DeviceNotFoundError,
     IccidAmbiguousError,
     IccidNotFoundError,
     InviteConflictError,
@@ -814,10 +816,13 @@ class OrganizationDeviceStatusView(OrganizationsAPIView):
             "(never put secrets in the URL):\n\n"
             "- PR18 fallback: ``device_external_id`` + ``credential``\n"
             "- Serial (ADR 021 Option C″): ``device_serial``\n\n"
-            "Mixed / incomplete / ``fleet_*`` fields → 400. Serial without an "
-            "active DeviceBinding → ``binding_not_found``. Same snapshot "
-            "shape as the org status API. No user JWT; rate-limited by IP. "
-            "Mutations are never authorized on this endpoint."
+            "Mixed / incomplete / ``fleet_*`` fields → 400. Serial path is "
+            "UEM-authoritative (no DeviceBinding gate): ``device_not_found`` / "
+            "``device_ambiguous`` / ``uem_inventory_unavailable`` / "
+            "``iccid_not_found`` / ``iccid_ambiguous``. Serial success returns "
+            "``device_external_id: null``. Same snapshot shape as the org "
+            "status API. No user JWT; rate-limited by IP. Mutations are never "
+            "authorized on this endpoint."
         ),
         request=DeviceStatusRequestSerializer,
         responses={
@@ -831,7 +836,7 @@ class OrganizationDeviceStatusView(OrganizationsAPIView):
     ),
 )
 class DeviceStatusView(APIView):
-    """Device status via PR18 credential or serial + active binding (C″)."""
+    """Device status via PR18 credential or serial → UEM → ICCID (C″)."""
 
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -861,6 +866,22 @@ class DeviceStatusView(APIView):
                 {
                     "detail": str(exc) or "Device binding not found.",
                     "code": "binding_not_found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except DeviceNotFoundError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "Device not found in UEM.",
+                    "code": "device_not_found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except DeviceAmbiguousError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "Multiple UEM devices match this serial.",
+                    "code": "device_ambiguous",
                 },
                 status=status.HTTP_404_NOT_FOUND,
             )
@@ -901,9 +922,10 @@ class DeviceStatusView(APIView):
             "Exactly one body shape (same as device status):\n\n"
             "- PR18 fallback: ``device_external_id`` + ``credential``\n"
             "- Serial (ADR 021 Option C″): ``device_serial``\n\n"
-            "Mixed / incomplete / ``fleet_*`` fields → 400. Serial without "
-            "an active DeviceBinding → ``binding_not_found``. Never accepts "
-            "``esim_id``. Legacy orders without a coverage snapshot return "
+            "Mixed / incomplete / ``fleet_*`` fields → 400. Serial path is "
+            "UEM-authoritative (same codes as device status). Serial success "
+            "returns ``device_external_id: null``. Never accepts ``esim_id``. "
+            "Legacy orders without a coverage snapshot return "
             "``coverage: null``. No user JWT; rate-limited by IP."
         ),
         request=DeviceStatusRequestSerializer,
@@ -918,7 +940,7 @@ class DeviceStatusView(APIView):
     ),
 )
 class DeviceCoverageView(APIView):
-    """Device coverage via PR18 credential or serial + active binding (C″)."""
+    """Device coverage via PR18 credential or serial → UEM → ICCID (C″)."""
 
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -948,6 +970,22 @@ class DeviceCoverageView(APIView):
                 {
                     "detail": str(exc) or "Device binding not found.",
                     "code": "binding_not_found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except DeviceNotFoundError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "Device not found in UEM.",
+                    "code": "device_not_found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except DeviceAmbiguousError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "Multiple UEM devices match this serial.",
+                    "code": "device_ambiguous",
                 },
                 status=status.HTTP_404_NOT_FOUND,
             )

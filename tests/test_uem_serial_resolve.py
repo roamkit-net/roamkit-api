@@ -90,17 +90,22 @@ def test_resolve_requires_exactly_one_match():
 
 @override_settings(BLACKBERRY_UEM_ENABLED=True)
 def test_resolve_fail_closed_on_zero_or_many():
+    from apps.organizations.exceptions import (
+        DeviceAmbiguousError,
+        DeviceNotFoundError,
+    )
+
     client = MagicMock()
     client.get_device_by_serial.side_effect = BlackberryUemClientError(
         "UEM serialNumber match count is 0 (fail closed)"
     )
-    with pytest.raises(UemSerialMatchError):
+    with pytest.raises(DeviceNotFoundError):
         resolve_uem_device_by_serial(SERIAL, client=client)
 
     client.get_device_by_serial.side_effect = BlackberryUemClientError(
         "UEM serialNumber match count is 2 (fail closed)"
     )
-    with pytest.raises(UemSerialMatchError):
+    with pytest.raises(DeviceAmbiguousError):
         resolve_uem_device_by_serial(SERIAL, client=client)
 
 

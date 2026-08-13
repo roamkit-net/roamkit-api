@@ -247,8 +247,8 @@ class DeviceStatusPlanSerializer(serializers.Serializer):
 class DeviceStatusSerializer(serializers.Serializer):
     """Read-only UEM status contract (cached inventory/usage; no provider call)."""
 
-    device_external_id = serializers.CharField()
-    binding_status = serializers.CharField()
+    device_external_id = serializers.CharField(allow_null=True)
+    binding_status = serializers.CharField(allow_null=True)
     esim = DeviceStatusEsimSerializer()
     usage = DeviceStatusUsageSerializer()
     auto_topup = DeviceStatusAutoTopupSerializer()
@@ -270,7 +270,7 @@ class DeviceCoverageCountrySerializer(serializers.Serializer):
 class DeviceCoverageSerializer(serializers.Serializer):
     """Device-facing coverage list from Order.coverage_snapshot only."""
 
-    device_external_id = serializers.CharField()
+    device_external_id = serializers.CharField(allow_null=True)
     coverage_type = serializers.CharField(allow_null=True)
     coverage = DeviceCoverageCountrySerializer(many=True, allow_null=True)
     checked_at = serializers.DateTimeField()
