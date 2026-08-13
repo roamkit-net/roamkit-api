@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -15,7 +15,10 @@ from apps.billing.models import LedgerReferenceType
 from apps.billing.services import credit_service
 from apps.catalog.models import Package
 from apps.esims.models import Esim, EsimAutoTopupPolicy, Topup
-from apps.esims.services.auto_topup_service import AutoTopupService
+from apps.esims.services.auto_topup_service import (
+    AutoTopupService,
+    canonical_utc_stamp,
+)
 from apps.orders.exceptions import SpendInProgressError
 from apps.orders.models import Order
 from shared.events.esim_events import (
@@ -527,6 +530,246 @@ def test_combo_same_beat_expiry_wins_no_pending_usage(user: User, esim: Esim) ->
     # Still in cooldown + usage still met → no second buy, no pending queue.
     assert service.evaluate_one(policy.pk) == "skipped"
     assert Topup.objects.count() == 1
+
+
+def test_canonical_utc_stamp_is_one_format_for_the_same_instant() -> None:
+    from datetime import timezone as dt_timezone
+
+    naive = datetime(2026, 8, 12, 8, 50, 1, 123456)
+    utc = datetime(2026, 8, 12, 8, 50, 1, 987654, tzinfo=UTC)
+    offset = datetime(2026, 8, 12, 10, 50, 1, 1, tzinfo=dt_timezone(timedelta(hours=2)))
+    assert canonical_utc_stamp(naive) == "2026-08-12T08:50:01+00:00"
+    assert canonical_utc_stamp(utc) == "2026-08-12T08:50:01+00:00"
+    assert canonical_utc_stamp(offset) == "2026-08-12T08:50:01+00:00"
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_expiry_skips_when_usage_expired_at_is_null(user: User, esim: Esim) -> None:
+    _fund(user)
+    esim.status = Esim.Status.EXPIRED
+    esim.usage_status = "EXPIRED"
+    esim.usage_expired_at = None
+    esim.usage_remaining_mb = 1024
+    esim.save(
+        update_fields=[
+            "status",
+            "usage_status",
+            "usage_expired_at",
+            "usage_remaining_mb",
+        ]
+    )
+    policy = _policy(
+        user,
+        esim,
+        expiry_enabled=True,
+        usage_mode=EsimAutoTopupPolicy.UsageMode.DISABLED,
+    )
+    provider = FakeTopupProvider(
+        usage=_usage(remaining_mb=1024, status="EXPIRED", expired_at=None)
+    )
+    assert AutoTopupService(provider).evaluate_one(policy.pk) == "skipped"
+    assert Topup.objects.count() == 0
+    assert provider.submit_calls == []
+    policy.refresh_from_db()
+    assert policy.status == EsimAutoTopupPolicy.Status.ACTIVE
+    assert policy.reason == ""
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_sticky_expired_status_does_not_fire_after_topup_window(
+    user: User, esim: Esim
+) -> None:
+    """ADR 014 leaves Esim.status expired; new usage_expired_at is the clock."""
+    _fund(user)
+    future_expiry = timezone.now() + timedelta(days=7)
+    esim.status = Esim.Status.EXPIRED
+    esim.usage_status = "NOT_ACTIVE"
+    esim.usage_remaining_mb = 1024
+    esim.usage_total_mb = 1024
+    esim.usage_expired_at = future_expiry
+    esim.usage_synced_at = timezone.now()
+    esim.save(
+        update_fields=[
+            "status",
+            "usage_status",
+            "usage_remaining_mb",
+            "usage_total_mb",
+            "usage_expired_at",
+            "usage_synced_at",
+        ]
+    )
+    policy = _policy(
+        user,
+        esim,
+        expiry_enabled=True,
+        usage_mode=EsimAutoTopupPolicy.UsageMode.THRESHOLD,
+        threshold_mb=100,
+    )
+    provider = FakeTopupProvider(
+        usage=_usage(
+            remaining_mb=1024,
+            total_mb=1024,
+            status="NOT_ACTIVE",
+            expired_at=future_expiry.isoformat(),
+        )
+    )
+
+    assert AutoTopupService(provider).evaluate_one(policy.pk) == "skipped"
+    assert Topup.objects.count() == 0
+    assert provider.submit_calls == []
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_same_expiry_episode_skips_after_cooldown_without_repurchase(
+    user: User, esim: Esim
+) -> None:
+    _fund(user)
+    expired_at = timezone.now() - timedelta(minutes=5)
+    esim.usage_remaining_mb = 100
+    esim.usage_expired_at = expired_at
+    esim.usage_status = "EXPIRED"
+    esim.status = Esim.Status.EXPIRED
+    esim.save(
+        update_fields=[
+            "usage_remaining_mb",
+            "usage_expired_at",
+            "usage_status",
+            "status",
+        ]
+    )
+    policy = _policy(
+        user,
+        esim,
+        expiry_enabled=True,
+        usage_mode=EsimAutoTopupPolicy.UsageMode.DISABLED,
+    )
+    provider = FakeTopupProvider(
+        usage=_usage(
+            remaining_mb=100,
+            status="EXPIRED",
+            expired_at=expired_at.isoformat(),
+        )
+    )
+    service = AutoTopupService(provider)
+    assert service.evaluate_one(policy.pk) == "success"
+    assert Topup.objects.count() == 1
+    assert len(provider.submit_calls) == 1
+
+    policy.refresh_from_db()
+    first_key = policy.last_idempotency_key
+    first_triggered = policy.last_triggered_at
+    policy.cooldown_until = None
+    policy.save(update_fields=["cooldown_until"])
+
+    assert service.evaluate_one(policy.pk) == "skipped"
+    assert Topup.objects.count() == 1
+    assert len(provider.submit_calls) == 1
+    policy.refresh_from_db()
+    assert policy.status == EsimAutoTopupPolicy.Status.ACTIVE
+    assert policy.reason == ""
+    assert policy.last_idempotency_key == first_key
+    assert policy.last_triggered_at == first_triggered
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_legacy_expiry_key_format_still_skips_same_episode(
+    user: User, esim: Esim
+) -> None:
+    _fund(user)
+    expired_at = datetime(2026, 8, 12, 8, 50, 1, 123456, tzinfo=UTC)
+    esim.usage_remaining_mb = 100
+    esim.usage_expired_at = expired_at
+    esim.usage_status = "EXPIRED"
+    esim.status = Esim.Status.EXPIRED
+    esim.usage_synced_at = timezone.now()
+    esim.save(
+        update_fields=[
+            "usage_remaining_mb",
+            "usage_expired_at",
+            "usage_status",
+            "status",
+            "usage_synced_at",
+        ]
+    )
+    policy = _policy(
+        user,
+        esim,
+        expiry_enabled=True,
+        usage_mode=EsimAutoTopupPolicy.UsageMode.DISABLED,
+    )
+    policy.last_idempotency_key = (
+        f"auto-topup:{policy.pk}:expiry:{expired_at.isoformat()}"
+    )
+    policy.save(update_fields=["last_idempotency_key"])
+    provider = FakeTopupProvider(
+        usage=_usage(
+            remaining_mb=100,
+            status="EXPIRED",
+            expired_at=expired_at.isoformat(),
+        )
+    )
+    assert AutoTopupService(provider).evaluate_one(policy.pk) == "skipped"
+    assert Topup.objects.count() == 0
+    assert provider.submit_calls == []
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_new_usage_expired_at_is_a_new_expiry_episode(user: User, esim: Esim) -> None:
+    _fund(user)
+    first_expired_at = timezone.now() - timedelta(days=2)
+    esim.usage_remaining_mb = 100
+    esim.usage_expired_at = first_expired_at
+    esim.usage_status = "EXPIRED"
+    esim.status = Esim.Status.EXPIRED
+    esim.save(
+        update_fields=[
+            "usage_remaining_mb",
+            "usage_expired_at",
+            "usage_status",
+            "status",
+        ]
+    )
+    policy = _policy(
+        user,
+        esim,
+        expiry_enabled=True,
+        usage_mode=EsimAutoTopupPolicy.UsageMode.DISABLED,
+    )
+    first_provider = FakeTopupProvider(
+        usage=_usage(
+            remaining_mb=100,
+            status="EXPIRED",
+            expired_at=first_expired_at.isoformat(),
+        )
+    )
+    assert AutoTopupService(first_provider).evaluate_one(policy.pk) == "success"
+    assert Topup.objects.count() == 1
+
+    policy.refresh_from_db()
+    policy.cooldown_until = None
+    policy.save(update_fields=["cooldown_until"])
+    second_expired_at = timezone.now() - timedelta(minutes=5)
+    esim.usage_expired_at = second_expired_at
+    esim.usage_synced_at = timezone.now()
+    esim.save(update_fields=["usage_expired_at", "usage_synced_at"])
+    second_provider = FakeTopupProvider(
+        usage=_usage(
+            remaining_mb=100,
+            status="EXPIRED",
+            expired_at=second_expired_at.isoformat(),
+        )
+    )
+    assert AutoTopupService(second_provider).evaluate_one(policy.pk) == "success"
+    assert Topup.objects.count() == 2
+    assert len(second_provider.submit_calls) == 1
+    policy.refresh_from_db()
+    assert ":expiry:" in (policy.last_idempotency_key or "")
+    assert canonical_utc_stamp(second_expired_at) in policy.last_idempotency_key
 
 
 @pytest.mark.django_db
