@@ -11,6 +11,7 @@ from rest_framework import serializers
 
 from apps.catalog.serializers import LocationListSerializer, PackageSerializer
 from apps.esims.serializers import (
+    AppliedPackageSerializer,
     EsimSerializer,
     TopupPackageSerializer,
     TopupSerializer,
@@ -30,6 +31,7 @@ FORBIDDEN_FIELD_EXACT = PUBLIC_LEAK_FORBIDDEN_EXACT
 PUBLIC_SERIALIZERS: tuple[type[serializers.BaseSerializer], ...] = (
     PackageSerializer,
     LocationListSerializer,
+    AppliedPackageSerializer,
     EsimSerializer,
     OrderSerializer,
     TopupPackageSerializer,

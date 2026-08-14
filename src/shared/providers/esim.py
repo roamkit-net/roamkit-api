@@ -109,6 +109,29 @@ class TopupResult:
     customer_ref: str
 
 
+@dataclass(frozen=True)
+class SimPackageDTO:
+    """One applied package instance from provider package history.
+
+    Never carries wholesale ``price`` / ``net_price``. ``provider_order_id``
+    is set only when the provider payload has an explicit order/request id
+    — not the history instance id.
+    """
+
+    instance_id: str
+    status: str
+    remaining_mb: int | None
+    activated_at: str | None
+    expired_at: str | None
+    finished_at: str | None
+    package_external_id: str
+    plan_type: str
+    data_allowance: str
+    validity_days: int
+    is_unlimited: bool
+    provider_order_id: str | None = None
+
+
 class PackageProvider(Protocol):
     """Lists purchasable eSIM packages from an external wholesaler."""
 
@@ -129,3 +152,9 @@ class TopupProvider(Protocol):
     def submit_topup(self, iccid: str, package_id: str) -> TopupResult: ...
 
     def get_usage(self, iccid: str) -> UsageDTO: ...
+
+
+class SimPackageHistoryProvider(Protocol):
+    """Lists applied package instances for an eSIM (history, not catalog)."""
+
+    def list_sim_packages(self, iccid: str) -> list[SimPackageDTO]: ...

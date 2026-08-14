@@ -22,7 +22,7 @@ from apps.organizations.models import (
     OrganizationStatus,
 )
 from apps.organizations.services import create_organization
-from shared.providers.esim import TopupPackage, UsageDTO
+from shared.providers.esim import SimPackageDTO, TopupPackage, UsageDTO
 
 User = get_user_model()
 
@@ -60,6 +60,9 @@ class FakeUsageProvider:
             total_voice=0,
             total_text=0,
         )
+
+    def list_sim_packages(self, iccid: str) -> list[SimPackageDTO]:
+        return []
 
 
 @pytest.fixture
@@ -175,6 +178,9 @@ def test_personal_list_detail_usage_events_archive_compatible(
     monkeypatch.setattr(
         "apps.esims.views.get_topup_provider", lambda: FakeUsageProvider()
     )
+    monkeypatch.setattr(
+        "apps.esims.views.get_sim_package_provider", lambda: FakeUsageProvider()
+    )
 
     listed = client.get("/api/v1/me/esims/", **headers)
     assert listed.status_code == 200
@@ -185,6 +191,10 @@ def test_personal_list_detail_usage_events_archive_compatible(
 
     usage = client.get(f"/api/v1/me/esims/{esim.pk}/usage/", **headers)
     assert usage.status_code == 200
+
+    packages = client.get(f"/api/v1/me/esims/{esim.pk}/packages/", **headers)
+    assert packages.status_code == 200
+    assert packages.json()["results"] == []
 
     events = client.get(f"/api/v1/me/esims/{esim.pk}/events/", **headers)
     assert events.status_code == 200
@@ -209,6 +219,9 @@ def test_team_member_sees_team_esim_regardless_of_esim_user(
     monkeypatch.setattr(
         "apps.esims.views.get_topup_provider", lambda: FakeUsageProvider()
     )
+    monkeypatch.setattr(
+        "apps.esims.views.get_sim_package_provider", lambda: FakeUsageProvider()
+    )
     q = _q(org.pk)
 
     listed = client.get(f"/api/v1/me/esims/{q}", **headers)
@@ -220,6 +233,9 @@ def test_team_member_sees_team_esim_regardless_of_esim_user(
 
     usage = client.get(f"/api/v1/me/esims/{esim.pk}/usage/{q}", **headers)
     assert usage.status_code == 200
+
+    packages = client.get(f"/api/v1/me/esims/{esim.pk}/packages/{q}", **headers)
+    assert packages.status_code == 200
 
     events = client.get(f"/api/v1/me/esims/{esim.pk}/events/{q}", **headers)
     assert events.status_code == 200
