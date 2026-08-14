@@ -29,6 +29,8 @@ tags:
 - description: Device-facing endpoints authenticated by opaque device credential (not user JWT). Used
     by managed devices / UEM.
   name: Device
+- description: Unauthenticated read-only Matching ID status (ADR 022). Not the UEM device family.
+  name: Public
 - description: Authenticated user profile
   name: Users
 - description: Staff-only read-only Operations Dashboard (members, search, aggregates)

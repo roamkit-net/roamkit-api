@@ -267,6 +267,13 @@ SPECTACULAR_SETTINGS = {
                 "credential (not user JWT). Used by managed devices / UEM."
             ),
         },
+        {
+            "name": "Public",
+            "description": (
+                "Unauthenticated read-only Matching ID status (ADR 022). "
+                "Not the UEM device family."
+            ),
+        },
         {"name": "Users", "description": "Authenticated user profile"},
         {
             "name": "Ops",
