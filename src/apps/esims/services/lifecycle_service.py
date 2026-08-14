@@ -40,6 +40,8 @@ CLIENT_EVENT_ALLOWLIST = frozenset(
     }
 )
 
+# ADR 014: exhausted/expired may return to activated/in_use only via
+# apply_provider_usage when the current provider payload is ACTIVE.
 _ALLOWED: dict[str, frozenset[str]] = {
     Esim.Status.PURCHASED: frozenset(
         {
@@ -68,8 +70,19 @@ _ALLOWED: dict[str, frozenset[str]] = {
             Esim.Status.EXPIRED,
         }
     ),
-    Esim.Status.EXHAUSTED: frozenset({Esim.Status.EXPIRED}),
-    Esim.Status.EXPIRED: frozenset(),
+    Esim.Status.EXHAUSTED: frozenset(
+        {
+            Esim.Status.EXPIRED,
+            Esim.Status.ACTIVATED,
+            Esim.Status.IN_USE,
+        }
+    ),
+    Esim.Status.EXPIRED: frozenset(
+        {
+            Esim.Status.ACTIVATED,
+            Esim.Status.IN_USE,
+        }
+    ),
     Esim.Status.UNKNOWN: frozenset(
         {
             Esim.Status.PURCHASED,
@@ -244,7 +257,15 @@ class LifecycleService:
                     purchase_to_activation_seconds=seconds,
                 )
             )
-        if previous != Esim.Status.IN_USE and esim.status == Esim.Status.IN_USE:
+        if (
+            previous != Esim.Status.IN_USE
+            and esim.status == Esim.Status.IN_USE
+            and previous
+            not in {
+                Esim.Status.EXHAUSTED,
+                Esim.Status.EXPIRED,
+            }
+        ):
             event_bus.publish(
                 EsimFirstUsageDetected(
                     esim_id=str(esim.pk),
