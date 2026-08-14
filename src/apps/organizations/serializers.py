@@ -283,6 +283,7 @@ class DevicePackagesSerializer(serializers.Serializer):
     device_external_id = serializers.CharField(allow_null=True)
     iccid = serializers.CharField()
     results = AppliedPackageSerializer(many=True)
+    active_package = AppliedPackageSerializer(allow_null=True)
     checked_at = serializers.DateTimeField()
 
 
