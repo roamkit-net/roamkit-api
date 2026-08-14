@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -1199,3 +1200,256 @@ def test_upsert_active_until_only_keeps_cooldown(user: User, esim: Esim) -> None
     assert updated.active_until == bound
     assert updated.cooldown_until == cooldown
     assert captured == []
+
+
+def _upsert(
+    service: AutoTopupService,
+    user: User,
+    esim: Esim,
+    *,
+    expected_version: int | None,
+    **overrides,
+):
+    kwargs = {
+        "esim": esim,
+        "account": user.billing_account,
+        "package_id": "topup-1gb",
+        "expiry_enabled": False,
+        "usage_mode": EsimAutoTopupPolicy.UsageMode.ZERO,
+        "renew_mode": EsimAutoTopupPolicy.RenewMode.UNTIL_FUNDS,
+        "threshold_mb": None,
+        "remaining_count": None,
+        "enabled": True,
+        "expected_version": expected_version,
+    }
+    kwargs.update(overrides)
+    return service.upsert_policy(**kwargs)
+
+
+def test_is_manual_funds_resume_only_that_transition() -> None:
+    after = SimpleNamespace(
+        enabled=True,
+        status=EsimAutoTopupPolicy.Status.ACTIVE,
+        reason="",
+    )
+    paused_funds = AutoTopupService._is_manual_funds_resume(
+        EsimAutoTopupPolicy.Status.PAUSED,
+        EsimAutoTopupPolicy.Reason.INSUFFICIENT_FUNDS,
+        after,
+    )
+    assert paused_funds is True
+    assert (
+        AutoTopupService._is_manual_funds_resume(
+            EsimAutoTopupPolicy.Status.ACTIVE, "", after
+        )
+        is False
+    )
+    assert (
+        AutoTopupService._is_manual_funds_resume(
+            EsimAutoTopupPolicy.Status.PAUSED,
+            EsimAutoTopupPolicy.Reason.PACKAGE_UNAVAILABLE,
+            after,
+        )
+        is False
+    )
+    assert (
+        AutoTopupService._is_manual_funds_resume(
+            EsimAutoTopupPolicy.Status.PAUSED,
+            EsimAutoTopupPolicy.Reason.MANUAL_PAUSE,
+            after,
+        )
+        is False
+    )
+    assert (
+        AutoTopupService._is_manual_funds_resume(
+            EsimAutoTopupPolicy.Status.PAUSED,
+            EsimAutoTopupPolicy.Reason.SCHEDULE_ENDED,
+            after,
+        )
+        is False
+    )
+    disabled = SimpleNamespace(
+        enabled=False,
+        status=EsimAutoTopupPolicy.Status.DISABLED,
+        reason=EsimAutoTopupPolicy.Reason.MANUAL_PAUSE,
+    )
+    assert (
+        AutoTopupService._is_manual_funds_resume(
+            EsimAutoTopupPolicy.Status.PAUSED,
+            EsimAutoTopupPolicy.Reason.INSUFFICIENT_FUNDS,
+            disabled,
+        )
+        is False
+    )
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_upsert_funds_resume_enqueues_evaluate_once(user: User, esim: Esim) -> None:
+    service = AutoTopupService(FakeTopupProvider())
+    policy = _upsert(service, user, esim, expected_version=None)
+    policy.status = EsimAutoTopupPolicy.Status.PAUSED
+    policy.reason = EsimAutoTopupPolicy.Reason.INSUFFICIENT_FUNDS
+    policy.save(update_fields=["status", "reason"])
+
+    with (
+        patch(
+            "apps.esims.services.auto_topup_service.transaction.on_commit",
+            side_effect=lambda fn: fn(),
+        ),
+        patch("apps.esims.tasks.evaluate_auto_topup_policy.delay") as delay,
+    ):
+        updated = _upsert(service, user, esim, expected_version=policy.version)
+
+    assert updated.status == EsimAutoTopupPolicy.Status.ACTIVE
+    assert updated.reason == ""
+    delay.assert_called_once_with(str(updated.pk))
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_upsert_already_active_does_not_enqueue(user: User, esim: Esim) -> None:
+    service = AutoTopupService(FakeTopupProvider())
+    policy = _upsert(service, user, esim, expected_version=None)
+
+    with (
+        patch(
+            "apps.esims.services.auto_topup_service.transaction.on_commit",
+            side_effect=lambda fn: fn(),
+        ),
+        patch("apps.esims.tasks.evaluate_auto_topup_policy.delay") as delay,
+    ):
+        _upsert(
+            service,
+            user,
+            esim,
+            expected_version=policy.version,
+            threshold_mb=None,
+            expiry_enabled=True,
+            usage_mode=EsimAutoTopupPolicy.UsageMode.DISABLED,
+        )
+
+    delay.assert_not_called()
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_upsert_package_change_while_active_does_not_enqueue(
+    user: User, esim: Esim
+) -> None:
+    extra = TopupPackage(
+        external_id="topup-2gb",
+        title="2 GB Top-up",
+        data_allowance="2 GB",
+        validity_days=7,
+        price_usd=Decimal("8.00"),
+        net_price_usd=Decimal("7.00"),
+        is_unlimited=False,
+        plan_type="topup",
+    )
+    provider = FakeTopupProvider(
+        topups=[
+            TopupPackage(
+                external_id="topup-1gb",
+                title="1 GB Top-up",
+                data_allowance="1 GB",
+                validity_days=7,
+                price_usd=Decimal("5.00"),
+                net_price_usd=Decimal("4.50"),
+                is_unlimited=False,
+                plan_type="topup",
+            ),
+            extra,
+        ]
+    )
+    service = AutoTopupService(provider)
+    policy = _upsert(service, user, esim, expected_version=None)
+
+    with (
+        patch(
+            "apps.esims.services.auto_topup_service.transaction.on_commit",
+            side_effect=lambda fn: fn(),
+        ),
+        patch("apps.esims.tasks.evaluate_auto_topup_policy.delay") as delay,
+    ):
+        _upsert(
+            service,
+            user,
+            esim,
+            expected_version=policy.version,
+            package_id="topup-2gb",
+        )
+
+    delay.assert_not_called()
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_upsert_other_pause_reasons_do_not_enqueue(user: User, esim: Esim) -> None:
+    service = AutoTopupService(FakeTopupProvider())
+    policy = _upsert(service, user, esim, expected_version=None)
+    for reason in (
+        EsimAutoTopupPolicy.Reason.PACKAGE_UNAVAILABLE,
+        EsimAutoTopupPolicy.Reason.MANUAL_PAUSE,
+        EsimAutoTopupPolicy.Reason.SCHEDULE_ENDED,
+    ):
+        policy.status = EsimAutoTopupPolicy.Status.PAUSED
+        policy.reason = reason
+        policy.save(update_fields=["status", "reason"])
+        with (
+            patch(
+                "apps.esims.services.auto_topup_service.transaction.on_commit",
+                side_effect=lambda fn: fn(),
+            ),
+            patch("apps.esims.tasks.evaluate_auto_topup_policy.delay") as delay,
+        ):
+            policy = _upsert(service, user, esim, expected_version=policy.version)
+        delay.assert_not_called()
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_upsert_create_does_not_enqueue(user: User, esim: Esim) -> None:
+    service = AutoTopupService(FakeTopupProvider())
+    with (
+        patch(
+            "apps.esims.services.auto_topup_service.transaction.on_commit",
+            side_effect=lambda fn: fn(),
+        ),
+        patch("apps.esims.tasks.evaluate_auto_topup_policy.delay") as delay,
+    ):
+        _upsert(service, user, esim, expected_version=None)
+    delay.assert_not_called()
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_upsert_version_conflict_does_not_enqueue(user: User, esim: Esim) -> None:
+    service = AutoTopupService(FakeTopupProvider())
+    policy = _upsert(service, user, esim, expected_version=None)
+    policy.status = EsimAutoTopupPolicy.Status.PAUSED
+    policy.reason = EsimAutoTopupPolicy.Reason.INSUFFICIENT_FUNDS
+    policy.save(update_fields=["status", "reason"])
+
+    with (
+        patch(
+            "apps.esims.services.auto_topup_service.transaction.on_commit",
+            side_effect=lambda fn: fn(),
+        ),
+        patch("apps.esims.tasks.evaluate_auto_topup_policy.delay") as delay,
+        pytest.raises(LookupError, match="version_conflict"),
+    ):
+        _upsert(service, user, esim, expected_version=policy.version + 9)
+    delay.assert_not_called()
+
+
+@pytest.mark.django_db
+@override_settings(**_SETTINGS_V2)
+def test_evaluate_auto_topup_policy_task_skips_when_disabled(
+    user: User, esim: Esim
+) -> None:
+    from apps.esims.tasks import evaluate_auto_topup_policy
+
+    policy = _policy(user, esim)
+    with override_settings(AUTO_TOPUP_ENABLED=False, BILLING_ENABLED=True):
+        assert evaluate_auto_topup_policy(str(policy.pk)) == "skipped"
