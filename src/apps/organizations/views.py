@@ -1035,7 +1035,8 @@ class DeviceCoverageView(APIView):
             "Client ``iccid`` / ``esim_id`` → 400. Serial success returns "
             "``device_external_id: null`` and the full resolved ``iccid``. "
             "``paid_usd`` is local Order/Topup retail only — never Airalo "
-            "wholesale. Provider history failure → 503 "
+            "wholesale. ``active_package`` is the first ``results`` row with "
+            "``status == active`` (else null). Provider history failure → 503 "
             "``provider_unavailable`` (status/coverage stay independently "
             "callable). No user JWT; rate-limited by IP."
         ),

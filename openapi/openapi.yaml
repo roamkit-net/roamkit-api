@@ -980,7 +980,8 @@ paths:
 
         The server resolves ICCID from the authenticated UEM device. Client ``iccid`` / ``esim_id`` →
         400. Serial success returns ``device_external_id: null`` and the full resolved ``iccid``. ``paid_usd``
-        is local Order/Topup retail only — never Airalo wholesale. Provider history failure → 503 ``provider_unavailable``
+        is local Order/Topup retail only — never Airalo wholesale. ``active_package`` is the first ``results``
+        row with ``status == active`` (else null). Provider history failure → 503 ``provider_unavailable``
         (status/coverage stay independently callable). No user JWT; rate-limited by IP.'
       operationId: device_packages
       requestBody:
@@ -3398,6 +3399,10 @@ components:
     DevicePackages:
       description: Device-facing applied package history (ADR 021). Never wholesale.
       properties:
+        active_package:
+          allOf:
+          - $ref: '#/components/schemas/AppliedPackage'
+          nullable: true
         checked_at:
           format: date-time
           type: string
@@ -3411,6 +3416,7 @@ components:
             $ref: '#/components/schemas/AppliedPackage'
           type: array
       required:
+      - active_package
       - checked_at
       - device_external_id
       - iccid

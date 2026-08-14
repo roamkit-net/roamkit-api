@@ -464,6 +464,18 @@ def get_device_coverage_by_serial(*, device_serial: str) -> DeviceCoverageSnapsh
     )
 
 
+def select_active_package(results: list[Any]) -> Any | None:
+    """First applied-package row with ``status == "active"``.
+
+    ``not_active``, ``queued``, ``expired``, ``finished``, and unknown
+    statuses never win. Multiple actives → first in provider order.
+    """
+    for row in results:
+        if getattr(row, "status", None) == "active":
+            return row
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class DevicePackagesSnapshot:
     device_external_id: str | None
@@ -476,6 +488,7 @@ class DevicePackagesSnapshot:
             "device_external_id": self.device_external_id,
             "iccid": self.iccid,
             "results": self.results,
+            "active_package": select_active_package(self.results),
             "checked_at": self.checked_at,
         }
 
