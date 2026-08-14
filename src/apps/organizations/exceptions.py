@@ -69,6 +69,10 @@ class BindingNotFoundError(DeviceBindingError):
     """Fleet/PR18 binding auth failed or no active binding for the device."""
 
 
+class ProviderHistoryUnavailableError(DeviceBindingError):
+    """Read-only provider package history failed (device packages path)."""
+
+
 class FleetCredentialError(OrganizationError):
     """Base fleet credential domain error (ADR 021 Option C′)."""
 

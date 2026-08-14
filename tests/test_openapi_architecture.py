@@ -33,6 +33,7 @@ PUBLIC_OPERATION_IDS = frozenset(
         # Device credential in body (not user JWT); see DeviceStatusView.
         "device_status",
         "device_coverage",
+        "device_packages",
     }
 )
 
