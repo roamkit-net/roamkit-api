@@ -15,7 +15,7 @@ from apps.esims.exceptions import (
     InvalidLifecycleTransitionError,
     UnknownLifecycleEventTypeError,
 )
-from apps.esims.models import ActivationPolicy, Esim
+from apps.esims.models import ActivationPolicy, Esim, EsimLifecycleEvent
 from apps.esims.services.lifecycle_service import lifecycle_service
 from apps.orders.models import Order
 from shared.providers.esim import UsageDTO
@@ -158,3 +158,131 @@ def test_install_completed_and_setup_confirmed(esim):
     )
     esim.refresh_from_db()
     assert esim.setup_completed_at is not None
+
+
+def _usage(
+    *,
+    status: str,
+    remaining_mb: int = 1024,
+    total_mb: int = 1024,
+) -> UsageDTO:
+    return UsageDTO(
+        remaining_mb=remaining_mb,
+        total_mb=total_mb,
+        expired_at=None,
+        is_unlimited=False,
+        status=status,
+        remaining_voice=0,
+        remaining_text=0,
+        total_voice=0,
+        total_text=0,
+    )
+
+
+def _advance_to(esim: Esim, target: str) -> None:
+    if target == Esim.Status.EXPIRED:
+        lifecycle_service.transition(esim, Esim.Status.INSTALLED)
+        lifecycle_service.transition(esim, Esim.Status.EXPIRED)
+        return
+    if target == Esim.Status.EXHAUSTED:
+        lifecycle_service.transition(esim, Esim.Status.INSTALLED)
+        lifecycle_service.transition(esim, Esim.Status.EXHAUSTED)
+        return
+    raise AssertionError(f"unsupported fixture target {target}")
+
+
+def test_expired_active_zero_consumption_reactivates_to_activated(esim):
+    _advance_to(esim, Esim.Status.EXPIRED)
+    lifecycle_service.apply_provider_usage(
+        esim, _usage(status="ACTIVE", remaining_mb=2048, total_mb=2048)
+    )
+    esim.refresh_from_db()
+    assert esim.status == Esim.Status.ACTIVATED
+
+
+def test_expired_active_with_consumption_reactivates_to_in_use(esim):
+    _advance_to(esim, Esim.Status.EXPIRED)
+    lifecycle_service.apply_provider_usage(
+        esim, _usage(status="ACTIVE", remaining_mb=1926, total_mb=2048)
+    )
+    esim.refresh_from_db()
+    assert esim.status == Esim.Status.IN_USE
+
+
+def test_exhausted_active_zero_consumption_reactivates_to_activated(esim):
+    _advance_to(esim, Esim.Status.EXHAUSTED)
+    lifecycle_service.apply_provider_usage(
+        esim, _usage(status="ACTIVE", remaining_mb=1024, total_mb=1024)
+    )
+    esim.refresh_from_db()
+    assert esim.status == Esim.Status.ACTIVATED
+
+
+def test_exhausted_active_with_consumption_reactivates_to_in_use(esim):
+    _advance_to(esim, Esim.Status.EXHAUSTED)
+    lifecycle_service.apply_provider_usage(
+        esim, _usage(status="ACTIVE", remaining_mb=500, total_mb=1024)
+    )
+    esim.refresh_from_db()
+    assert esim.status == Esim.Status.IN_USE
+
+
+def test_expired_cannot_return_to_installed_or_purchased(esim):
+    _advance_to(esim, Esim.Status.EXPIRED)
+    with pytest.raises(InvalidLifecycleTransitionError):
+        lifecycle_service.transition(esim, Esim.Status.INSTALLED)
+    with pytest.raises(InvalidLifecycleTransitionError):
+        lifecycle_service.transition(esim, Esim.Status.PURCHASED)
+    esim.refresh_from_db()
+    assert esim.status == Esim.Status.EXPIRED
+
+
+def test_provider_expired_does_not_reactivate(esim):
+    _advance_to(esim, Esim.Status.EXPIRED)
+    esim.usage_status = "ACTIVE"
+    esim.usage_remaining_mb = 1926
+    esim.usage_total_mb = 2048
+    esim.save(update_fields=["usage_status", "usage_remaining_mb", "usage_total_mb"])
+    lifecycle_service.apply_provider_usage(esim, _usage(status="EXPIRED"))
+    esim.refresh_from_db()
+    assert esim.status == Esim.Status.EXPIRED
+
+
+def test_provider_finished_does_not_reactivate_expired(esim):
+    _advance_to(esim, Esim.Status.EXPIRED)
+    lifecycle_service.apply_provider_usage(esim, _usage(status="FINISHED"))
+    esim.refresh_from_db()
+    assert esim.status == Esim.Status.EXPIRED
+
+
+def test_provider_finished_does_not_reactivate_exhausted(esim):
+    _advance_to(esim, Esim.Status.EXHAUSTED)
+    lifecycle_service.apply_provider_usage(esim, _usage(status="FINISHED"))
+    esim.refresh_from_db()
+    assert esim.status == Esim.Status.EXHAUSTED
+
+
+def test_provider_expired_advances_exhausted_only_to_expired(esim):
+    _advance_to(esim, Esim.Status.EXHAUSTED)
+    lifecycle_service.apply_provider_usage(esim, _usage(status="EXPIRED"))
+    esim.refresh_from_db()
+    assert esim.status == Esim.Status.EXPIRED
+
+
+def test_repeated_active_sync_is_idempotent(esim):
+    _advance_to(esim, Esim.Status.EXPIRED)
+    usage = _usage(status="ACTIVE", remaining_mb=1926, total_mb=2048)
+    lifecycle_service.apply_provider_usage(esim, usage)
+    esim.refresh_from_db()
+    assert esim.status == Esim.Status.IN_USE
+    before = EsimLifecycleEvent.objects.filter(
+        esim=esim, event_type="system.status.in_use"
+    ).count()
+
+    lifecycle_service.apply_provider_usage(esim, usage)
+    esim.refresh_from_db()
+    assert esim.status == Esim.Status.IN_USE
+    after = EsimLifecycleEvent.objects.filter(
+        esim=esim, event_type="system.status.in_use"
+    ).count()
+    assert after == before
