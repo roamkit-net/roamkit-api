@@ -17,6 +17,7 @@ from apps.esims.serializers import (
     TopupSerializer,
 )
 from apps.orders.serializers import OrderSerializer
+from apps.organizations.serializers import DevicePackagesSerializer
 from apps.pricing.presentation import (
     PUBLIC_LEAK_FORBIDDEN_EXACT,
     PUBLIC_LEAK_FORBIDDEN_SUBSTRINGS,
@@ -32,6 +33,7 @@ PUBLIC_SERIALIZERS: tuple[type[serializers.BaseSerializer], ...] = (
     PackageSerializer,
     LocationListSerializer,
     AppliedPackageSerializer,
+    DevicePackagesSerializer,
     EsimSerializer,
     OrderSerializer,
     TopupPackageSerializer,

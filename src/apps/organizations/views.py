@@ -34,6 +34,7 @@ from apps.organizations.exceptions import (
     InviteInvalidError,
     LastOwnerError,
     NotAllowedError,
+    ProviderHistoryUnavailableError,
     UemInventoryUnavailableError,
 )
 from apps.organizations.models import (
@@ -48,6 +49,7 @@ from apps.organizations.serializers import (
     DeviceBindingCredentialResponseSerializer,
     DeviceBindingSerializer,
     DeviceCoverageSerializer,
+    DevicePackagesSerializer,
     DeviceStatusRequestSerializer,
     DeviceStatusSerializer,
     MembershipRoleUpdateSerializer,
@@ -75,6 +77,8 @@ from apps.organizations.services.device_binding import (
 from apps.organizations.services.device_status import (
     get_device_coverage_by_credential,
     get_device_coverage_by_serial,
+    get_device_packages_by_credential,
+    get_device_packages_by_serial,
     get_device_status,
     get_device_status_by_credential,
     get_device_status_by_serial,
@@ -92,6 +96,7 @@ from apps.organizations.services.membership import (
 )
 from apps.organizations.throttles import (
     DeviceCoverageRateThrottle,
+    DevicePackagesRateThrottle,
     DeviceStatusRateThrottle,
 )
 from core.openapi_serializers import ErrorDetailSerializer
@@ -1014,3 +1019,117 @@ class DeviceCoverageView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
         return Response(DeviceCoverageSerializer(snapshot.as_response_dict()).data)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Device"],
+        operation_id="device_packages",
+        summary="Device-facing applied package history",
+        description=(
+            "Read-only applied package history for managed devices (ADR 021). "
+            "Exactly one body shape (same as device status):\n\n"
+            "- PR18 fallback: ``device_external_id`` + ``credential``\n"
+            "- Serial (ADR 021 Option C″): ``device_serial``\n\n"
+            "The server resolves ICCID from the authenticated UEM device. "
+            "Client ``iccid`` / ``esim_id`` → 400. Serial success returns "
+            "``device_external_id: null`` and the full resolved ``iccid``. "
+            "``paid_usd`` is local Order/Topup retail only — never Airalo "
+            "wholesale. Provider history failure → 503 "
+            "``provider_unavailable`` (status/coverage stay independently "
+            "callable). No user JWT; rate-limited by IP."
+        ),
+        request=DeviceStatusRequestSerializer,
+        responses={
+            200: OpenApiResponse(response=DevicePackagesSerializer),
+            400: OpenApiResponse(response=ErrorDetailSerializer),
+            404: OpenApiResponse(response=ErrorDetailSerializer),
+            429: OpenApiResponse(response=ErrorDetailSerializer),
+            503: OpenApiResponse(response=ErrorDetailSerializer),
+        },
+        auth=[],
+    ),
+)
+class DevicePackagesView(APIView):
+    """Device packages via PR18 credential or serial → UEM → ICCID (C″)."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [DevicePackagesRateThrottle]
+
+    def initial(self, request: Request, *args, **kwargs) -> None:
+        super().initial(request, *args, **kwargs)
+        if not settings.ORGANIZATIONS_ENABLED:
+            raise NotFound(detail="Not found.")
+
+    def post(self, request: Request) -> Response:
+        body = DeviceStatusRequestSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+        data = body.validated_data
+        try:
+            if data["auth_shape"] == "serial":
+                snapshot = get_device_packages_by_serial(
+                    device_serial=data["device_serial"],
+                )
+            else:
+                snapshot = get_device_packages_by_credential(
+                    device_external_id=data["device_external_id"],
+                    credential=data["credential"],
+                )
+        except BindingNotFoundError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "Device binding not found.",
+                    "code": "binding_not_found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except DeviceNotFoundError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "Device not found in UEM.",
+                    "code": "device_not_found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except DeviceAmbiguousError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "Multiple UEM devices match this serial.",
+                    "code": "device_ambiguous",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except UemInventoryUnavailableError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "UEM telephony inventory unavailable.",
+                    "code": "uem_inventory_unavailable",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except IccidNotFoundError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "No RoamKit data for this ICCID.",
+                    "code": "iccid_not_found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except IccidAmbiguousError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "Multiple RoamKit eSIMs match this ICCID.",
+                    "code": "iccid_ambiguous",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except ProviderHistoryUnavailableError as exc:
+            return Response(
+                {
+                    "detail": str(exc) or "Package history unavailable.",
+                    "code": "provider_unavailable",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(DevicePackagesSerializer(snapshot.as_response_dict()).data)

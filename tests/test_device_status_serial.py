@@ -117,6 +117,8 @@ def _uem_device(*, guid=GUID, serial=SERIAL, iccid=ICCID):
             "device_serial": SERIAL,
         },
         {"fleet_external_id": "f", "fleet_credential": "s"},
+        {"device_serial": SERIAL, "iccid": ICCID},
+        {"iccid": ICCID},
         {},
     ],
 )
