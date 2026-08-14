@@ -122,6 +122,13 @@ class AiraloClient:
         data = payload.get("data", [])
         return data if isinstance(data, list) else []
 
+    def list_sim_packages(self, iccid: str) -> list[dict[str, Any]]:
+        """List applied packages via GET /v2/sims/{iccid}/packages."""
+        path = f"/v2/sims/{urllib.parse.quote(iccid, safe='')}/packages"
+        payload = self._request("GET", path)
+        data = payload.get("data", [])
+        return data if isinstance(data, list) else []
+
     def submit_topup(
         self,
         *,
