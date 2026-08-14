@@ -34,6 +34,7 @@ urlpatterns = [
     path("api/v1/orgs/", include("apps.organizations.urls")),
     path("api/v1/device/", include("apps.organizations.device_urls")),
     path("api/v1/me/", include("apps.esims.urls")),
+    path("api/v1/public/", include("apps.esims.public_urls")),
     path("api/v1/admin/", include("apps.ops.urls")),
     path("api/v1/", include("apps.catalog.urls")),
     path("api/internal/", include("apps.pricing.internal_urls")),

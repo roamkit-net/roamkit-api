@@ -118,6 +118,17 @@ class Esim(models.Model):
             models.Index(fields=["user", "status"]),
             models.Index(fields=["user", "archived_at"]),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["matching_id"],
+                condition=~models.Q(matching_id=""),
+                name="esims_esim_matching_id_nonempty_uniq",
+            ),
+        ]
+
+    def save(self, *args, **kwargs) -> None:
+        self.matching_id = (self.matching_id or "").strip()
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"eSIM {self.iccid}"

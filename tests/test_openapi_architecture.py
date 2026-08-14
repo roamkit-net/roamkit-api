@@ -34,6 +34,7 @@ PUBLIC_OPERATION_IDS = frozenset(
         "device_status",
         "device_coverage",
         "device_packages",
+        "public_esim_status",
     }
 )
 

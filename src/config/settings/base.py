@@ -183,6 +183,7 @@ BILLING_VOUCHER_REDEEM_RATE = os.environ.get("BILLING_VOUCHER_REDEEM_RATE", "10/
 DEVICE_STATUS_RATE = os.environ.get("DEVICE_STATUS_RATE", "60/hour")
 DEVICE_COVERAGE_RATE = os.environ.get("DEVICE_COVERAGE_RATE", "60/hour")
 DEVICE_PACKAGES_RATE = os.environ.get("DEVICE_PACKAGES_RATE", "60/hour")
+PUBLIC_ESIM_STATUS_RATE = os.environ.get("PUBLIC_ESIM_STATUS_RATE", "60/hour")
 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
@@ -211,6 +212,7 @@ REST_FRAMEWORK = {
         "device_status": DEVICE_STATUS_RATE,
         "device_coverage": DEVICE_COVERAGE_RATE,
         "device_packages": DEVICE_PACKAGES_RATE,
+        "public_esim_status": PUBLIC_ESIM_STATUS_RATE,
     },
 }
 
