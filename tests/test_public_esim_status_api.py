@@ -24,6 +24,58 @@ PASSWORD = "SecurePass1!"
 URL = "/api/v1/public/esim/status/"
 MATCHING_ID = "TN2026060518450826EE68B1"
 ICCID = "89445012345678901234"
+_FORBIDDEN_RESPONSE_KEYS = frozenset(
+    {
+        "id",
+        "matching_id",
+        "lpa",
+        "qrcode",
+        "qrcode_url",
+        "install_url",
+        "device_external_id",
+        "binding_status",
+    }
+)
+_FORBIDDEN_STRING_FRAGMENTS = (
+    "LPA:",
+    "qrcode",
+    "matching_id",
+    "/install",
+)
+
+
+def _walk_json(value, prefix=""):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            yield path, key, child
+            yield from _walk_json(child, path)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from _walk_json(child, f"{prefix}[{index}]")
+
+
+def _assert_public_status_allow_list(payload: dict, *, full_iccid: str) -> None:
+    assert payload["esim"]["iccid"] == full_iccid
+    assert "id" not in payload["esim"]
+    iccid_paths = [
+        path
+        for path, _key, child in _walk_json(payload)
+        if isinstance(child, str) and full_iccid in child
+    ]
+    assert iccid_paths == ["esim.iccid"]
+    keys = {key for _path, key, _child in _walk_json(payload)}
+    assert keys.isdisjoint(_FORBIDDEN_RESPONSE_KEYS)
+    for path, key, child in _walk_json(payload):
+        if key.startswith("qrcode"):
+            raise AssertionError(f"forbidden key {path}")
+        if not isinstance(child, str):
+            continue
+        lowered = child.lower()
+        for fragment in _FORBIDDEN_STRING_FRAGMENTS:
+            assert fragment.lower() not in lowered, path
+    assert full_iccid not in mask_iccid(full_iccid)
+    assert MATCHING_ID not in redact_matching_id(MATCHING_ID)
 
 
 @pytest.fixture
@@ -138,7 +190,7 @@ def test_status_success_cache_snapshot(client, account, user, package):
     resp = _post(client, {"matching_id": f"  {MATCHING_ID}  "})
     assert resp.status_code == 200, resp.content
     payload = resp.json()
-    assert payload["esim"]["iccid"] == mask_iccid(ICCID)
+    assert payload["esim"]["iccid"] == ICCID
     assert payload["esim"]["status"] == Esim.Status.IN_USE
     assert "id" not in payload["esim"]
     assert payload["usage"]["data_remaining"] == "1200 MB"
@@ -154,8 +206,8 @@ def test_status_success_cache_snapshot(client, account, user, package):
     assert "device_external_id" not in payload
     assert "binding_status" not in payload
     assert MATCHING_ID not in resp.content.decode()
-    assert ICCID not in resp.content.decode()
     assert "lpa" not in payload
+    _assert_public_status_allow_list(payload, full_iccid=ICCID)
 
 
 @pytest.mark.django_db
@@ -376,6 +428,17 @@ def test_public_status_module_is_cache_only() -> None:
 
 def test_mask_and_redact_helpers() -> None:
     assert mask_iccid(ICCID) == "894450••••••1234"
+    assert mask_iccid(ICCID) != ICCID
     assert mask_iccid("123") == "••••"
     assert redact_matching_id(MATCHING_ID) == "TN••••B1"
     assert MATCHING_ID not in redact_matching_id(MATCHING_ID)
+
+
+@pytest.mark.django_db
+def test_status_full_iccid_allow_list(client, account, user, package):
+    _make_esim(account=account, user=user, package=package)
+    resp = _post(client, {"matching_id": MATCHING_ID})
+    assert resp.status_code == 200, resp.content
+    payload = resp.json()
+    _assert_public_status_allow_list(payload, full_iccid=ICCID)
+    assert MATCHING_ID not in resp.content.decode()
