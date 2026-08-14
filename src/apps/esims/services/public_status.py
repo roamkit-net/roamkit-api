@@ -53,6 +53,7 @@ def redact_matching_id(value: str) -> str:
 
 
 def mask_iccid(iccid: str) -> str:
+    """Log-safe form. Never use this for the public status response."""
     raw = (iccid or "").strip()
     if len(raw) < 10:
         return "••••"
@@ -215,7 +216,7 @@ def build_public_esim_status(esim: Esim) -> PublicEsimStatusSnapshot:
     """
     return PublicEsimStatusSnapshot(
         esim={
-            "iccid": mask_iccid(esim.iccid),
+            "iccid": (esim.iccid or "").strip(),
             "status": esim.status,
         },
         usage=_usage_snapshot(esim),
