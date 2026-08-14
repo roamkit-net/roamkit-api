@@ -4,6 +4,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Trim
 
 
 class ActivationPolicy(models.TextChoices):
@@ -120,9 +121,9 @@ class Esim(models.Model):
         ]
         constraints = [
             models.UniqueConstraint(
-                fields=["matching_id"],
+                Trim("matching_id"),
                 condition=~models.Q(matching_id=""),
-                name="esims_esim_matching_id_nonempty_uniq",
+                name="esims_esim_matching_id_trimmed_nonempty_uniq",
             ),
         ]
 

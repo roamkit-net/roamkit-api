@@ -20,15 +20,18 @@ def persist_trimmed_matching_ids(Esim):
     Esim.objects.update(matching_id=Trim("matching_id"))
 
 
-def normalize_matching_ids(apps, schema_editor):
-    Esim = apps.get_model("esims", "Esim")
-    collisions = find_trimmed_matching_id_collisions(Esim)
+def abort_if_trimmed_matching_id_collisions(collisions) -> None:
     if collisions:
         raise RuntimeError(
             "esims_esim matching_id trim produced "
             f"{len(collisions)} colliding value(s); refusing unique constraint. "
             "Resolve duplicates manually — do not auto-pick an eSIM."
         )
+
+
+def normalize_matching_ids(apps, schema_editor):
+    Esim = apps.get_model("esims", "Esim")
+    abort_if_trimmed_matching_id_collisions(find_trimmed_matching_id_collisions(Esim))
     persist_trimmed_matching_ids(Esim)
 
 
@@ -47,9 +50,9 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name="esim",
             constraint=models.UniqueConstraint(
+                Trim("matching_id"),
                 condition=~Q(matching_id=""),
-                fields=("matching_id",),
-                name="esims_esim_matching_id_nonempty_uniq",
+                name="esims_esim_matching_id_trimmed_nonempty_uniq",
             ),
         ),
     ]

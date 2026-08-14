@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -287,7 +289,46 @@ def test_unique_constraint_rejects_duplicate_matching_id(account, user, package)
 
 
 @pytest.mark.django_db
-def test_normalize_migration_aborts_on_trimmed_duplicates(account, user, package):
+def test_unique_constraint_rejects_trimmed_duplicate_bypassing_save(
+    account, user, package
+):
+    _make_esim(account=account, user=user, package=package)
+    other = _make_esim(
+        account=account,
+        user=user,
+        package=package,
+        matching_id="OTHER",
+        iccid="89445000000000000003",
+    )
+    with pytest.raises(IntegrityError):
+        Esim.objects.filter(pk=other.pk).update(matching_id=f" {MATCHING_ID} ")
+
+
+def _matching_id_unique_migration():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "apps"
+        / "esims"
+        / "migrations"
+        / "0011_esim_matching_id_unique.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "esim_matching_id_unique_migration",
+        path,
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.django_db
+def test_normalize_matching_ids_raises_runtime_error_on_collisions(
+    account, user, package
+):
+    from django.db import connection
+
     first = _make_esim(account=account, user=user, package=package)
     second = _make_esim(
         account=account,
@@ -296,20 +337,24 @@ def test_normalize_migration_aborts_on_trimmed_duplicates(account, user, package
         matching_id="OTHER",
         iccid="89445000000000000003",
     )
+    constraint = next(
+        item
+        for item in Esim._meta.constraints
+        if item.name == "esims_esim_matching_id_trimmed_nonempty_uniq"
+    )
+    with connection.schema_editor() as editor:
+        editor.remove_constraint(Esim, constraint)
     Esim.objects.filter(pk=first.pk).update(matching_id=" DUP ")
     Esim.objects.filter(pk=second.pk).update(matching_id="DUP")
-    from django.db.models import Count
-    from django.db.models.functions import Trim
 
-    collisions = list(
-        Esim.objects.exclude(matching_id="")
-        .annotate(trimmed=Trim("matching_id"))
-        .exclude(trimmed="")
-        .values("trimmed")
-        .annotate(n=Count("id"))
-        .filter(n__gt=1)
-    )
-    assert len(collisions) == 1
+    class _Apps:
+        @staticmethod
+        def get_model(*args, **kwargs):
+            return Esim
+
+    migration = _matching_id_unique_migration()
+    with pytest.raises(RuntimeError, match="colliding"):
+        migration.normalize_matching_ids(_Apps(), None)
 
 
 def test_public_status_module_is_cache_only() -> None:
