@@ -120,7 +120,7 @@ def _make_esim(*, user: User, package: Package, iccid: str) -> Esim:
         order=order,
         iccid=iccid,
         lpa="lpa.airalo.com",
-        matching_id="TEST",
+        matching_id=f"TEST-{iccid}",
         qrcode=f"LPA:1$lpa.airalo.com${iccid}",
         qrcode_url=f"https://sandbox.airalo.com/qr?id={iccid}",
         direct_apple_installation_url=(

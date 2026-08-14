@@ -149,7 +149,7 @@ class LifecycleService:
             order=order,
             iccid=iccid,
             lpa=lpa,
-            matching_id=matching_id,
+            matching_id=(matching_id or "").strip(),
             qrcode=qrcode,
             qrcode_url=qrcode_url,
             direct_apple_installation_url=direct_apple_installation_url,
