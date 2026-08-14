@@ -33,6 +33,7 @@ from apps.esims.exceptions import (
 from apps.esims.models import Esim, EsimAutoTopupPolicy, EsimLifecycleEvent
 from apps.esims.serializers import (
     ACTIVATED_EVENT_TYPE,
+    AppliedPackageSerializer,
     AutoTopupPolicySerializer,
     AutoTopupPolicyWriteSerializer,
     EsimSerializer,
@@ -45,6 +46,7 @@ from apps.esims.serializers import (
 )
 from apps.esims.services.auto_topup_service import AutoTopupService
 from apps.esims.services.lifecycle_service import lifecycle_service
+from apps.esims.services.package_history_service import PackageHistoryService
 from apps.esims.services.topup_service import TopupService
 from apps.esims.services.usage_service import UsageService
 from apps.orders.exceptions import (
@@ -64,7 +66,7 @@ from core.openapi_serializers import (
     ErrorDetailSerializer,
     InsufficientCreditsSerializer,
 )
-from shared.providers.factory import get_topup_provider
+from shared.providers.factory import get_sim_package_provider, get_topup_provider
 
 ORGANIZATION_CONTEXT_PARAMETER = OpenApiParameter(
     name="organization_id",
@@ -406,6 +408,50 @@ class EsimUsageView(OwnedEsimMixin, GenericAPIView):
         esim = self.get_object()
         usage = UsageService(get_topup_provider()).get_usage(esim)
         return Response(UsageSerializer(usage).data)
+
+
+@extend_schema_view(
+    get=extend_schema(
+        tags=["eSIM"],
+        operation_id="esim_packages_list",
+        summary="List applied eSIM packages",
+        description=(
+            "Applied package history for an eSIM owned by the resolved "
+            "Account (``Esim.account``), including the initial plan and "
+            "top-ups. ``paid_usd`` is the customer charge from the local "
+            "Order/Topup — never provider wholesale. Omit "
+            "``organization_id`` for personal Account; set the query param "
+            "for team context."
+        ),
+        parameters=[ORGANIZATION_CONTEXT_PARAMETER],
+        responses={
+            200: OpenApiResponse(
+                response=AppliedPackageSerializer(many=True),
+                description="Applied package list",
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+            403: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="Membership not active / cannot view",
+            ),
+            404: OpenApiResponse(
+                response=ErrorDetailSerializer, description="eSIM not found"
+            ),
+        },
+    ),
+)
+class EsimPackagesView(OwnedEsimMixin, GenericAPIView):
+    """List applied packages for an owned eSIM."""
+
+    serializer_class = AppliedPackageSerializer
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        esim = self.get_object()
+        packages = PackageHistoryService(get_sim_package_provider()).list_packages(esim)
+        serializer = AppliedPackageSerializer(packages, many=True)
+        return Response({"results": serializer.data})
 
 
 @extend_schema_view(

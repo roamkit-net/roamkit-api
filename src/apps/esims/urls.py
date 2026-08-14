@@ -8,6 +8,7 @@ from apps.esims.views import (
     EsimDetailView,
     EsimEventsView,
     EsimListView,
+    EsimPackagesView,
     EsimTopupsView,
     EsimUnarchiveView,
     EsimUsageView,
@@ -27,6 +28,11 @@ urlpatterns = [
         name="me-esim-unarchive",
     ),
     path("esims/<int:pk>/usage/", EsimUsageView.as_view(), name="me-esim-usage"),
+    path(
+        "esims/<int:pk>/packages/",
+        EsimPackagesView.as_view(),
+        name="me-esim-packages",
+    ),
     path("esims/<int:pk>/events/", EsimEventsView.as_view(), name="me-esim-events"),
     path("esims/<int:pk>/topups/", EsimTopupsView.as_view(), name="me-esim-topups"),
     path(
