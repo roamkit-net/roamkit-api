@@ -967,6 +967,61 @@ paths:
       summary: Device-facing coverage snapshot
       tags:
       - Device
+  /api/v1/device/packages/:
+    post:
+      description: 'Read-only applied package history for managed devices (ADR 021). Exactly one body
+        shape (same as device status):
+
+
+        - PR18 fallback: ``device_external_id`` + ``credential``
+
+        - Serial (ADR 021 Option C″): ``device_serial``
+
+
+        The server resolves ICCID from the authenticated UEM device. Client ``iccid`` / ``esim_id`` →
+        400. Serial success returns ``device_external_id: null`` and the full resolved ``iccid``. ``paid_usd``
+        is local Order/Topup retail only — never Airalo wholesale. Provider history failure → 503 ``provider_unavailable``
+        (status/coverage stay independently callable). No user JWT; rate-limited by IP.'
+      operationId: device_packages
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceStatusRequestRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevicePackages'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: ''
+      summary: Device-facing applied package history
+      tags:
+      - Device
   /api/v1/device/status/:
     post:
       description: 'Read-only status for managed devices. Exactly one body shape (never put secrets in
@@ -3340,6 +3395,27 @@ components:
       - country_name
       - operators
       type: object
+    DevicePackages:
+      description: Device-facing applied package history (ADR 021). Never wholesale.
+      properties:
+        checked_at:
+          format: date-time
+          type: string
+        device_external_id:
+          nullable: true
+          type: string
+        iccid:
+          type: string
+        results:
+          items:
+            $ref: '#/components/schemas/AppliedPackage'
+          type: array
+      required:
+      - checked_at
+      - device_external_id
+      - iccid
+      - results
+      type: object
     DeviceStatus:
       description: Read-only UEM status contract (cached inventory/usage; no provider call).
       properties:
@@ -3437,7 +3513,7 @@ components:
       - validity_days
       type: object
     DeviceStatusRequestRequest:
-      description: 'Device status/coverage body — PR18 or serial shape (ADR 021 C″).
+      description: 'Device status/coverage/packages body — PR18 or serial shape (ADR 021 C″).
 
 
         PR18: ``device_external_id`` + ``credential``
@@ -3445,9 +3521,9 @@ components:
         Serial: ``device_serial`` only
 
 
-        Mixed / incomplete / legacy ``fleet_*`` fields → 400 (no guessing).
+        Mixed / incomplete / legacy ``fleet_*`` fields / client ``iccid`` → 400.
 
-        Shared by ``POST /device/status/`` and ``POST /device/coverage/``.'
+        Shared by ``POST /device/status|coverage|packages/``.'
       properties:
         credential:
           maxLength: 256

@@ -182,6 +182,7 @@ AUTH_TURNSTILE_DEGRADED_RATE = os.environ.get("AUTH_TURNSTILE_DEGRADED_RATE", "5
 BILLING_VOUCHER_REDEEM_RATE = os.environ.get("BILLING_VOUCHER_REDEEM_RATE", "10/5min")
 DEVICE_STATUS_RATE = os.environ.get("DEVICE_STATUS_RATE", "60/hour")
 DEVICE_COVERAGE_RATE = os.environ.get("DEVICE_COVERAGE_RATE", "60/hour")
+DEVICE_PACKAGES_RATE = os.environ.get("DEVICE_PACKAGES_RATE", "60/hour")
 
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
@@ -209,6 +210,7 @@ REST_FRAMEWORK = {
         "billing_voucher_redeem": BILLING_VOUCHER_REDEEM_RATE,
         "device_status": DEVICE_STATUS_RATE,
         "device_coverage": DEVICE_COVERAGE_RATE,
+        "device_packages": DEVICE_PACKAGES_RATE,
     },
 }
 

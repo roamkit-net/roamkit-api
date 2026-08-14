@@ -29,6 +29,7 @@ from apps.organizations.exceptions import (
     DeviceNotFoundError,
     IccidAmbiguousError,
     IccidNotFoundError,
+    ProviderHistoryUnavailableError,
     UemInventoryUnavailableError,
     UemSerialMatchError,
 )
@@ -460,4 +461,80 @@ def get_device_coverage_by_serial(*, device_serial: str) -> DeviceCoverageSnapsh
     return build_device_coverage_snapshot(
         esim=esim,
         device_external_id=None,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DevicePackagesSnapshot:
+    device_external_id: str | None
+    iccid: str
+    results: list[Any]
+    checked_at: datetime
+
+    def as_response_dict(self) -> dict[str, Any]:
+        return {
+            "device_external_id": self.device_external_id,
+            "iccid": self.iccid,
+            "results": self.results,
+            "checked_at": self.checked_at,
+        }
+
+
+def build_device_packages_snapshot(
+    *,
+    esim: Esim,
+    device_external_id: str | None,
+    provider: Any | None = None,
+) -> DevicePackagesSnapshot:
+    """Applied package history for a resolved device eSIM (ADR 021)."""
+    from apps.esims.services.package_history_service import PackageHistoryService
+    from shared.providers.factory import get_sim_package_provider
+
+    history_provider = provider if provider is not None else get_sim_package_provider()
+    try:
+        rows = PackageHistoryService(history_provider).list_packages(esim)
+    except Exception as exc:  # noqa: BLE001 — isolate provider from device auth
+        logger.warning(
+            "Device package history failed for iccid=%s: %s",
+            esim.iccid,
+            exc,
+        )
+        raise ProviderHistoryUnavailableError("Package history unavailable.") from exc
+    return DevicePackagesSnapshot(
+        device_external_id=device_external_id,
+        iccid=esim.iccid,
+        results=rows,
+        checked_at=timezone.now(),
+    )
+
+
+def get_device_packages_by_credential(
+    *,
+    device_external_id: str,
+    credential: str,
+    provider: Any | None = None,
+) -> DevicePackagesSnapshot:
+    """Device-facing packages via the same credential boundary as status."""
+    binding, esim = _resolve_binding_and_esim_by_credential(
+        device_external_id=device_external_id,
+        credential=credential,
+    )
+    return build_device_packages_snapshot(
+        esim=esim,
+        device_external_id=binding.device_external_id,
+        provider=provider,
+    )
+
+
+def get_device_packages_by_serial(
+    *,
+    device_serial: str,
+    provider: Any | None = None,
+) -> DevicePackagesSnapshot:
+    """Device-facing packages via serial → UEM → ICCID (ADR 021)."""
+    esim = _resolve_esim_by_serial(device_serial=device_serial)
+    return build_device_packages_snapshot(
+        esim=esim,
+        device_external_id=None,
+        provider=provider,
     )

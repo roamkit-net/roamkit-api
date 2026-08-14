@@ -44,3 +44,9 @@ class DeviceCoverageRateThrottle(_DeviceCredentialPostThrottle):
     """Limit unauthenticated device coverage posts per client IP."""
 
     scope = "device_coverage"
+
+
+class DevicePackagesRateThrottle(_DeviceCredentialPostThrottle):
+    """Limit unauthenticated device package-history posts per client IP."""
+
+    scope = "device_packages"
