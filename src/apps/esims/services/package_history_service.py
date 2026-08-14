@@ -143,6 +143,8 @@ class PackageHistoryService:
             used_ids.add(match.pk)
             self._assign(row.instance_id, match.amount, match.created_at, paid, created)
 
+        self._match_topups_by_instance_id(topup_rows, unused, used_ids, paid, created)
+
         unmatched_rows = [
             row
             for row in topup_rows
@@ -167,6 +169,41 @@ class PackageHistoryService:
                 self._assign(
                     hist[0].instance_id, match.amount, match.created_at, paid, created
                 )
+
+    def _match_topups_by_instance_id(
+        self,
+        topup_rows: list[SimPackageDTO],
+        unused: list[Topup],
+        used_ids: set[object],
+        paid: dict[str, Decimal],
+        created: dict[str, datetime],
+    ) -> None:
+        """Bind unused history rows when instance_id equals local external_order_id.
+
+        Exact trimmed match only. Ambiguous duplicate ids stay unmatched.
+        Candidates are already scoped to the current eSIM.
+        """
+        unused_topups = [topup for topup in unused if topup.pk not in used_ids]
+        by_external_id: dict[str, list[Topup]] = {}
+        for topup in unused_topups:
+            key = (topup.external_order_id or "").strip()
+            if not key:
+                continue
+            by_external_id.setdefault(key, []).append(topup)
+
+        for row in topup_rows:
+            if row.instance_id in paid:
+                continue
+            key = (row.instance_id or "").strip()
+            if not key:
+                continue
+            candidates = by_external_id.get(key, [])
+            if len(candidates) != 1:
+                continue
+            match = candidates[0]
+            used_ids.add(match.pk)
+            by_external_id[key] = []
+            self._assign(row.instance_id, match.amount, match.created_at, paid, created)
 
     @staticmethod
     def _assign(
