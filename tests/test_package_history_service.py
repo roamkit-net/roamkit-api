@@ -92,6 +92,7 @@ def _create_topup(
     amount: Decimal,
     external_order_id: str = "",
     status: str = Topup.Status.FULFILLED,
+    idempotency_key: str | None = None,
 ) -> Topup:
     return Topup.objects.create(
         account=esim.account,
@@ -100,7 +101,26 @@ def _create_topup(
         amount=amount,
         status=status,
         external_order_id=external_order_id,
-        idempotency_key=f"idem-{package_external_id}-{amount}-{external_order_id}",
+        idempotency_key=idempotency_key
+        or f"idem-{package_external_id}-{amount}-{external_order_id}",
+    )
+
+
+def _create_other_esim(owner: User, *, iccid: str) -> Esim:
+    package = Package.objects.get(external_id="pkg-us-1gb-7d")
+    order = Order.objects.create(
+        account=owner.billing_account,
+        package=package,
+        status=Order.Status.FULFILLED,
+        external_order_id=f"airalo-order-{iccid[-4:]}",
+        **product_snapshot_kwargs(package),
+    )
+    return Esim.objects.create(
+        user=owner,
+        account=owner.billing_account,
+        order=order,
+        iccid=iccid,
+        status=Esim.Status.PURCHASED,
     )
 
 
@@ -257,3 +277,140 @@ def test_not_active_status_is_preserved(esim: Esim) -> None:
     provider = FakeHistoryProvider([_dto(instance_id="10", status="not_active")])
     rows = PackageHistoryService(provider).list_packages(esim)
     assert rows[0].status == "not_active"
+
+
+@pytest.mark.django_db
+def test_two_same_package_topups_match_on_instance_id(esim: Esim) -> None:
+    _create_topup(
+        esim,
+        package_external_id="discover-in-7days-1gb-px-topup",
+        amount=Decimal("3.20"),
+        external_order_id="2314160",
+    )
+    _create_topup(
+        esim,
+        package_external_id="discover-in-7days-1gb-px-topup",
+        amount=Decimal("3.20"),
+        external_order_id="2322403",
+    )
+    provider = FakeHistoryProvider(
+        [
+            _dto(
+                instance_id="2314160",
+                package_external_id="discover-in-7days-1gb-px-topup",
+            ),
+            _dto(
+                instance_id="2322403",
+                package_external_id="discover-in-7days-1gb-px-topup",
+            ),
+        ]
+    )
+    rows = PackageHistoryService(provider).list_packages(esim)
+    assert [row.id for row in rows] == ["2314160", "2322403"]
+    assert [row.paid_usd for row in rows] == [Decimal("3.20"), Decimal("3.20")]
+
+
+@pytest.mark.django_db
+def test_instance_id_match_trims_whitespace(esim: Esim) -> None:
+    _create_topup(
+        esim,
+        package_external_id="topup-1gb",
+        amount=Decimal("3.20"),
+        external_order_id="  2314160  ",
+    )
+    provider = FakeHistoryProvider([_dto(instance_id="  2314160  ")])
+    rows = PackageHistoryService(provider).list_packages(esim)
+    assert rows[0].paid_usd == Decimal("3.20")
+
+
+@pytest.mark.django_db
+def test_unknown_instance_id_stays_null_when_package_fallback_ambiguous(
+    esim: Esim,
+) -> None:
+    _create_topup(
+        esim,
+        package_external_id="topup-1gb",
+        amount=Decimal("3.20"),
+        external_order_id="2314160",
+    )
+    _create_topup(
+        esim,
+        package_external_id="topup-1gb",
+        amount=Decimal("3.20"),
+        external_order_id="2322403",
+    )
+    provider = FakeHistoryProvider([_dto(instance_id="999999")])
+    rows = PackageHistoryService(provider).list_packages(esim)
+    assert rows[0].paid_usd is None
+
+
+@pytest.mark.django_db
+def test_blank_instance_id_does_not_pick_a_topup(esim: Esim) -> None:
+    _create_topup(
+        esim,
+        package_external_id="topup-1gb",
+        amount=Decimal("3.20"),
+        external_order_id="2314160",
+    )
+    _create_topup(
+        esim,
+        package_external_id="topup-1gb",
+        amount=Decimal("4.00"),
+        external_order_id="2322403",
+    )
+    provider = FakeHistoryProvider([_dto(instance_id="   ")])
+    rows = PackageHistoryService(provider).list_packages(esim)
+    assert rows[0].paid_usd is None
+
+
+@pytest.mark.django_db
+def test_local_topup_is_assigned_to_at_most_one_history_row(esim: Esim) -> None:
+    _create_topup(
+        esim,
+        package_external_id="topup-1gb",
+        amount=Decimal("3.20"),
+        external_order_id="2314160",
+    )
+    provider = FakeHistoryProvider(
+        [
+            _dto(instance_id="2314160", package_external_id="topup-1gb"),
+            _dto(instance_id="999999", package_external_id="topup-1gb"),
+        ]
+    )
+    rows = PackageHistoryService(provider).list_packages(esim)
+    assert [row.paid_usd for row in rows] == [Decimal("3.20"), None]
+
+
+@pytest.mark.django_db
+def test_duplicate_external_order_id_stays_unmatched(esim: Esim) -> None:
+    _create_topup(
+        esim,
+        package_external_id="topup-1gb",
+        amount=Decimal("3.20"),
+        external_order_id="2314160",
+        idempotency_key="idem-dup-a",
+    )
+    _create_topup(
+        esim,
+        package_external_id="topup-1gb",
+        amount=Decimal("3.20"),
+        external_order_id="2314160",
+        idempotency_key="idem-dup-b",
+    )
+    provider = FakeHistoryProvider([_dto(instance_id="2314160")])
+    rows = PackageHistoryService(provider).list_packages(esim)
+    assert rows[0].paid_usd is None
+
+
+@pytest.mark.django_db
+def test_other_esim_topup_is_never_a_candidate(esim: Esim) -> None:
+    other = _create_other_esim(esim.user, iccid="891000000000002222")
+    _create_topup(
+        other,
+        package_external_id="topup-1gb",
+        amount=Decimal("3.20"),
+        external_order_id="2314160",
+    )
+    provider = FakeHistoryProvider([_dto(instance_id="2314160")])
+    rows = PackageHistoryService(provider).list_packages(esim)
+    assert rows[0].paid_usd is None
