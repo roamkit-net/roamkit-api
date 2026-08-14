@@ -201,6 +201,7 @@ def test_serial_packages_returns_iccid_and_local_paid_usd(
     assert "net_price_usd" not in first
     assert body["results"][1]["status"] == "not_active"
     assert body["results"][2]["status"] == "unknown"
+    assert body["active_package"] is None
     assert provider.calls == [esim.iccid]
     assert DeviceBinding.objects.count() == binding_count_before
     blob = json.dumps(body)
@@ -275,6 +276,8 @@ def test_pr18_packages_uses_binding_esim(client, owner, org, package, monkeypatc
     row = body["results"][0]
     assert row["is_unlimited"] is True
     assert row["remaining_mb"] is None
+    assert body["active_package"]["id"] == row["id"]
+    assert body["active_package"]["status"] == "active"
     assert provider.calls == [ICCID]
 
 
@@ -330,6 +333,101 @@ def test_packages_provider_failure_leaves_status_usable(
     assert packages.json()["code"] == "provider_unavailable"
     assert status_resp.status_code == 200
     assert status_resp.json()["esim"]["iccid"] == ICCID
+
+
+@pytest.mark.django_db
+@override_settings(BLACKBERRY_UEM_ENABLED=True)
+def test_serial_packages_active_package_simple_combo(
+    client, owner, org, package, monkeypatch
+):
+    _make_esim(account=org.account, user=owner, package=package, iccid=ICCID)
+    provider = FakeSimPackageProvider(
+        [
+            _history_row(
+                instance_id="esim-300",
+                plan_type="sim",
+                status="expired",
+                package_external_id="pkg-300mb-3d",
+                remaining_mb=0,
+            ),
+            _history_row(
+                instance_id="topup-active",
+                plan_type="topup",
+                status="active",
+                package_external_id="topup-1gb-7d",
+            ),
+            _history_row(
+                instance_id="topup-queued",
+                plan_type="topup",
+                status="queued",
+                package_external_id="topup-1gb-7d",
+                remaining_mb=None,
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        "shared.providers.factory.get_sim_package_provider",
+        lambda: provider,
+    )
+    with patch(
+        "apps.organizations.services.uem_serial.BlackberryUemClient"
+    ) as client_cls:
+        client_cls.return_value.get_device_by_serial.return_value = _uem_device()
+        resp = _device_packages(client, {"device_serial": SERIAL})
+
+    assert resp.status_code == 200, resp.content
+    body = resp.json()
+    assert [row["id"] for row in body["results"]] == [
+        "esim-300",
+        "topup-active",
+        "topup-queued",
+    ]
+    assert body["active_package"]["id"] == "topup-active"
+    assert body["active_package"]["status"] == "active"
+    assert body["active_package"]["kind"] == "topup"
+
+
+@pytest.mark.django_db
+@override_settings(BLACKBERRY_UEM_ENABLED=True)
+def test_serial_packages_active_package_full_combined_first_wins(
+    client, owner, org, package, monkeypatch
+):
+    _make_esim(account=org.account, user=owner, package=package, iccid=ICCID)
+    provider = FakeSimPackageProvider(
+        [
+            _history_row(
+                instance_id="active-first",
+                plan_type="topup",
+                status="active",
+            ),
+            _history_row(
+                instance_id="not-active",
+                plan_type="topup",
+                status="not_active",
+            ),
+            _history_row(instance_id="queued", plan_type="topup", status="queued"),
+            _history_row(instance_id="expired", plan_type="sim", status="expired"),
+            _history_row(
+                instance_id="active-second",
+                plan_type="topup",
+                status="active",
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        "shared.providers.factory.get_sim_package_provider",
+        lambda: provider,
+    )
+    with patch(
+        "apps.organizations.services.uem_serial.BlackberryUemClient"
+    ) as client_cls:
+        client_cls.return_value.get_device_by_serial.return_value = _uem_device()
+        resp = _device_packages(client, {"device_serial": SERIAL})
+
+    assert resp.status_code == 200, resp.content
+    body = resp.json()
+    assert body["active_package"]["id"] == "active-first"
+    assert body["results"][0]["id"] == body["active_package"]["id"]
 
 
 @pytest.mark.django_db
