@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from apps.esims.serializers import AppliedPackageSerializer
 from apps.organizations.models import (
     DeviceBinding,
     InviteRole,
@@ -276,6 +277,15 @@ class DeviceCoverageSerializer(serializers.Serializer):
     checked_at = serializers.DateTimeField()
 
 
+class DevicePackagesSerializer(serializers.Serializer):
+    """Device-facing applied package history (ADR 021). Never wholesale."""
+
+    device_external_id = serializers.CharField(allow_null=True)
+    iccid = serializers.CharField()
+    results = AppliedPackageSerializer(many=True)
+    checked_at = serializers.DateTimeField()
+
+
 class DeviceBindingCredentialResponseSerializer(serializers.Serializer):
     """Binding plus one-time plaintext credential (create / rotate only)."""
 
@@ -303,21 +313,30 @@ def _reject_client_scope_fields(initial_data) -> None:
         raise serializers.ValidationError(
             {
                 "esim_id": (
-                    "esim_id is not accepted; coverage/status resolve the "
-                    "eSIM via the authenticated device binding only."
+                    "esim_id is not accepted; coverage/status/packages resolve "
+                    "the eSIM via the authenticated device only."
+                )
+            }
+        )
+    if "iccid" in initial_data:
+        raise serializers.ValidationError(
+            {
+                "iccid": (
+                    "iccid is not accepted; the server resolves ICCID from "
+                    "the authenticated UEM device."
                 )
             }
         )
 
 
 class DeviceStatusRequestSerializer(serializers.Serializer):
-    """Device status/coverage body — PR18 or serial shape (ADR 021 C″).
+    """Device status/coverage/packages body — PR18 or serial shape (ADR 021 C″).
 
     PR18: ``device_external_id`` + ``credential``
     Serial: ``device_serial`` only
 
-    Mixed / incomplete / legacy ``fleet_*`` fields → 400 (no guessing).
-    Shared by ``POST /device/status/`` and ``POST /device/coverage/``.
+    Mixed / incomplete / legacy ``fleet_*`` fields / client ``iccid`` → 400.
+    Shared by ``POST /device/status|coverage|packages/``.
     """
 
     device_external_id = serializers.CharField(
@@ -341,7 +360,8 @@ class DeviceStatusRequestSerializer(serializers.Serializer):
         if any(key in data for key in self._REMOVED_FLEET_KEYS):
             raise serializers.ValidationError(
                 "fleet_external_id / fleet_credential are not accepted on v1 "
-                "device status/coverage; use device_serial or PR18 credentials."
+                "device status/coverage/packages; use device_serial or PR18 "
+                "credentials."
             )
 
         pr18_present = any(key in data for key in self._PR18_KEYS)
