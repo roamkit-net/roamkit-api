@@ -282,6 +282,7 @@ class _FakeTopupClient:
         self.submit_topup_calls: list[dict[str, Any]] = []
         self.usage_calls: list[str] = []
         self.list_topups_calls: list[str] = []
+        self.list_sim_packages_calls: list[str] = []
 
     def list_topups(self, iccid: str) -> list[dict[str, Any]]:
         self.list_topups_calls.append(iccid)
@@ -341,6 +342,51 @@ class _FakeTopupClient:
             "total_voice": 0,
             "total_text": 0,
         }
+
+    def list_sim_packages(self, iccid: str) -> list[dict[str, Any]]:
+        self.list_sim_packages_calls.append(iccid)
+        return [
+            {
+                "id": 728,
+                "status": "ACTIVE",
+                "remaining": 2378,
+                "activated_at": "2023-01-09T10:30:45+00:00",
+                "expired_at": "2023-02-09T10:30:45+00:00",
+                "finished_at": None,
+                "package": {
+                    "id": "bonbon-mobile-30days-3gb-topup",
+                    "type": "topup",
+                    "price": 10,
+                    "net_price": 6,
+                    "amount": 3072,
+                    "day": 30,
+                    "is_unlimited": False,
+                    "title": "3 GB - 30 Days",
+                    "data": "3 GB",
+                    "short_info": None,
+                },
+            },
+            {
+                "id": 729,
+                "status": "WEIRD_NEW_STATUS",
+                "remaining": 0,
+                "activated_at": None,
+                "expired_at": None,
+                "finished_at": None,
+                "order_id": "ord-99",
+                "package": {
+                    "id": "change-7days-unlimited",
+                    "type": "sim",
+                    "price": 1,
+                    "net_price": 0.5,
+                    "amount": 0,
+                    "day": 7,
+                    "is_unlimited": True,
+                    "title": "Unlimited - 7 Days",
+                    "data": "Unlimited",
+                },
+            },
+        ]
 
 
 def test_airalo_provider_maps_operator_packages() -> None:
@@ -554,3 +600,32 @@ def test_airalo_topup_provider_maps_usage() -> None:
     assert usage.remaining_text == 0
     assert usage.total_voice == 0
     assert usage.total_text == 0
+
+
+def test_airalo_topup_provider_maps_sim_package_history() -> None:
+    client = _FakeTopupClient()
+    provider = AiraloTopupProvider(client=client)
+
+    packages = provider.list_sim_packages("891000000000009125")
+
+    assert client.list_sim_packages_calls == ["891000000000009125"]
+    assert len(packages) == 2
+    first = packages[0]
+    assert first.instance_id == "728"
+    assert first.status == "active"
+    assert first.remaining_mb == 2378
+    assert first.package_external_id == "bonbon-mobile-30days-3gb-topup"
+    assert first.plan_type == "topup"
+    assert first.data_allowance == "3 GB"
+    assert first.validity_days == 30
+    assert first.is_unlimited is False
+    assert first.provider_order_id is None
+    assert not hasattr(first, "price")
+    assert not hasattr(first, "net_price")
+
+    second = packages[1]
+    assert second.status == "unknown"
+    assert second.is_unlimited is True
+    assert second.remaining_mb is None
+    assert second.plan_type == "sim"
+    assert second.provider_order_id == "ord-99"

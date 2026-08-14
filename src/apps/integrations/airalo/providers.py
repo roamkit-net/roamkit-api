@@ -12,6 +12,7 @@ from shared.providers.esim import (
     OrderResult,
     PackageDTO,
     PackageFilters,
+    SimPackageDTO,
     TopupPackage,
     TopupResult,
     UsageDTO,
@@ -573,6 +574,15 @@ class AiraloTopupProvider:
         payload = self.client.get_usage(iccid)
         return self._map_usage(payload)
 
+    def list_sim_packages(self, iccid: str) -> list[SimPackageDTO]:
+        items = self.client.list_sim_packages(iccid)
+        packages: list[SimPackageDTO] = []
+        for item in items:
+            mapped = self._map_sim_package(item)
+            if mapped is not None:
+                packages.append(mapped)
+        return packages
+
     def _map_topup_package(self, package: dict[str, Any]) -> TopupPackage | None:
         external_id = str(package.get("id", "")).strip()
         if not external_id:
@@ -626,3 +636,69 @@ class AiraloTopupProvider:
             total_voice=int(payload.get("total_voice") or 0),
             total_text=int(payload.get("total_text") or 0),
         )
+
+    @staticmethod
+    def _map_sim_package(item: dict[str, Any]) -> SimPackageDTO | None:
+        instance_id = str(item.get("id") or "").strip()
+        if not instance_id:
+            return None
+
+        nested = item.get("package")
+        package = nested if isinstance(nested, dict) else {}
+        is_unlimited = AiraloPackageProvider._resolve_is_unlimited(package)
+        data_allowance = str(package.get("data") or "").strip()
+        if not data_allowance and is_unlimited:
+            data_allowance = "Unlimited"
+
+        remaining_mb: int | None
+        if is_unlimited:
+            remaining_mb = None
+        elif item.get("remaining") is None:
+            remaining_mb = None
+        else:
+            remaining_mb = int(item["remaining"])
+
+        return SimPackageDTO(
+            instance_id=instance_id,
+            status=AiraloTopupProvider._normalize_package_status(item.get("status")),
+            remaining_mb=remaining_mb,
+            activated_at=AiraloTopupProvider._optional_str(item.get("activated_at")),
+            expired_at=AiraloTopupProvider._optional_str(item.get("expired_at")),
+            finished_at=AiraloTopupProvider._optional_str(item.get("finished_at")),
+            package_external_id=str(package.get("id") or "").strip(),
+            plan_type=str(package.get("type") or "").strip() or "topup",
+            data_allowance=data_allowance,
+            validity_days=int(package.get("day") or 0),
+            is_unlimited=is_unlimited,
+            provider_order_id=AiraloTopupProvider._extract_provider_order_id(item),
+        )
+
+    @staticmethod
+    def _normalize_package_status(raw: Any) -> str:
+        token = str(raw or "").strip().lower().replace("-", "_")
+        if token in {"active", "not_active", "expired", "finished", "unknown"}:
+            return token
+        return "unknown"
+
+    @staticmethod
+    def _optional_str(value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @staticmethod
+    def _extract_provider_order_id(item: dict[str, Any]) -> str | None:
+        """Return an explicit order/request id only — never history instance id."""
+        for key in ("order_id", "request_id"):
+            value = item.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        order = item.get("order")
+        if isinstance(order, dict):
+            nested_id = order.get("id")
+            if nested_id is not None and str(nested_id).strip():
+                return str(nested_id).strip()
+        if isinstance(order, (str, int)) and str(order).strip():
+            return str(order).strip()
+        return None

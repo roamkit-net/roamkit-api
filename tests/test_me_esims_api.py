@@ -15,7 +15,7 @@ from apps.catalog.models import Package
 from apps.esims.models import Esim, EsimAutoTopupPolicy
 from apps.orders.models import Order
 from apps.orders.product_snapshot import product_snapshot_kwargs
-from shared.providers.esim import TopupPackage, UsageDTO
+from shared.providers.esim import SimPackageDTO, TopupPackage, UsageDTO
 
 User = get_user_model()
 
@@ -63,6 +63,16 @@ class FakeTopupProvider:
 
     def submit_topup(self, iccid: str, package_id: str) -> Any:
         raise AssertionError("submit_topup must not be called in Phase 2")
+
+
+class FakeSimPackageProvider:
+    def __init__(self, rows: list[SimPackageDTO] | None = None) -> None:
+        self.rows = rows or []
+        self.calls: list[str] = []
+
+    def list_sim_packages(self, iccid: str) -> list[SimPackageDTO]:
+        self.calls.append(iccid)
+        return self.rows
 
 
 @pytest.fixture
@@ -376,6 +386,117 @@ def test_topups_hides_other_users_esim(
 
     assert response.status_code == 404
     assert provider.topup_calls == []
+
+
+def _history_row(
+    *,
+    instance_id: str = "728",
+    status: str = "active",
+    plan_type: str = "topup",
+    package_external_id: str = "topup-1gb",
+    is_unlimited: bool = False,
+    remaining_mb: int | None = 900,
+) -> SimPackageDTO:
+    return SimPackageDTO(
+        instance_id=instance_id,
+        status=status,
+        remaining_mb=remaining_mb,
+        activated_at="2026-08-12T10:50:00+00:00",
+        expired_at="2026-08-19T10:50:00+00:00",
+        finished_at=None,
+        package_external_id=package_external_id,
+        plan_type=plan_type,
+        data_allowance="Unlimited" if is_unlimited else "1 GB",
+        validity_days=7,
+        is_unlimited=is_unlimited,
+        provider_order_id=None,
+    )
+
+
+@pytest.mark.django_db
+def test_packages_lists_applied_history(
+    client: Client,
+    user: User,
+    alice_esim: Esim,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = FakeSimPackageProvider(
+        [
+            _history_row(instance_id="1", plan_type="sim", status="expired"),
+            _history_row(instance_id="2", status="not_active"),
+            _history_row(instance_id="3", status="unknown"),
+        ]
+    )
+    monkeypatch.setattr(
+        "apps.esims.views.get_sim_package_provider",
+        lambda: provider,
+    )
+    access = _access_token(client, user.email)
+
+    response = client.get(
+        f"/api/v1/me/esims/{alice_esim.pk}/packages/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [row["id"] for row in payload["results"]] == ["1", "2", "3"]
+    first = payload["results"][0]
+    assert first["kind"] == "esim"
+    assert first["status"] == "expired"
+    assert first["paid_usd"] == "11.50"
+    assert first["currency"] == "USD"
+    assert "net_price" not in first
+    assert "net_price_usd" not in first
+    assert payload["results"][1]["status"] == "not_active"
+    assert payload["results"][2]["status"] == "unknown"
+    assert provider.calls == [alice_esim.iccid]
+
+
+@pytest.mark.django_db
+def test_packages_unlimited_remaining_is_null(
+    client: Client,
+    user: User,
+    alice_esim: Esim,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = FakeSimPackageProvider([_history_row(is_unlimited=True, remaining_mb=0)])
+    monkeypatch.setattr(
+        "apps.esims.views.get_sim_package_provider",
+        lambda: provider,
+    )
+    access = _access_token(client, user.email)
+    response = client.get(
+        f"/api/v1/me/esims/{alice_esim.pk}/packages/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert response.status_code == 200
+    row = response.json()["results"][0]
+    assert row["is_unlimited"] is True
+    assert row["remaining_mb"] is None
+
+
+@pytest.mark.django_db
+def test_packages_hides_other_users_esim(
+    client: Client,
+    user: User,
+    bob_esim: Esim,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = FakeSimPackageProvider([_history_row()])
+    monkeypatch.setattr(
+        "apps.esims.views.get_sim_package_provider",
+        lambda: provider,
+    )
+    access = _access_token(client, user.email)
+
+    response = client.get(
+        f"/api/v1/me/esims/{bob_esim.pk}/packages/",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+
+    assert response.status_code == 404
+    assert provider.calls == []
 
 
 @pytest.mark.django_db
@@ -855,3 +976,27 @@ def test_openapi_esim_has_auto_topup_snapshot() -> None:
     assert "package_id" not in snap
     assert "net_price_usd" not in snap
     assert "net_price" not in snap
+
+
+def test_openapi_esim_packages_list_has_applied_package() -> None:
+    from pathlib import Path
+
+    import yaml
+
+    doc = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / "openapi" / "openapi.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "esim_packages_list" in {
+        op.get("operationId")
+        for methods in (doc.get("paths") or {}).values()
+        if isinstance(methods, dict)
+        for op in methods.values()
+        if isinstance(op, dict)
+    }
+    props = doc["components"]["schemas"]["AppliedPackage"]["properties"]
+    assert "paid_usd" in props
+    assert "net_price" not in props
+    assert "net_price_usd" not in props
+    assert "/api/v1/me/esims/{id}/packages/" in doc["paths"]

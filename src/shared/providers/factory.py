@@ -4,7 +4,12 @@ from django.conf import settings
 from django.utils.module_loading import import_string
 
 from shared.providers.blockchain import BlockchainProvider
-from shared.providers.esim import OrderProvider, PackageProvider, TopupProvider
+from shared.providers.esim import (
+    OrderProvider,
+    PackageProvider,
+    SimPackageHistoryProvider,
+    TopupProvider,
+)
 from shared.providers.funding import FundingProvider
 
 
@@ -22,6 +27,15 @@ def get_order_provider() -> OrderProvider:
 
 def get_topup_provider() -> TopupProvider:
     """Return the configured top-up provider implementation."""
+    provider_class = import_string(settings.TOPUP_PROVIDER)
+    return provider_class()
+
+
+def get_sim_package_provider() -> SimPackageHistoryProvider:
+    """Return the provider that lists applied SIM package history.
+
+    Uses ``TOPUP_PROVIDER`` (AiraloTopupProvider implements both protocols).
+    """
     provider_class = import_string(settings.TOPUP_PROVIDER)
     return provider_class()
 

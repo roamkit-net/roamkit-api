@@ -1576,6 +1576,56 @@ paths:
       summary: Record eSIM lifecycle event
       tags:
       - eSIM
+  /api/v1/me/esims/{id}/packages/:
+    get:
+      description: Applied package history for an eSIM owned by the resolved Account (``Esim.account``),
+        including the initial plan and top-ups. ``paid_usd`` is the customer charge from the local Order/Topup
+        — never provider wholesale. Omit ``organization_id`` for personal Account; set the query param
+        for team context.
+      operationId: esim_packages_list
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Team Account context via organization id. Omit for personal Account. Authorization
+          uses ``Esim.account`` only — never client ``account_id`` or ``Esim.user``.
+        in: query
+        name: organization_id
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAppliedPackageList'
+          description: Applied package list
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Membership not active / cannot view
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: eSIM not found
+      security:
+      - bearerAuth: []
+      summary: List applied eSIM packages
+      tags:
+      - eSIM
   /api/v1/me/esims/{id}/topups/:
     get:
       description: List available top-up packages for an eSIM owned by the resolved Account (``Esim.account``).
@@ -2748,6 +2798,55 @@ components:
       - installation
       - unknown
       type: string
+    AppliedPackage:
+      description: Applied package instance on an eSIM (history, not purchasable catalog).
+      properties:
+        activated_at:
+          nullable: true
+          type: string
+        created_at:
+          format: date-time
+          nullable: true
+          type: string
+        currency:
+          type: string
+        data_allowance:
+          type: string
+        expires_at:
+          nullable: true
+          type: string
+        id:
+          type: string
+        is_unlimited:
+          type: boolean
+        kind:
+          type: string
+        paid_usd:
+          format: decimal
+          nullable: true
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+          type: string
+        remaining_mb:
+          nullable: true
+          type: integer
+        status:
+          type: string
+        validity_days:
+          type: integer
+      required:
+      - activated_at
+      - created_at
+      - currency
+      - data_allowance
+      - expires_at
+      - id
+      - is_unlimited
+      - kind
+      - paid_usd
+      - remaining_mb
+      - status
+      - validity_days
+      type: object
     AutoTopupPolicy:
       description: Persisted auto top-up policy response (v2 triggers + v3 lifetime).
       properties:
@@ -4826,6 +4925,29 @@ components:
       - title
       - validity_days
       - voice_minutes
+      type: object
+    PaginatedAppliedPackageList:
+      properties:
+        count:
+          example: 123
+          type: integer
+        next:
+          example: http://api.example.org/accounts/?page=4
+          format: uri
+          nullable: true
+          type: string
+        previous:
+          example: http://api.example.org/accounts/?page=2
+          format: uri
+          nullable: true
+          type: string
+        results:
+          items:
+            $ref: '#/components/schemas/AppliedPackage'
+          type: array
+      required:
+      - count
+      - results
       type: object
     PaginatedEsimList:
       properties:

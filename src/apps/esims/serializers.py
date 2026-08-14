@@ -306,6 +306,25 @@ class TopupSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class AppliedPackageSerializer(serializers.Serializer):
+    """Applied package instance on an eSIM (history, not purchasable catalog)."""
+
+    id = serializers.CharField()
+    kind = serializers.CharField()
+    status = serializers.CharField()
+    data_allowance = serializers.CharField()
+    validity_days = serializers.IntegerField()
+    is_unlimited = serializers.BooleanField()
+    remaining_mb = serializers.IntegerField(allow_null=True)
+    created_at = serializers.DateTimeField(allow_null=True)
+    activated_at = serializers.CharField(allow_null=True)
+    expires_at = serializers.CharField(allow_null=True)
+    paid_usd = serializers.DecimalField(
+        max_digits=10, decimal_places=2, allow_null=True
+    )
+    currency = serializers.CharField()
+
+
 class AutoTopupPolicySerializer(serializers.ModelSerializer):
     """Persisted auto top-up policy response (v2 triggers + v3 lifetime)."""
 
