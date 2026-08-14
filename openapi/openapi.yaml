@@ -29,6 +29,8 @@ tags:
 - description: Device-facing endpoints authenticated by opaque device credential (not user JWT). Used
     by managed devices / UEM.
   name: Device
+- description: Unauthenticated read-only Matching ID status (ADR 022). Not the UEM device family.
+  name: Public
 - description: Authenticated user profile
   name: Users
 - description: Staff-only read-only Operations Dashboard (members, search, aggregates)
@@ -2817,6 +2819,45 @@ paths:
       summary: List packages
       tags:
       - Catalog
+  /api/v1/public/esim/status/:
+    post:
+      description: Read-only cache snapshot for a consumer Matching ID (ADR 022). Body must be a JSON
+        object with only ``matching_id``. JWT is ignored and never widens the response. No provider refresh.
+        Mutations are never authorized.
+      operationId: public_esim_status
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublicEsimStatusRequestRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicEsimStatus'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodedError'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodedError'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodedError'
+          description: ''
+      summary: Public Matching ID eSIM status
+      tags:
+      - Public
 components:
   schemas:
     ActivateRequest:
@@ -3076,6 +3117,16 @@ components:
       - token_decimals
       - token_name
       - token_symbol
+      type: object
+    CodedError:
+      properties:
+        code:
+          type: string
+        detail:
+          type: string
+      required:
+      - code
+      - detail
       type: object
     CoverageTypeEnum:
       description: '* `local` - Local
@@ -5346,6 +5397,154 @@ components:
       - pricing_reason
       - quote_fingerprint
       - snapshot_schema_version
+      type: object
+    PublicAutoTopup:
+      properties:
+        enabled:
+          type: boolean
+      required:
+      - enabled
+      type: object
+    PublicCoverage:
+      properties:
+        coverage:
+          items:
+            $ref: '#/components/schemas/PublicCoverageCountry'
+          type: array
+        coverage_type:
+          nullable: true
+          type: string
+      required:
+      - coverage
+      - coverage_type
+      type: object
+    PublicCoverageCountry:
+      properties:
+        country_code:
+          type: string
+        country_name:
+          nullable: true
+          type: string
+        operators:
+          items:
+            type: string
+          type: array
+      required:
+      - country_code
+      - country_name
+      - operators
+      type: object
+    PublicCoverageSummary:
+      properties:
+        available:
+          type: boolean
+        country_count:
+          type: integer
+      required:
+      - available
+      - country_count
+      type: object
+    PublicEsim:
+      properties:
+        iccid:
+          type: string
+        status:
+          type: string
+      required:
+      - iccid
+      - status
+      type: object
+    PublicEsimStatus:
+      properties:
+        auto_topup:
+          $ref: '#/components/schemas/PublicAutoTopup'
+        checked_at:
+          format: date-time
+          type: string
+        coverage:
+          allOf:
+          - $ref: '#/components/schemas/PublicCoverage'
+          nullable: true
+        esim:
+          $ref: '#/components/schemas/PublicEsim'
+        packages:
+          nullable: true
+        plan:
+          allOf:
+          - $ref: '#/components/schemas/PublicPlan'
+          nullable: true
+        usage:
+          allOf:
+          - $ref: '#/components/schemas/PublicUsage'
+          nullable: true
+      required:
+      - auto_topup
+      - checked_at
+      - coverage
+      - esim
+      - packages
+      - plan
+      - usage
+      type: object
+    PublicEsimStatusRequestRequest:
+      properties:
+        matching_id:
+          type: string
+      type: object
+    PublicPlan:
+      properties:
+        country_code:
+          nullable: true
+          type: string
+        coverage_summary:
+          allOf:
+          - $ref: '#/components/schemas/PublicCoverageSummary'
+          nullable: true
+        coverage_type:
+          nullable: true
+          type: string
+        data_allowance:
+          nullable: true
+          type: string
+        location_title:
+          nullable: true
+          type: string
+        title:
+          nullable: true
+          type: string
+        validity_days:
+          nullable: true
+          type: integer
+      required:
+      - country_code
+      - coverage_summary
+      - coverage_type
+      - data_allowance
+      - location_title
+      - title
+      - validity_days
+      type: object
+    PublicUsage:
+      properties:
+        data_remaining:
+          nullable: true
+          type: string
+        data_used:
+          nullable: true
+          type: string
+        expires_at:
+          format: date-time
+          nullable: true
+          type: string
+        synced_at:
+          format: date-time
+          nullable: true
+          type: string
+      required:
+      - data_remaining
+      - data_used
+      - expires_at
+      - synced_at
       type: object
     PurchaseTopupRequest:
       description: 'Request body for POST /api/v1/me/esims/{id}/topups/.
