@@ -4,6 +4,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Trim
 
 
 class ActivationPolicy(models.TextChoices):
@@ -118,6 +119,17 @@ class Esim(models.Model):
             models.Index(fields=["user", "status"]),
             models.Index(fields=["user", "archived_at"]),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                Trim("matching_id"),
+                condition=~models.Q(matching_id=""),
+                name="esims_esim_matching_id_trimmed_nonempty_uniq",
+            ),
+        ]
+
+    def save(self, *args, **kwargs) -> None:
+        self.matching_id = (self.matching_id or "").strip()
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"eSIM {self.iccid}"
