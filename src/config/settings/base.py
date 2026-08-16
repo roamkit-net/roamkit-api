@@ -122,6 +122,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "https://staging.roamkit.net",
     "https://roamkit.net",
+    "https://www.roamkit.net",
 ]
 
 # Browser clients send headers that django-cors-headers defaults omit.
