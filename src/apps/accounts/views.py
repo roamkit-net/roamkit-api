@@ -26,6 +26,7 @@ from apps.accounts.serializers import (
     GoogleAuthErrorSerializer,
     GoogleAuthSerializer,
     GoogleAuthTokenResponseSerializer,
+    MeDisplayNameSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     RegisterSerializer,
@@ -207,14 +208,44 @@ class PasswordResetConfirmView(APIView):
             ),
         },
     ),
+    patch=extend_schema(
+        tags=["Users"],
+        operation_id="users_me_partial_update",
+        summary="Update display name",
+        description=(
+            "Set or clear the authenticated user's display name. "
+            "An empty name means callers show the email. "
+            "Email and staff status cannot be changed here."
+        ),
+        request=MeDisplayNameSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=UserSerializer, description="Updated profile"
+            ),
+            400: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Invalid display name"
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+        },
+    ),
 )
 class MeView(APIView):
-    """Return the authenticated user's profile."""
+    """Return or update the authenticated user's display name."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request) -> Response:
         return Response(UserSerializer(request.user).data)
+
+    def patch(self, request: Request) -> Response:
+        serializer = MeDisplayNameSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = request.user
+        user.display_name = serializer.validated_data["display_name"]
+        user.save(update_fields=["display_name", "updated_at"])
+        return Response(UserSerializer(user).data)
 
 
 @extend_schema_view(

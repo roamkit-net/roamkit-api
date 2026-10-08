@@ -410,6 +410,81 @@ def test_me_returns_authenticated_user(client: Client, user: User) -> None:
     assert payload["id"] == user.pk
 
 
+def _access(client: Client, user: User) -> str:
+    token_response = client.post(
+        "/api/v1/auth/token/",
+        data=json.dumps({"email": user.email, "password": PASSWORD}),
+        content_type="application/json",
+    )
+    return token_response.json()["access"]
+
+
+@pytest.mark.django_db
+def test_me_patch_sets_and_clears_display_name(client: Client, user: User) -> None:
+    access = _access(client, user)
+
+    renamed = client.patch(
+        "/api/v1/auth/me/",
+        data=json.dumps({"display_name": "  Ada Lovelace  "}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["display_name"] == "Ada Lovelace"
+    assert renamed.json()["email"] == user.email
+    user.refresh_from_db()
+    assert user.display_name == "Ada Lovelace"
+
+    cleared = client.patch(
+        "/api/v1/auth/me/",
+        data=json.dumps({"display_name": "   "}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["display_name"] == ""
+    user.refresh_from_db()
+    assert user.display_name == ""
+
+
+@pytest.mark.django_db
+def test_me_patch_rejects_email_change_and_overlong_name(
+    client: Client, user: User
+) -> None:
+    access = _access(client, user)
+
+    rejected = client.patch(
+        "/api/v1/auth/me/",
+        data=json.dumps({"display_name": "Ada", "email": "other@example.com"}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert rejected.status_code == 400
+    user.refresh_from_db()
+    assert user.email != "other@example.com"
+    assert user.display_name == ""
+
+    too_long = client.patch(
+        "/api/v1/auth/me/",
+        data=json.dumps({"display_name": "A" * 256}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert too_long.status_code == 400
+    user.refresh_from_db()
+    assert user.display_name == ""
+
+
+@pytest.mark.django_db
+def test_me_patch_requires_authentication(client: Client) -> None:
+    response = client.patch(
+        "/api/v1/auth/me/",
+        data=json.dumps({"display_name": "Ada"}),
+        content_type="application/json",
+    )
+    assert response.status_code == 401
+
+
 @pytest.mark.django_db
 def test_packages_remain_public(client: Client) -> None:
     response = client.get("/api/v1/packages/")

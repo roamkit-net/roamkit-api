@@ -96,6 +96,28 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class MeDisplayNameSerializer(serializers.Serializer):
+    """The only field a customer may change on their own profile."""
+
+    display_name = serializers.CharField(
+        max_length=255,
+        allow_blank=True,
+        trim_whitespace=True,
+    )
+
+    def to_internal_value(self, data):
+        if hasattr(data, "keys"):
+            extra = set(data.keys()) - {"display_name"}
+            if extra:
+                raise serializers.ValidationError(
+                    {
+                        field: ["This field cannot be changed."]
+                        for field in sorted(extra)
+                    }
+                )
+        return super().to_internal_value(data)
+
+
 class GoogleAuthSerializer(serializers.Serializer):
     """GIS ID token credential from the browser."""
 
