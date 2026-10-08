@@ -1,8 +1,8 @@
-"""Grant-endpoint tenant resolution (ADR 023).
+"""Partner-channel tenant resolution (ADR 023).
 
 Not the spend/inventory organization context. The caller passes only the
 authenticated user. Channel ``is_active`` and organization status are not
-filters: an inactive channel may still grant its existing balance.
+filters.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from apps.accounts.models import User
 
 _GRANT_ROLES = (MembershipRole.OWNER, MembershipRole.ADMIN)
+_SUMMARY_ROLES = (MembershipRole.OWNER, MembershipRole.ADMIN, MembershipRole.VIEWER)
 
 
 class PartnerAccessDenied(Exception):
@@ -32,11 +33,20 @@ class PartnerContextAmbiguous(Exception):
 
 def resolve_partner_grant_channel(user: User) -> PartnerChannel:
     """Return the one partner channel this user may grant from."""
+    return _resolve_channel(user, _GRANT_ROLES)
+
+
+def resolve_partner_summary_channel(user: User) -> PartnerChannel:
+    """Return the one partner channel this user may read summary for."""
+    return _resolve_channel(user, _SUMMARY_ROLES)
+
+
+def _resolve_channel(user: User, roles: tuple[str, ...]) -> PartnerChannel:
     channels = list(
         PartnerChannel.objects.filter(
             organization__memberships__user_id=user.pk,
             organization__memberships__status=MembershipStatus.ACTIVE,
-            organization__memberships__role__in=_GRANT_ROLES,
+            organization__memberships__role__in=roles,
         ).distinct()
     )
     if not channels:
