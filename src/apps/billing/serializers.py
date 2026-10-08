@@ -276,6 +276,7 @@ def _trimmed_query(raw: object) -> str:
 class PartnerCustomerSerializer(serializers.Serializer):
     customer_id = serializers.IntegerField(min_value=1, max_value=_BIGINT_MAX)
     email = serializers.CharField()
+    display_name = serializers.CharField(allow_blank=True)
     attributed_at = serializers.DateTimeField()
     total_partner_earned = serializers.DecimalField(max_digits=20, decimal_places=6)
     accrual_count = serializers.IntegerField(min_value=0)
@@ -335,12 +336,14 @@ def parse_partner_grants_query(params: object) -> PartnerGrantsQuery:
 class PartnerGrantActorSerializer(serializers.Serializer):
     user_id = serializers.IntegerField(min_value=1, max_value=_BIGINT_MAX)
     email = serializers.CharField()
+    display_name = serializers.CharField(allow_blank=True)
 
 
 class PartnerGrantHistorySerializer(serializers.Serializer):
     grant_id = serializers.UUIDField()
     customer_id = serializers.IntegerField(min_value=1, max_value=_BIGINT_MAX)
     email = serializers.CharField(allow_null=True)
+    display_name = serializers.CharField(allow_blank=True)
     amount = serializers.DecimalField(max_digits=20, decimal_places=6)
     granted_by = PartnerGrantActorSerializer(allow_null=True)
     created_at = serializers.DateTimeField()

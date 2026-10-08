@@ -190,6 +190,7 @@ def test_ops_users_list_paginated_and_badges(
     member = next(r for r in body["results"] if r["id"] == user.pk)
     assert "google" in member["badges"]
     assert member["balance"] is not None
+    assert member["display_name"] == ""
 
 
 @pytest.mark.django_db
@@ -247,6 +248,7 @@ def test_ops_user_detail_timeline(
     body = response.json()
     assert body["schema_version"] == 1
     assert body["email"] == user.email
+    assert body["display_name"] == ""
     assert isinstance(body["timeline"], list)
     assert len(body["timeline"]) >= 1
     event = body["timeline"][0]

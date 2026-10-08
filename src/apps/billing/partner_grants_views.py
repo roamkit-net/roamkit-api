@@ -128,6 +128,7 @@ class PartnerGrantsView(APIView):
                             "grant_id": row.grant_id,
                             "customer_id": row.customer_id,
                             "email": row.email,
+                            "display_name": row.display_name,
                             "amount": row.amount,
                             "granted_by": (
                                 None
@@ -135,6 +136,7 @@ class PartnerGrantsView(APIView):
                                 else {
                                     "user_id": row.granted_by.user_id,
                                     "email": row.granted_by.email,
+                                    "display_name": row.granted_by.display_name,
                                 }
                             ),
                             "created_at": row.created_at,

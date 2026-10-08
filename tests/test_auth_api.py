@@ -406,6 +406,7 @@ def test_me_returns_authenticated_user(client: Client, user: User) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["email"] == user.email
+    assert payload["display_name"] == ""
     assert payload["id"] == user.pk
 
 

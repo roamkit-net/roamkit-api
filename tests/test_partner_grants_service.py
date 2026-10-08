@@ -137,13 +137,16 @@ def test_history_uses_snapshot_customer_id_and_live_email_only_for_display() -> 
     assert page.count == 2
     by_id = {row.grant_id: row for row in page.results}
     assert by_id[kept.id].customer_id == customer.pk
-    assert by_id[kept.id].email == f"a***@{customer.email.split('@', 1)[1]}"
+    assert by_id[kept.id].email == customer.email
+    assert by_id[kept.id].display_name == ""
     assert by_id[kept.id].amount == Decimal("2.500000")
     assert by_id[kept.id].granted_by is not None
     assert by_id[kept.id].granted_by.user_id == owner.pk
-    assert by_id[kept.id].granted_by.email == f"o***@{owner.email.split('@', 1)[1]}"
+    assert by_id[kept.id].granted_by.email == owner.email
+    assert by_id[kept.id].granted_by.display_name == ""
     assert by_id[deleted_customer.id].customer_id == customer.pk
     assert by_id[deleted_customer.id].email is None
+    assert by_id[deleted_customer.id].display_name == ""
     assert by_id[deleted_customer.id].granted_by is None
 
 

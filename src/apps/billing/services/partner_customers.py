@@ -17,6 +17,7 @@ from django.db.models import (
     DecimalField,
     IntegerField,
     OuterRef,
+    Q,
     Subquery,
     Sum,
     Value,
@@ -55,6 +56,7 @@ class PartnerCustomersQuery:
 class PartnerCustomerRow:
     customer_id: int
     email: str
+    display_name: str
     attributed_at: datetime
     total_partner_earned: Decimal
     accrual_count: int
@@ -81,7 +83,9 @@ class PartnerCustomersService:
         if customer_id is not None:
             base = base.filter(user_id=customer_id)
         elif query.q:
-            base = base.filter(user__email__iexact=query.q)
+            base = base.filter(
+                Q(user__email__iexact=query.q) | Q(user__display_name__iexact=query.q)
+            )
         count = base.count()
         direction = "-" if query.order == "desc" else ""
         ordering = (
@@ -138,18 +142,11 @@ def _customer_id_query(q: str) -> int | None:
     return value
 
 
-def mask_partner_email(email: str) -> str:
-    """First local character, ``***``, then the domain."""
-    local, separator, domain = email.partition("@")
-    if not local or not separator or not domain:
-        return "***"
-    return f"{local[0]}***@{domain}"
-
-
 def _row(attribution: CustomerAttribution) -> PartnerCustomerRow:
     return PartnerCustomerRow(
         customer_id=attribution.user_id,
-        email=mask_partner_email(attribution.user.email),
+        email=attribution.user.email,
+        display_name=(attribution.user.display_name or "").strip(),
         attributed_at=attribution.attributed_at,
         total_partner_earned=attribution.total_partner_earned,
         accrual_count=attribution.accrual_count,

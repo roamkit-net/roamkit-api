@@ -113,7 +113,7 @@ def test_disabled_flag_hides_the_list(client: Client) -> None:
 
 @ENABLED
 @pytest.mark.django_db
-def test_customers_return_masked_snapshot_earnings(client: Client) -> None:
+def test_customers_return_full_email_and_snapshot_earnings(client: Client) -> None:
     owner = _user("owner")
     channel = _channel_for(owner)
     customer = _customer(channel, "ada")
@@ -128,8 +128,9 @@ def test_customers_return_masked_snapshot_earnings(client: Client) -> None:
     assert body["page_size"] == 50
     row = body["results"][0]
     assert row["customer_id"] == customer.pk
-    assert row["email"] == f"a***@{customer.email.split('@', 1)[1]}"
-    assert customer.email not in response.content.decode()
+    assert row["email"] == customer.email
+    assert row["display_name"] == ""
+    assert customer.email in response.content.decode()
     assert row["total_partner_earned"] == "1.250000"
     assert row["accrual_count"] == 1
     assert row["attributed_at"].startswith("2026-10-01T12:00:00")

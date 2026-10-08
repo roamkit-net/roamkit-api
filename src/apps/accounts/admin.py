@@ -11,17 +11,18 @@ class UserAdmin(DjangoUserAdmin):
     ordering = ("email",)
     list_display = (
         "email",
+        "display_name",
         "wallet_address",
         "last_login_provider",
         "is_staff",
         "is_active",
         "created_at",
     )
-    search_fields = ("email", "wallet_address", "google_sub")
+    search_fields = ("email", "display_name", "wallet_address", "google_sub")
     list_filter = ("is_staff", "is_active", "last_login_provider")
 
     fieldsets = (
-        (None, {"fields": ("email", "password")}),
+        (None, {"fields": ("email", "display_name", "password")}),
         ("Wallet", {"fields": ("wallet_address",)}),
         (
             "Google",
@@ -54,7 +55,14 @@ class UserAdmin(DjangoUserAdmin):
             None,
             {
                 "classes": ("wide",),
-                "fields": ("email", "password1", "password2", "is_staff", "is_active"),
+                "fields": (
+                    "email",
+                    "display_name",
+                    "password1",
+                    "password2",
+                    "is_staff",
+                    "is_active",
+                ),
             },
         ),
     )

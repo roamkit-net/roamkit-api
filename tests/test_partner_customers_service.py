@@ -126,7 +126,8 @@ def test_current_customers_keep_snapshot_earnings_from_this_channel() -> None:
     by_id = {row.customer_id: row for row in page.results}
     assert by_id[first.pk].total_partner_earned == Decimal("7.500000")
     assert by_id[first.pk].accrual_count == 2
-    assert by_id[first.pk].email == f"a***@{first.email.split('@', 1)[1]}"
+    assert by_id[first.pk].email == first.email
+    assert by_id[first.pk].display_name == ""
     assert by_id[second.pk].total_partner_earned == Decimal("0.000000")
     assert by_id[second.pk].accrual_count == 0
     assert gone.pk not in by_id
@@ -151,11 +152,13 @@ def test_equal_earnings_break_ties_by_customer_id_ascending() -> None:
 
 @ENABLED
 @pytest.mark.django_db
-def test_q_matches_customer_id_or_exact_email_inside_the_channel() -> None:
+def test_q_matches_customer_id_exact_email_or_exact_display_name() -> None:
     owner = _user("owner")
     channel = _channel_for(owner)
     other = _channel_for(_user("other-owner"))
     ada = _user("ada")
+    ada.display_name = "Ada Lovelace"
+    ada.save(update_fields=["display_name"])
     bea = _user("bea")
     outsider = _user("outsider")
     _attribute(ada, channel, at=_START)
@@ -166,6 +169,9 @@ def test_q_matches_customer_id_or_exact_email_inside_the_channel() -> None:
     by_email = partner_customers_service.list_customers(
         channel, _query(q=ada.email.upper())
     )
+    by_name = partner_customers_service.list_customers(
+        channel, _query(q="ada lovelace")
+    )
     prefix = partner_customers_service.list_customers(
         channel, _query(q=ada.email.split("@", 1)[0])
     )
@@ -175,6 +181,8 @@ def test_q_matches_customer_id_or_exact_email_inside_the_channel() -> None:
 
     assert [row.customer_id for row in by_id.results] == [ada.pk]
     assert [row.customer_id for row in by_email.results] == [ada.pk]
+    assert [row.customer_id for row in by_name.results] == [ada.pk]
+    assert by_name.results[0].display_name == "Ada Lovelace"
     assert prefix.count == 0
     assert outside.count == 0
     assert outside.results == ()

@@ -4559,6 +4559,9 @@ components:
           format: date-time
           readOnly: true
           type: string
+        user_display_name:
+          readOnly: true
+          type: string
         user_email:
           format: email
           readOnly: true
@@ -4572,6 +4575,7 @@ components:
       - role
       - status
       - updated_at
+      - user_display_name
       - user_email
       - user_id
       type: object
@@ -4970,6 +4974,8 @@ components:
         device_hints:
           additionalProperties: {}
           type: object
+        display_name:
+          type: string
         email:
           format: email
           type: string
@@ -5001,6 +5007,7 @@ components:
       - badges
       - created_at
       - device_hints
+      - display_name
       - email
       - esims
       - id
@@ -5020,6 +5027,8 @@ components:
         balance:
           nullable: true
           type: string
+        display_name:
+          type: string
         email:
           format: email
           type: string
@@ -5036,6 +5045,7 @@ components:
       required:
       - badges
       - balance
+      - display_name
       - email
       - id
       - is_active
@@ -5237,6 +5247,9 @@ components:
           format: date-time
           readOnly: true
           type: string
+        display_name:
+          readOnly: true
+          type: string
         email:
           description: Invitee email as entered (display).
           format: email
@@ -5283,6 +5296,7 @@ components:
       required:
       - accepted_at
       - created_at
+      - display_name
       - email
       - email_normalized
       - expires_at
@@ -5687,6 +5701,8 @@ components:
           maximum: 9223372036854775807
           minimum: 1
           type: integer
+        display_name:
+          type: string
         email:
           type: string
         total_partner_earned:
@@ -5697,6 +5713,7 @@ components:
       - accrual_count
       - attributed_at
       - customer_id
+      - display_name
       - email
       - total_partner_earned
       type: object
@@ -5724,6 +5741,8 @@ components:
       type: object
     PartnerGrantActor:
       properties:
+        display_name:
+          type: string
         email:
           type: string
         user_id:
@@ -5732,6 +5751,7 @@ components:
           minimum: 1
           type: integer
       required:
+      - display_name
       - email
       - user_id
       type: object
@@ -5757,6 +5777,8 @@ components:
           maximum: 9223372036854775807
           minimum: 1
           type: integer
+        display_name:
+          type: string
         email:
           nullable: true
           type: string
@@ -5771,6 +5793,7 @@ components:
       - amount
       - created_at
       - customer_id
+      - display_name
       - email
       - grant_id
       - granted_by
@@ -6455,6 +6478,9 @@ components:
           format: date-time
           readOnly: true
           type: string
+        display_name:
+          readOnly: true
+          type: string
         email:
           format: email
           readOnly: true
@@ -6471,6 +6497,7 @@ components:
           type: string
       required:
       - created_at
+      - display_name
       - email
       - id
       - is_staff
