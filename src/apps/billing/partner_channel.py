@@ -233,7 +233,7 @@ class CustomerAttributionHistory(models.Model):
         blank=True,
         related_name="customer_attribution_changes",
     )
-    changed_by_user_id_snapshot = models.UUIDField()
+    changed_by_user_id_snapshot = models.BigIntegerField()
     change_reason = models.TextField()
     changed_at = models.DateTimeField()
     previous_attributed_at = models.DateTimeField()
@@ -283,7 +283,7 @@ class PartnerMarginAccrual(models.Model):
         blank=True,
         related_name="partner_margin_accruals",
     )
-    customer_user_id_snapshot = models.UUIDField()
+    customer_user_id_snapshot = models.BigIntegerField()
     customer_attribution = models.ForeignKey(
         CustomerAttribution,
         on_delete=models.PROTECT,
@@ -356,7 +356,7 @@ class PartnerCreditGrant(models.Model):
         blank=True,
         related_name="partner_credit_grants",
     )
-    customer_user_id_snapshot = models.UUIDField()
+    customer_user_id_snapshot = models.BigIntegerField()
     customer_attribution = models.ForeignKey(
         CustomerAttribution,
         on_delete=models.PROTECT,
@@ -369,7 +369,7 @@ class PartnerCreditGrant(models.Model):
         blank=True,
         related_name="partner_grants_given",
     )
-    granted_by_user_id_snapshot = models.UUIDField()
+    granted_by_user_id_snapshot = models.BigIntegerField()
     amount = models.DecimalField(max_digits=20, decimal_places=6)
     idempotency_key = models.CharField(max_length=128)
     debit_ledger_entry = models.OneToOneField(

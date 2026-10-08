@@ -376,6 +376,10 @@ ORGANIZATION_INVITE_TTL_SECONDS = int(
 SUBSCRIPTIONS_ENABLED = (
     os.environ.get("SUBSCRIPTIONS_ENABLED", "false").lower() == "true"
 )
+# ADR 023 — partner margin, portal, and grant. Off: fulfillment still succeeds.
+PARTNER_CHANNEL_ENABLED = (
+    os.environ.get("PARTNER_CHANNEL_ENABLED", "false").lower() == "true"
+)
 VOUCHERS_ENABLED = os.environ.get("VOUCHERS_ENABLED", "false").lower() == "true"
 # eSIM Auto Top-up v1 (design lock) — master + rollout; spend still via TopupService.
 AUTO_TOPUP_ENABLED = os.environ.get("AUTO_TOPUP_ENABLED", "false").lower() == "true"
