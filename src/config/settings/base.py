@@ -181,6 +181,9 @@ AUTH_PASSWORD_RESET_CONFIRM_RATE = os.environ.get(
 AUTH_GOOGLE_RATE = os.environ.get("AUTH_GOOGLE_RATE", "10/min")
 AUTH_TURNSTILE_DEGRADED_RATE = os.environ.get("AUTH_TURNSTILE_DEGRADED_RATE", "5/hour")
 BILLING_VOUCHER_REDEEM_RATE = os.environ.get("BILLING_VOUCHER_REDEEM_RATE", "10/5min")
+# ADR 023 leaves the grant number unset. This is the runtime default, per user
+# and partner channel. Replay of an existing grant does not consume it.
+PARTNER_GRANT_RATE = os.environ.get("PARTNER_GRANT_RATE", "10/hour")
 DEVICE_STATUS_RATE = os.environ.get("DEVICE_STATUS_RATE", "60/hour")
 DEVICE_COVERAGE_RATE = os.environ.get("DEVICE_COVERAGE_RATE", "60/hour")
 DEVICE_PACKAGES_RATE = os.environ.get("DEVICE_PACKAGES_RATE", "60/hour")
@@ -210,6 +213,7 @@ REST_FRAMEWORK = {
         "auth_password_reset_confirm": AUTH_PASSWORD_RESET_CONFIRM_RATE,
         "auth_google": AUTH_GOOGLE_RATE,
         "billing_voucher_redeem": BILLING_VOUCHER_REDEEM_RATE,
+        "partner_grant": PARTNER_GRANT_RATE,
         "device_status": DEVICE_STATUS_RATE,
         "device_coverage": DEVICE_COVERAGE_RATE,
         "device_packages": DEVICE_PACKAGES_RATE,
