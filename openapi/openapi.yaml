@@ -496,6 +496,39 @@ paths:
       summary: Current user profile
       tags:
       - Users
+    patch:
+      description: Set or clear the authenticated user's display name. An empty name means callers show
+        the email. Email and staff status cannot be changed here.
+      operationId: users_me_partial_update
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedMeDisplayNameRequest'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: Updated profile
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Invalid display name
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Authentication required
+      security:
+      - bearerAuth: []
+      summary: Update display name
+      tags:
+      - Users
   /api/v1/auth/password-reset/:
     post:
       description: Request a password reset email. Always returns a generic success message.
@@ -5970,6 +6003,13 @@ components:
         note:
           description: User-local note on this eSIM. Never synchronized to Airalo. Future user metadata
             (favorite_at, pinned_at, hidden_at) belongs on the same model without provider sync.
+          maxLength: 255
+          type: string
+      type: object
+    PatchedMeDisplayNameRequest:
+      description: The only field a customer may change on their own profile.
+      properties:
+        display_name:
           maxLength: 255
           type: string
       type: object
