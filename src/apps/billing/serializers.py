@@ -174,3 +174,24 @@ class PartnerGrantCodeSerializer(serializers.Serializer):
     """Partner grant error body. Exactly one code, no field names."""
 
     code = serializers.CharField()
+
+
+class PartnerSummaryCountsSerializer(serializers.Serializer):
+    order = serializers.IntegerField(min_value=0)
+    topup = serializers.IntegerField(min_value=0)
+    subscription = serializers.IntegerField(min_value=0)
+    total = serializers.IntegerField(min_value=0)
+
+
+class PartnerSummarySerializer(serializers.Serializer):
+    """Six-decimal strings for money. Counts stay integers."""
+
+    total_earned = serializers.DecimalField(max_digits=20, decimal_places=6)
+    available_balance = serializers.DecimalField(max_digits=20, decimal_places=6)
+    accrual_counts = PartnerSummaryCountsSerializer()
+
+
+class PartnerChannelCodeSerializer(serializers.Serializer):
+    """Partner read error body. Exactly one code, no field names."""
+
+    code = serializers.CharField()

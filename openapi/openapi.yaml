@@ -2150,6 +2150,47 @@ paths:
       summary: Accept an organization invite
       tags:
       - Organizations
+  /api/v1/orgs/partner/summary/:
+    get:
+      description: Stored margin total, display balance, and accrual counts for the caller's single partner
+        channel.
+      operationId: orgs_partner_summary
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerSummary'
+          description: Channel summary
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_context_ambiguous
+      security:
+      - bearerAuth: []
+      summary: Partner channel summary
+      tags:
+      - Organizations
   /api/v1/orgs/{organization_id}/:
     get:
       description: Requires an **active** membership. Unknown or inaccessible ``organization_id`` returns
@@ -5325,6 +5366,14 @@ components:
       - count
       - results
       type: object
+    PartnerChannelCode:
+      description: Partner read error body. Exactly one code, no field names.
+      properties:
+        code:
+          type: string
+      required:
+      - code
+      type: object
     PartnerGrantCode:
       description: Partner grant error body. Exactly one code, no field names.
       properties:
@@ -5375,6 +5424,44 @@ components:
       - created_at
       - customer_id
       - grant_id
+      type: object
+    PartnerSummary:
+      description: Six-decimal strings for money. Counts stay integers.
+      properties:
+        accrual_counts:
+          $ref: '#/components/schemas/PartnerSummaryCounts'
+        available_balance:
+          format: decimal
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
+          type: string
+        total_earned:
+          format: decimal
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
+          type: string
+      required:
+      - accrual_counts
+      - available_balance
+      - total_earned
+      type: object
+    PartnerSummaryCounts:
+      properties:
+        order:
+          minimum: 0
+          type: integer
+        subscription:
+          minimum: 0
+          type: integer
+        topup:
+          minimum: 0
+          type: integer
+        total:
+          minimum: 0
+          type: integer
+      required:
+      - order
+      - subscription
+      - topup
+      - total
       type: object
     PasswordResetConfirmRequest:
       properties:
