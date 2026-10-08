@@ -1,4 +1,8 @@
-"""Schema tests for Partner Channel (ADR 023). No services."""
+"""Schema tests for Partner Channel (ADR 023).
+
+Canonical-link compatibility is included. Visit attribution and the
+registration bonus stay out of this cut.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +13,8 @@ from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError, connection, transaction
+from django.db import IntegrityError, connection, models, transaction
+from django.test import override_settings
 from django.utils import timezone
 
 from apps.billing.models import (
@@ -22,12 +27,20 @@ from apps.billing.models import (
 from apps.billing.partner_channel import (
     CustomerAttribution,
     CustomerAttributionHistory,
+    InviteVisit,
     PartnerChannel,
     PartnerCreditGrant,
     PartnerInviteLink,
     PartnerMarginAccrual,
     PendingPartnerAttribution,
     SubscriptionRenewalCycle,
+)
+from apps.billing.services.partner_invite import (
+    canonical_invite_link,
+    create_partner_channel,
+    invite_link_for,
+    regenerate_invite_link,
+    set_invite_active,
 )
 from apps.catalog.models import Package
 from apps.esims.models import Esim, Topup, TopupNetPriceImmutable
@@ -159,8 +172,10 @@ def test_channel_and_link_are_unique_and_not_deleted() -> None:
             organization=channel.organization,
             revenue_share_percent=Decimal("10"),
         )
-    with pytest.raises(IntegrityError), transaction.atomic():
-        PartnerInviteLink.objects.create(partner_channel=channel, token="token-two")
+    second = PartnerInviteLink.objects.create(
+        partner_channel=channel, token="token-two"
+    )
+    assert second.partner_channel_id == channel.pk
     with pytest.raises(IntegrityError), transaction.atomic():
         other = _channel(_user("other-channel@example.com"))
         PartnerInviteLink.objects.create(partner_channel=other, token="token-one")
@@ -194,6 +209,113 @@ def test_customer_attribution_is_unique_per_user() -> None:
     other = _channel(_user("attr-other@example.com"))
     with pytest.raises(IntegrityError), transaction.atomic():
         _attribution(customer, other)
+
+
+@pytest.mark.django_db
+def test_attribution_snapshot_columns_and_shared_visit() -> None:
+    owner = _user("snap-owner@example.com")
+    channel = _channel(owner)
+    link = _link(channel, "snap-token")
+    link.name = "October"
+    link.source = "tiktok"
+    link.campaign = "fall"
+    link.content = "video"
+    link.save(update_fields=["name", "source", "campaign", "content", "updated_at"])
+    visit = InviteVisit.objects.create(
+        invite_link=link,
+        utm_source="tiktok",
+        utm_medium="social",
+        utm_campaign="fall-utm",
+        utm_content="bio",
+    )
+    first = _user("snap-a@example.com")
+    second = _user("snap-b@example.com")
+    _attribution(first, channel)
+    CustomerAttribution.objects.create(
+        user=second,
+        partner_channel=channel,
+        source=CustomerAttribution.Source.INVITE_LINK,
+        invite_visit=visit,
+        attributed_at=timezone.now(),
+    )
+    legacy = CustomerAttribution.objects.get(user=first)
+    shared = CustomerAttribution.objects.get(user=second)
+    assert CustomerAttribution._meta.get_field("user").one_to_one
+    visit_field = CustomerAttribution._meta.get_field("invite_visit")
+    assert visit_field.null and not visit_field.unique
+    assert visit_field.remote_field.on_delete is models.PROTECT
+    assert legacy.invite_visit_id is None
+    assert legacy.registered_via_invite is False
+    assert legacy.bonus_amount_snapshot is None
+    assert shared.invite_visit_id == visit.pk
+    assert shared.registered_via_invite is False
+    lengths = {
+        "invite_name_snapshot": 128,
+        "invite_source_snapshot": 64,
+        "invite_campaign_snapshot": 64,
+        "invite_content_snapshot": 64,
+        "utm_source_snapshot": 128,
+        "utm_medium_snapshot": 128,
+        "utm_campaign_snapshot": 128,
+        "utm_content_snapshot": 128,
+    }
+    for name, length in lengths.items():
+        assert CustomerAttribution._meta.get_field(name).max_length == length
+    bonus = CustomerAttribution._meta.get_field("bonus_amount_snapshot")
+    assert bonus.null and bonus.default is models.NOT_PROVIDED
+
+    legacy.partner_channel = channel
+    legacy.save(update_fields=["partner_channel"])
+    legacy.invite_token = "changed"
+    with pytest.raises(AppendOnlyViolation):
+        legacy.save(update_fields=["invite_token"])
+    with pytest.raises(AppendOnlyViolation):
+        CustomerAttribution.objects.filter(pk=legacy.pk).update(
+            bonus_amount_snapshot=Decimal("1.000000")
+        )
+
+
+@pytest.mark.django_db
+def test_pending_visit_is_optional_and_protected() -> None:
+    owner = _user("pend-visit-owner@example.com")
+    channel = _channel(owner)
+    link = _link(channel, "pend-token")
+    visit = InviteVisit.objects.create(invite_link=link)
+    legacy_user = _user("pend-legacy@example.com")
+    linked_user = _user("pend-linked@example.com")
+    PendingPartnerAttribution.objects.create(
+        user=legacy_user,
+        partner_channel=channel,
+        invite_token_snapshot="pend-token",
+        expires_at=timezone.now() + timedelta(hours=24),
+    )
+    pending = PendingPartnerAttribution.objects.create(
+        user=linked_user,
+        partner_channel=channel,
+        invite_token_snapshot="pend-token",
+        invite_visit=visit,
+        expires_at=timezone.now() + timedelta(hours=24),
+    )
+    field = PendingPartnerAttribution._meta.get_field("invite_visit")
+    assert field.null and field.remote_field.on_delete is models.PROTECT
+    assert pending.invite_visit_id == visit.pk
+    assert (
+        PendingPartnerAttribution.objects.get(user=legacy_user).invite_visit_id is None
+    )
+
+
+@pytest.mark.django_db
+def test_admin_attribution_stays_without_visit_or_bonus() -> None:
+    owner = _user("admin-attr-owner@example.com")
+    channel = _channel(owner)
+    customer = _user("admin-attr@example.com")
+    row = _attribution(customer, channel, source=CustomerAttribution.Source.ADMIN)
+    assert row.invite_visit_id is None
+    assert row.registered_via_invite is False
+    assert row.bonus_amount_snapshot is None
+    assert row.invite_name_snapshot == ""
+    assert row.utm_source_snapshot == ""
+    assert InviteVisit.objects.count() == 0
 
 
 @pytest.mark.django_db
@@ -514,3 +636,95 @@ def test_reverse_allows_empty_partner_ledger() -> None:
     before = CreditLedgerEntry.objects.count()
     _reverse_partner_ledger_types()
     assert CreditLedgerEntry.objects.count() == before
+
+
+@pytest.mark.django_db
+def test_negative_invite_bonus_is_rejected() -> None:
+    owner = _user("bonus-neg@example.com")
+    channel = _channel(owner)
+    with pytest.raises(IntegrityError), transaction.atomic():
+        PartnerInviteLink.objects.create(
+            partner_channel=channel,
+            token="neg-bonus",
+            bonus_amount=Decimal("-0.000001"),
+        )
+
+
+@pytest.mark.django_db
+def test_canonical_link_is_oldest_created_at_then_id() -> None:
+    owner = _user("canonical@example.com")
+    channel = _channel(owner)
+    first = _link(channel, "canon-a")
+    second = _link(channel, "canon-b")
+    stamp = timezone.now() - timedelta(days=3)
+    PartnerInviteLink.objects.filter(pk__in=[first.pk, second.pk]).update(
+        created_at=stamp
+    )
+    expected = min((first, second), key=lambda row: (stamp, row.id))
+    assert canonical_invite_link(channel).pk == expected.pk
+
+    later = timezone.now()
+    PartnerInviteLink.objects.filter(pk=first.pk).update(
+        created_at=later - timedelta(seconds=1)
+    )
+    PartnerInviteLink.objects.filter(pk=second.pk).update(created_at=later)
+    assert canonical_invite_link(channel).pk == first.pk
+
+
+@pytest.mark.django_db
+@override_settings(PARTNER_JOIN_BASE_URL="https://roamkit.net")
+def test_campaign_link_does_not_replace_canonical() -> None:
+    owner = _user("campaign-add@example.com")
+    channel = _channel(owner)
+    portal = _link(channel, "portal-token")
+    PartnerInviteLink.objects.filter(pk=portal.pk).update(
+        created_at=timezone.now() - timedelta(days=1)
+    )
+    _link(channel, "campaign-token")
+    assert canonical_invite_link(channel).pk == portal.pk
+    assert invite_link_for(channel).url.endswith("/join/portal-token")
+
+
+@pytest.mark.django_db
+def test_create_partner_channel_mints_zero_bonus_canonical_link() -> None:
+    owner = _user("create-channel@example.com")
+    org = create_organization(name="Mint org", actor=owner)
+    channel = create_partner_channel(organization=org)
+    link = canonical_invite_link(channel)
+    assert channel.invite_links.count() == 1
+    assert link.name == ""
+    assert link.bonus_amount == Decimal("0.000000")
+    assert link.source == ""
+    assert link.campaign == ""
+    assert link.content == ""
+    assert link.token
+    assert PartnerInviteLink._meta.get_field("created_at").auto_now_add is True
+    assert PartnerInviteLink._meta.get_field("token").editable is False
+
+
+@pytest.mark.django_db
+@override_settings(PARTNER_JOIN_BASE_URL="https://roamkit.net")
+def test_portal_mutations_follow_canonical_link() -> None:
+    owner = _user("mutate-canon@example.com")
+    channel = _channel(owner)
+    portal = _link(channel, "portal-live")
+    campaign = _link(channel, "campaign-live")
+    PartnerInviteLink.objects.filter(pk=portal.pk).update(
+        created_at=timezone.now() - timedelta(days=2)
+    )
+    PartnerInviteLink.objects.filter(pk=campaign.pk).update(
+        created_at=timezone.now() - timedelta(days=1)
+    )
+    set_invite_active(channel, actor=owner, active=False)
+    portal.refresh_from_db()
+    campaign.refresh_from_db()
+    assert portal.is_active is False
+    assert campaign.is_active is True
+
+    old_token = portal.token
+    regenerate_invite_link(channel, actor=owner)
+    portal.refresh_from_db()
+    campaign.refresh_from_db()
+    assert portal.token != old_token
+    assert campaign.token == "campaign-live"
+    assert invite_link_for(channel).url.endswith(f"/join/{portal.token}")
