@@ -125,6 +125,7 @@ class OpsSearchResponseSerializer(serializers.Serializer):
 class OpsUserListItemSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     email = serializers.EmailField()
+    display_name = serializers.CharField(allow_blank=True)
     is_active = serializers.BooleanField()
     is_staff = serializers.BooleanField()
     last_login = serializers.DateTimeField(allow_null=True)
@@ -136,6 +137,7 @@ class OpsUserDetailSerializer(serializers.Serializer):
     schema_version = serializers.IntegerField()
     id = serializers.IntegerField()
     email = serializers.EmailField()
+    display_name = serializers.CharField(allow_blank=True)
     is_active = serializers.BooleanField()
     is_staff = serializers.BooleanField()
     created_at = serializers.DateTimeField()

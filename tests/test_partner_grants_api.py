@@ -119,7 +119,7 @@ def test_disabled_flag_hides_the_list(client: Client) -> None:
 
 @ENABLED
 @pytest.mark.django_db
-def test_grants_return_snapshot_customer_and_masked_email(client: Client) -> None:
+def test_grants_return_snapshot_customer_and_full_email(client: Client) -> None:
     owner = _user("owner")
     channel = _channel_for(owner)
     customer = _user("ada")
@@ -138,19 +138,22 @@ def test_grants_return_snapshot_customer_and_masked_email(client: Client) -> Non
         "grant_id",
         "customer_id",
         "email",
+        "display_name",
         "amount",
         "granted_by",
         "created_at",
     }
     assert row["grant_id"] == str(grant.id)
     assert row["customer_id"] == customer.pk
-    assert row["email"] == f"a***@{customer.email.split('@', 1)[1]}"
-    assert customer.email not in response.content.decode()
-    assert owner.email not in response.content.decode()
+    assert row["email"] == customer.email
+    assert row["display_name"] == ""
+    assert customer.email in response.content.decode()
+    assert owner.email in response.content.decode()
     assert row["amount"] == "1.250000"
     assert row["granted_by"] == {
         "user_id": owner.pk,
-        "email": f"o***@{owner.email.split('@', 1)[1]}",
+        "email": owner.email,
+        "display_name": "",
     }
     assert grant.idempotency_key not in response.content.decode()
 

@@ -2,7 +2,8 @@
 
 The caller passes an already resolved ``PartnerChannel`` and validated query
 parameters. ``customer_id`` is ``customer_user_id_snapshot``. The live user is
-used only to mask the customer email, and only while that user still exists.
+used only for the customer email and display name, and only while that user
+still exists.
 """
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ from decimal import Decimal
 from uuid import UUID
 
 from apps.billing.partner_channel import PartnerChannel, PartnerCreditGrant
-from apps.billing.services.partner_customers import mask_partner_email
 
 _SORT_FIELDS = {
     "created_at": "created_at",
@@ -35,6 +35,7 @@ class PartnerGrantsQuery:
 class PartnerGrantActor:
     user_id: int
     email: str
+    display_name: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +43,7 @@ class PartnerGrantHistoryRow:
     grant_id: UUID
     customer_id: int
     email: str | None
+    display_name: str
     amount: Decimal
     granted_by: PartnerGrantActor | None
     created_at: datetime
@@ -81,18 +83,22 @@ class PartnerGrantsService:
 
 def _row(grant: PartnerCreditGrant) -> PartnerGrantHistoryRow:
     email = None
+    display_name = ""
     if grant.customer_user_id is not None and grant.customer_user is not None:
-        email = mask_partner_email(grant.customer_user.email)
+        email = grant.customer_user.email
+        display_name = (grant.customer_user.display_name or "").strip()
     actor = None
     if grant.granted_by_id is not None and grant.granted_by is not None:
         actor = PartnerGrantActor(
             user_id=grant.granted_by_user_id_snapshot,
-            email=mask_partner_email(grant.granted_by.email),
+            email=grant.granted_by.email,
+            display_name=(grant.granted_by.display_name or "").strip(),
         )
     return PartnerGrantHistoryRow(
         grant_id=grant.id,
         customer_id=grant.customer_user_id_snapshot,
         email=email,
+        display_name=display_name,
         amount=grant.amount,
         granted_by=actor,
         created_at=grant.created_at,

@@ -132,6 +132,7 @@ class PartnerCustomersView(APIView):
                         {
                             "customer_id": row.customer_id,
                             "email": row.email,
+                            "display_name": row.display_name,
                             "attributed_at": row.attributed_at,
                             "total_partner_earned": row.total_partner_earned,
                             "accrual_count": row.accrual_count,

@@ -45,6 +45,9 @@ class User(AbstractBaseUser, PermissionsMixin):
         GOOGLE = "google", "google"
 
     email = models.EmailField(unique=True, db_index=True)
+    display_name = models.CharField(
+        max_length=255, blank=True, default="", db_default=""
+    )
     wallet_address = models.CharField(
         max_length=64,
         null=True,
@@ -84,5 +87,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     class Meta:
         ordering = ["email"]
 
+    def display_label(self) -> str:
+        """Trimmed display name, or the email when that name is empty."""
+        name = (self.display_name or "").strip()
+        return name or self.email
+
     def __str__(self) -> str:
-        return self.email
+        return self.display_label()
