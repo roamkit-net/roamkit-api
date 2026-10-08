@@ -1,8 +1,4 @@
-"""Schema tests for Partner Channel (ADR 023).
-
-Canonical-link compatibility is included. Visit attribution and the
-registration bonus stay out of this cut.
-"""
+"""Schema tests for Partner Channel (ADR 023)."""
 
 from __future__ import annotations
 
@@ -35,6 +31,7 @@ from apps.billing.partner_channel import (
     PendingPartnerAttribution,
     SubscriptionRenewalCycle,
 )
+from apps.billing.services.partner_attribution import invite_snapshot_from_visit
 from apps.billing.services.partner_invite import (
     canonical_invite_link,
     create_partner_channel,
@@ -132,6 +129,10 @@ def test_partner_reference_models_point_at_audit_rows() -> None:
     assert REFERENCE_MODELS[LedgerReferenceType.PARTNER_MARGIN] is PartnerMarginAccrual
     assert REFERENCE_MODELS[LedgerReferenceType.PARTNER_GRANT_OUT] is PartnerCreditGrant
     assert REFERENCE_MODELS[LedgerReferenceType.PARTNER_GRANT_IN] is PartnerCreditGrant
+    assert (
+        REFERENCE_MODELS[LedgerReferenceType.PARTNER_INVITE_BONUS]
+        is CustomerAttribution
+    )
 
 
 @pytest.mark.django_db
@@ -302,6 +303,42 @@ def test_pending_visit_is_optional_and_protected() -> None:
     assert (
         PendingPartnerAttribution.objects.get(user=legacy_user).invite_visit_id is None
     )
+
+
+@pytest.mark.django_db
+def test_invite_snapshot_copies_link_and_visit_at_call_time() -> None:
+    owner = _user("helper-owner@example.com")
+    channel = _channel(owner)
+    link = _link(channel, "helper-token")
+    link.name = "October"
+    link.source = "tiktok"
+    link.campaign = "fall"
+    link.content = "video"
+    link.save(update_fields=["name", "source", "campaign", "content", "updated_at"])
+    visit = InviteVisit.objects.create(
+        invite_link=link,
+        utm_source="TikTok",
+        utm_medium="cpc",
+        utm_campaign="Fall",
+        utm_content="bio",
+    )
+    snapshot = invite_snapshot_from_visit(visit)
+    link.name = "November"
+    link.save(update_fields=["name", "updated_at"])
+    assert snapshot == {
+        "invite_visit": visit,
+        "invite_token": "helper-token",
+        "invite_name_snapshot": "October",
+        "invite_source_snapshot": "tiktok",
+        "invite_campaign_snapshot": "fall",
+        "invite_content_snapshot": "video",
+        "utm_source_snapshot": "TikTok",
+        "utm_medium_snapshot": "cpc",
+        "utm_campaign_snapshot": "Fall",
+        "utm_content_snapshot": "bio",
+    }
+    assert "registered_via_invite" not in snapshot
+    assert "bonus_amount_snapshot" not in snapshot
 
 
 @pytest.mark.django_db

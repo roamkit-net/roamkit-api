@@ -419,7 +419,8 @@ class GoogleAuthView(APIView):
         serializer = GoogleAuthSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         result = authenticate_with_google(
-            credential=serializer.validated_data["credential"]
+            credential=serializer.validated_data["credential"],
+            partner_pending=request.headers.get("X-Partner-Pending"),
         )
         return Response(
             {"access": result.access, "refresh": result.refresh},
