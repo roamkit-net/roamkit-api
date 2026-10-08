@@ -124,8 +124,8 @@ class GoogleAuthSerializer(serializers.Serializer):
     credential = serializers.CharField(write_only=True, min_length=1, max_length=8192)
 
 
-class GoogleAuthTokenResponseSerializer(serializers.Serializer):
-    """Same JWT pair shape as password ``/auth/token/``."""
+class AuthTokenResponseSerializer(serializers.Serializer):
+    """JWT pair shared by Google sign-in and password-reset confirm."""
 
     access = serializers.CharField()
     refresh = serializers.CharField()
