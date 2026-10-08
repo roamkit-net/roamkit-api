@@ -17,6 +17,7 @@ from rest_framework.views import APIView
 
 from apps.billing.services.partner_attribution import consume_partner_pending
 from apps.billing.services.partner_invite import issue_join_signature
+from apps.billing.services.partner_invite_visit import UTM_FIELDS
 
 logger = logging.getLogger(__name__)
 _NO_STORE = "no-store"
@@ -42,7 +43,7 @@ class PartnerJoinSignView(APIView):
             response = Response(status=status.HTTP_429_TOO_MANY_REQUESTS)
             response["Cache-Control"] = _NO_STORE
             return response
-        signed = issue_join_signature(token)
+        signed = issue_join_signature(token, _utm(request))
         if signed is None:
             logger.info(
                 "partner_join.rejected fingerprint=%s",
@@ -81,6 +82,12 @@ class PartnerConsumeView(APIView):
         response = Response({"status": result}, status=status.HTTP_200_OK)
         response["Cache-Control"] = _NO_STORE
         return response
+
+
+def _utm(request: Request) -> dict[str, object]:
+    if not isinstance(request.data, dict):
+        return {}
+    return {field: request.data.get(field, "") for field in UTM_FIELDS}
 
 
 def _allow_join(request: Request) -> bool:

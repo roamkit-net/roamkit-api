@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -23,10 +24,7 @@ from apps.billing.partner_channel import (
     PendingPartnerAttribution,
 )
 from apps.billing.services.partner_context import partner_reader_role
-from apps.billing.services.partner_pending import (
-    pending_expires_at,
-    sign_partner_pending,
-)
+from apps.billing.services.partner_invite_visit import record_visit
 from apps.organizations.models import MembershipRole, Organization
 
 logger = logging.getLogger(__name__)
@@ -126,23 +124,15 @@ def set_invite_active(
     return _view(link)
 
 
-def issue_join_signature(token: str) -> str | None:
-    """Signed payload for a current active link, or None for a generic 404."""
-    if not token or not settings.PARTNER_CHANNEL_ENABLED:
+def issue_join_signature(
+    token: str,
+    utm: Mapping[str, object] | None = None,
+) -> str | None:
+    """Lock the link, store one visit, and return a visit cookie. None is a 404."""
+    recorded = record_visit(token, utm)
+    if recorded is None:
         return None
-    link = (
-        PartnerInviteLink.objects.select_related("partner_channel")
-        .filter(token=token, is_active=True)
-        .first()
-    )
-    if link is None:
-        return None
-    expires_at = pending_expires_at()
-    return sign_partner_pending(
-        channel_id=link.partner_channel_id,
-        token=link.token,
-        expires_at=expires_at,
-    )
+    return recorded[1]
 
 
 def create_partner_channel(

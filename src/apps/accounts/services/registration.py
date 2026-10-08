@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -21,6 +23,13 @@ User = get_user_model()
 GENERIC_REGISTER_MESSAGE = (
     "If this email can be registered, you will receive a confirmation link shortly."
 )
+
+
+class RegistrationResult(StrEnum):
+    """Whether this call inserted the user. Not exposed on the public API."""
+
+    CREATED = "created"
+    EXISTING = "existing"
 
 
 class RegistrationError(Exception):
@@ -48,10 +57,13 @@ class ActivationError(Exception):
         super().__init__(message)
 
 
-def register_user(*, email: str, partner_pending: str | None = None) -> None:
+def register_user(
+    *, email: str, partner_pending: str | None = None
+) -> RegistrationResult:
     """Start email-only registration: create pending user or resend mail.
 
     Always succeeds from the caller's perspective (no email enumeration).
+    ``CREATED`` is only the request that inserted the user row.
     """
     normalized = User.objects.normalize_email(email)
     with transaction.atomic():
@@ -66,26 +78,27 @@ def register_user(*, email: str, partner_pending: str | None = None) -> None:
                 # Race: another request created the same email.
                 user = User.objects.filter(email=normalized).first()
                 if user is None:
-                    return
+                    return RegistrationResult.EXISTING
                 if user.is_active:
                     if user.has_usable_password():
                         send_password_reset_email(user)
-                    return
+                    return RegistrationResult.EXISTING
                 send_activation_email(user)
-                return
+                return RegistrationResult.EXISTING
             else:
                 send_activation_email(user)
                 _record_partner_pending(user, partner_pending)
-                return
+                return RegistrationResult.CREATED
 
         if user.is_active:
             # Already registered — send reset mail instead of silence so the
             # "check your email" UX still works for returning users.
             if user.has_usable_password():
                 send_password_reset_email(user)
-            return
+            return RegistrationResult.EXISTING
 
         send_activation_email(user)
+        return RegistrationResult.EXISTING
 
 
 def decode_uid(uid: str) -> int | None:
@@ -146,10 +159,11 @@ def activate_user(
             code="invalid_token",
         )
 
-    user.set_password(password)
-    user.is_active = True
-    user.save(update_fields=["password", "is_active", "updated_at"])
-    _apply_partner_pending(user)
+    with transaction.atomic():
+        user.set_password(password)
+        user.is_active = True
+        user.save(update_fields=["password", "is_active", "updated_at"])
+        _apply_partner_pending(user)
     return user
 
 

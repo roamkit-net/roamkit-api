@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from enum import StrEnum
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -152,7 +153,10 @@ def _link_or_activate(user: User, identity: GoogleIdentity) -> GoogleLoginOutcom
 
 
 def _resolve_user(
-    identity: GoogleIdentity, *, normalized_email: str
+    identity: GoogleIdentity,
+    *,
+    normalized_email: str,
+    partner_pending: str | None,
 ) -> tuple[User, GoogleLoginOutcome]:
     with transaction.atomic():
         user = (
@@ -165,11 +169,14 @@ def _resolve_user(
                     google_sub=identity.subject,
                 )
             _touch_login(user, identity)
+            _consume_invite(user, partner_pending)
             return user, GoogleLoginOutcome.EXISTING
 
         user = User.objects.select_for_update().filter(email=normalized_email).first()
         if user is not None:
-            return user, _link_or_activate(user, identity)
+            outcome = _link_or_activate(user, identity)
+            _consume_invite(user, partner_pending)
+            return user, outcome
 
         user = User(
             email=normalized_email,
@@ -183,6 +190,7 @@ def _resolve_user(
         user.set_unusable_password()
         user.save()
         ensure_billing_account(user)
+        _attribute_created_invite(user, partner_pending)
         metrics.incr("google_new_user_total")
         event_bus.publish(
             GoogleAccountCreated(user_id=user.pk, google_sub=identity.subject)
@@ -190,7 +198,32 @@ def _resolve_user(
         return user, GoogleLoginOutcome.CREATED
 
 
-def authenticate_with_google(*, credential: str) -> GoogleLoginResult:
+def _attribute_created_invite(user: User, signed: str | None) -> None:
+    if not signed or not settings.PARTNER_CHANNEL_ENABLED:
+        return
+    from apps.billing.services.partner_attribution import attribute_created_invite
+
+    attribute_created_invite(user, signed)
+
+
+def _consume_invite(user: User, signed: str | None) -> None:
+    """Existing and linked users never take the registration-bonus path.
+
+    A pending email registration is left for confirmation. Consume runs only
+    when that row is absent, and it records ``registered_via_invite=False``.
+    """
+    if not signed or not settings.PARTNER_CHANNEL_ENABLED:
+        return
+    from apps.billing.services.partner_attribution import consume_partner_pending
+
+    consume_partner_pending(user, signed)
+
+
+def authenticate_with_google(
+    *,
+    credential: str,
+    partner_pending: str | None = None,
+) -> GoogleLoginResult:
     """Verify credential, link/create user under row lock, return JWT pair."""
     if not credential or not isinstance(credential, str) or not credential.strip():
         _fail(GoogleAuthErrorCode.INVALID_TOKEN)
@@ -212,7 +245,11 @@ def authenticate_with_google(*, credential: str) -> GoogleLoginResult:
     outcome = GoogleLoginOutcome.EXISTING
     for _attempt in range(3):
         try:
-            user, outcome = _resolve_user(identity, normalized_email=normalized_email)
+            user, outcome = _resolve_user(
+                identity,
+                normalized_email=normalized_email,
+                partner_pending=partner_pending,
+            )
             break
         except IntegrityError:
             # Parallel create/link — retry a fresh atomic resolve.
