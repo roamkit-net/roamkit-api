@@ -10,6 +10,12 @@ from .secrets import require_production_secret
 
 DEBUG = False
 
+_base_origins = CORS_ALLOWED_ORIGINS  # noqa: F405
+CORS_ALLOWED_ORIGINS = [
+    *_base_origins,
+    "https://team.roamkit.net",
+]
+
 SECRET_KEY = require_production_secret(os.environ.get("DJANGO_SECRET_KEY"))
 
 # Docker healthchecks and deploy script curl localhost from inside the container.

@@ -1,4 +1,4 @@
-"""GET /api/v1/orgs/partner/customers/ (ADR 023)."""
+"""GET /api/v1/orgs/partner/grants/ (ADR 023)."""
 
 from __future__ import annotations
 
@@ -19,9 +19,9 @@ from rest_framework.views import APIView
 
 from apps.billing.serializers import (
     PartnerChannelCodeSerializer,
-    PartnerCustomersPageSerializer,
-    PartnerCustomersQueryError,
-    parse_partner_customers_query,
+    PartnerGrantsPageSerializer,
+    PartnerGrantsQueryError,
+    parse_partner_grants_query,
 )
 from apps.billing.services.partner_context import (
     PartnerAccessDenied,
@@ -29,7 +29,7 @@ from apps.billing.services.partner_context import (
     resolve_partner_summary_channel,
     stamp_partner_role,
 )
-from apps.billing.services.partner_customers import partner_customers_service
+from apps.billing.services.partner_grants import partner_grants_service
 
 _NO_STORE = "no-store"
 
@@ -43,12 +43,9 @@ def _coded(http_status: int, code: str) -> Response:
 @extend_schema_view(
     get=extend_schema(
         tags=["Organizations"],
-        operation_id="orgs_partner_customers",
-        summary="Partner channel customers",
-        description=(
-            "Current attributions for the caller's single partner channel, "
-            "with earnings from stored accruals."
-        ),
+        operation_id="orgs_partner_grants",
+        summary="Partner channel grant history",
+        description="Stored credit grants for the caller's single partner channel.",
         parameters=[
             OpenApiParameter("page", OpenApiTypes.INT, required=False),
             OpenApiParameter("page_size", OpenApiTypes.INT, required=False),
@@ -56,7 +53,7 @@ def _coded(http_status: int, code: str) -> Response:
                 "sort",
                 OpenApiTypes.STR,
                 required=False,
-                enum=["attributed_at", "total_partner_earned", "accrual_count"],
+                enum=["created_at", "amount"],
             ),
             OpenApiParameter(
                 "order",
@@ -64,18 +61,16 @@ def _coded(http_status: int, code: str) -> Response:
                 required=False,
                 enum=["asc", "desc"],
             ),
-            OpenApiParameter("q", OpenApiTypes.STR, required=False),
         ],
         responses={
             200: OpenApiResponse(
-                response=PartnerCustomersPageSerializer,
-                description="Customer page",
+                response=PartnerGrantsPageSerializer,
+                description="Grant page",
             ),
             400: OpenApiResponse(
                 response=PartnerChannelCodeSerializer,
                 description=(
-                    "invalid_page, invalid_page_size, invalid_sort, "
-                    "invalid_order, or invalid_query"
+                    "invalid_page, invalid_page_size, invalid_sort, or invalid_order"
                 ),
             ),
             401: OpenApiResponse(
@@ -97,8 +92,8 @@ def _coded(http_status: int, code: str) -> Response:
         },
     ),
 )
-class PartnerCustomersView(APIView):
-    """Read customers. Auth, flag, summary resolver, then the list service."""
+class PartnerGrantsView(APIView):
+    """Read grant history. Auth, flag, summary resolver, then the list service."""
 
     permission_classes = [IsAuthenticated]
 
@@ -117,24 +112,32 @@ class PartnerCustomersView(APIView):
         except PartnerContextAmbiguous:
             return _coded(status.HTTP_409_CONFLICT, "partner_context_ambiguous")
         try:
-            query = parse_partner_customers_query(request.query_params)
-        except PartnerCustomersQueryError as exc:
+            query = parse_partner_grants_query(request.query_params)
+        except PartnerGrantsQueryError as exc:
             return _coded(status.HTTP_400_BAD_REQUEST, exc.code)
 
-        page = partner_customers_service.list_customers(channel, query)
+        page = partner_grants_service.list_grants(channel, query)
         response = Response(
-            PartnerCustomersPageSerializer(
+            PartnerGrantsPageSerializer(
                 {
                     "count": page.count,
                     "page": page.page,
                     "page_size": page.page_size,
                     "results": [
                         {
+                            "grant_id": row.grant_id,
                             "customer_id": row.customer_id,
                             "email": row.email,
-                            "attributed_at": row.attributed_at,
-                            "total_partner_earned": row.total_partner_earned,
-                            "accrual_count": row.accrual_count,
+                            "amount": row.amount,
+                            "granted_by": (
+                                None
+                                if row.granted_by is None
+                                else {
+                                    "user_id": row.granted_by.user_id,
+                                    "email": row.granted_by.email,
+                                }
+                            ),
+                            "created_at": row.created_at,
                         }
                         for row in page.results
                     ],

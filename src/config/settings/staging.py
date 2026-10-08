@@ -1,9 +1,20 @@
 """Staging settings — Traefik proxy headers and hardened defaults."""
 
+import os
+
 from .airalo_guards import parse_blocked_client_ids, validate_staging_airalo
 from .base import *  # noqa: F403
 
 DEBUG = False
+
+_base_origins = CORS_ALLOWED_ORIGINS  # noqa: F405
+CORS_ALLOWED_ORIGINS = [
+    *_base_origins,
+    "https://team.staging.roamkit.net",
+]
+PARTNER_JOIN_BASE_URL = os.environ.get(  # noqa: F405
+    "PARTNER_JOIN_BASE_URL", "https://staging.roamkit.net"
+).rstrip("/")
 
 # Docker healthchecks and deploy script curl localhost from inside the container.
 ALLOWED_HOSTS = list(

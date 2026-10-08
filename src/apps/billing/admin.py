@@ -13,6 +13,7 @@ from django.urls import path, reverse
 from django.utils.html import format_html
 
 import apps.billing.admin_vouchers as _admin_vouchers  # noqa: F401
+import apps.billing.partner_admin as _partner_admin  # noqa: F401
 from apps.billing.exceptions import (
     CreditServiceError,
     DepositVerificationError,

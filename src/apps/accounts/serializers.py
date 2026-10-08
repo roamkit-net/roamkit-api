@@ -21,7 +21,10 @@ class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
     def create(self, validated_data: dict) -> dict:
-        register_user(email=validated_data["email"])
+        register_user(
+            email=validated_data["email"],
+            partner_pending=self.context.get("partner_pending"),
+        )
         return validated_data
 
 

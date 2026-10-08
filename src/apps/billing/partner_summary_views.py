@@ -19,6 +19,7 @@ from apps.billing.services.partner_context import (
     PartnerAccessDenied,
     PartnerContextAmbiguous,
     resolve_partner_summary_channel,
+    stamp_partner_role,
 )
 from apps.billing.services.partner_summary import partner_summary_service
 
@@ -102,4 +103,5 @@ class PartnerSummaryView(APIView):
             status=status.HTTP_200_OK,
         )
         response["Cache-Control"] = _NO_STORE
+        stamp_partner_role(response, request.user, channel)
         return response

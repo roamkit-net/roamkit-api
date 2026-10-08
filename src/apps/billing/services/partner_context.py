@@ -41,6 +41,30 @@ def resolve_partner_summary_channel(user: User) -> PartnerChannel:
     return _resolve_channel(user, _SUMMARY_ROLES)
 
 
+def partner_reader_role(user: User, partner_channel: PartnerChannel) -> str:
+    """Active portal role on this channel's organization. Empty when none."""
+    from apps.organizations.models import Membership
+
+    role = (
+        Membership.objects.filter(
+            organization_id=partner_channel.organization_id,
+            user_id=user.pk,
+            status=MembershipStatus.ACTIVE,
+            role__in=_SUMMARY_ROLES,
+        )
+        .values_list("role", flat=True)
+        .first()
+    )
+    return role or ""
+
+
+def stamp_partner_role(response, user: User, partner_channel: PartnerChannel) -> None:
+    """Presentation hint only. Tenant resolution never reads this header."""
+    role = partner_reader_role(user, partner_channel)
+    if role in {MembershipRole.OWNER, MembershipRole.ADMIN, MembershipRole.VIEWER}:
+        response["X-Partner-Role"] = role
+
+
 def _resolve_channel(user: User, roles: tuple[str, ...]) -> PartnerChannel:
     channels = list(
         PartnerChannel.objects.filter(

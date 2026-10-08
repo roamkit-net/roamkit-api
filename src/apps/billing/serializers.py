@@ -10,6 +10,7 @@ from rest_framework import serializers
 
 from apps.billing.models import DepositRequest
 from apps.billing.services.partner_customers import PartnerCustomersQuery
+from apps.billing.services.partner_grants import PartnerGrantsQuery
 
 _BIGINT_MAX = 2**63 - 1
 _GRANT_FIELDS = frozenset({"customer_id", "amount", "idempotency_key"})
@@ -241,18 +242,25 @@ def _query_int(
     *,
     minimum: int,
     maximum: int | None = None,
+    error: type[Exception] = PartnerCustomersQueryError,
 ) -> int:
     if not isinstance(raw, str) or _QUERY_INT_RE.fullmatch(raw) is None:
-        raise PartnerCustomersQueryError(code)
+        raise error(code)
     value = int(raw)
     if value < minimum or (maximum is not None and value > maximum):
-        raise PartnerCustomersQueryError(code)
+        raise error(code)
     return value
 
 
-def _query_choice(raw: object, allowed: frozenset[str], code: str) -> str:
+def _query_choice(
+    raw: object,
+    allowed: frozenset[str],
+    code: str,
+    *,
+    error: type[Exception] = PartnerCustomersQueryError,
+) -> str:
     if not isinstance(raw, str) or raw not in allowed:
-        raise PartnerCustomersQueryError(code)
+        raise error(code)
     return raw
 
 
@@ -278,3 +286,75 @@ class PartnerCustomersPageSerializer(serializers.Serializer):
     page = serializers.IntegerField(min_value=1)
     page_size = serializers.IntegerField(min_value=1, max_value=100)
     results = PartnerCustomerSerializer(many=True)
+
+
+_GRANT_SORTS = frozenset({"created_at", "amount"})
+
+
+class PartnerGrantsQueryError(Exception):
+    """Grants query failed the locked envelope."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def parse_partner_grants_query(params: object) -> PartnerGrantsQuery:
+    """Validate grants query params. There is no ``q``."""
+    if not hasattr(params, "get"):
+        raise PartnerGrantsQueryError("invalid_page")
+    return PartnerGrantsQuery(
+        page=_query_int(
+            params.get("page", "1"),
+            "invalid_page",
+            minimum=1,
+            error=PartnerGrantsQueryError,
+        ),
+        page_size=_query_int(
+            params.get("page_size", "50"),
+            "invalid_page_size",
+            minimum=1,
+            maximum=100,
+            error=PartnerGrantsQueryError,
+        ),
+        sort=_query_choice(
+            params.get("sort", "created_at"),
+            _GRANT_SORTS,
+            "invalid_sort",
+            error=PartnerGrantsQueryError,
+        ),
+        order=_query_choice(
+            params.get("order", "desc"),
+            _CUSTOMER_ORDERS,
+            "invalid_order",
+            error=PartnerGrantsQueryError,
+        ),
+    )
+
+
+class PartnerGrantActorSerializer(serializers.Serializer):
+    user_id = serializers.IntegerField(min_value=1, max_value=_BIGINT_MAX)
+    email = serializers.CharField()
+
+
+class PartnerGrantHistorySerializer(serializers.Serializer):
+    grant_id = serializers.UUIDField()
+    customer_id = serializers.IntegerField(min_value=1, max_value=_BIGINT_MAX)
+    email = serializers.CharField(allow_null=True)
+    amount = serializers.DecimalField(max_digits=20, decimal_places=6)
+    granted_by = PartnerGrantActorSerializer(allow_null=True)
+    created_at = serializers.DateTimeField()
+
+
+class PartnerGrantsPageSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+    page = serializers.IntegerField(min_value=1)
+    page_size = serializers.IntegerField(min_value=1, max_value=100)
+    results = PartnerGrantHistorySerializer(many=True)
+
+
+class PartnerInviteLinkSerializer(serializers.Serializer):
+    url = serializers.CharField()
+    is_active = serializers.BooleanField()
+    created_at = serializers.DateTimeField()
+    regenerated_at = serializers.DateTimeField(allow_null=True)

@@ -1,0 +1,198 @@
+"""Partner invite link reads and owner mutations (ADR 023).
+
+One permanent link per channel. Regenerate replaces the token on that row.
+"""
+
+from __future__ import annotations
+
+import logging
+import secrets
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
+
+from django.conf import settings
+from django.db import IntegrityError, transaction
+from django.utils import timezone
+
+from apps.accounts.models import User
+from apps.billing.partner_channel import (
+    PartnerChannel,
+    PartnerInviteLink,
+    PendingPartnerAttribution,
+)
+from apps.billing.services.partner_context import partner_reader_role
+from apps.billing.services.partner_pending import (
+    pending_expires_at,
+    sign_partner_pending,
+)
+from apps.organizations.models import MembershipRole, Organization
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_SHARE = Decimal("50.00")
+
+
+class PartnerInviteForbidden(Exception):
+    """Admin or viewer tried to change the invite link."""
+
+    code = "partner_invite_forbidden"
+
+
+class PartnerInviteError(Exception):
+    """The invite link could not be minted."""
+
+
+@dataclass(frozen=True, slots=True)
+class PartnerInviteLinkView:
+    url: str
+    is_active: bool
+    created_at: datetime
+    regenerated_at: datetime | None
+
+
+def require_partner_owner(user: User, partner_channel: PartnerChannel) -> None:
+    if partner_reader_role(user, partner_channel) != MembershipRole.OWNER:
+        raise PartnerInviteForbidden("Invite changes require an owner")
+
+
+def invite_link_for(partner_channel: PartnerChannel) -> PartnerInviteLinkView:
+    link = partner_channel.invite_link
+    return _view(link)
+
+
+def regenerate_invite_link(
+    partner_channel: PartnerChannel,
+    *,
+    actor: User,
+    request_id: str | None = None,
+) -> PartnerInviteLinkView:
+    with transaction.atomic():
+        link = PartnerInviteLink.objects.select_for_update().get(
+            partner_channel=partner_channel
+        )
+        old_token = link.token
+        link.regenerated_at = timezone.now()
+        _assign_token(link)
+        PendingPartnerAttribution.objects.filter(
+            partner_channel=partner_channel,
+            invite_token_snapshot=old_token,
+        ).delete()
+    if request_id is not None:
+        _audit("partner_invite.regenerated", actor, partner_channel, request_id)
+    return _view(link)
+
+
+def set_invite_active(
+    partner_channel: PartnerChannel,
+    *,
+    actor: User,
+    active: bool,
+    request_id: str | None = None,
+) -> PartnerInviteLinkView:
+    with transaction.atomic():
+        link = PartnerInviteLink.objects.select_for_update().get(
+            partner_channel=partner_channel
+        )
+        changed = link.is_active != active
+        if changed:
+            link.is_active = active
+            link.save(update_fields=["is_active"])
+    if changed and request_id is not None:
+        action = "partner_invite.activated" if active else "partner_invite.deactivated"
+        _audit(action, actor, partner_channel, request_id)
+    return _view(link)
+
+
+def issue_join_signature(token: str) -> str | None:
+    """Signed payload for a current active link, or None for a generic 404."""
+    if not token or not settings.PARTNER_CHANNEL_ENABLED:
+        return None
+    link = (
+        PartnerInviteLink.objects.select_related("partner_channel")
+        .filter(token=token, is_active=True)
+        .first()
+    )
+    if link is None:
+        return None
+    expires_at = pending_expires_at()
+    return sign_partner_pending(
+        channel_id=link.partner_channel_id,
+        token=link.token,
+        expires_at=expires_at,
+    )
+
+
+def create_partner_channel(
+    *,
+    organization: Organization,
+    revenue_share_percent: Decimal = _DEFAULT_SHARE,
+) -> PartnerChannel:
+    """Create the channel and its one invite link, or create neither."""
+    if organization.account_id is None:
+        raise PartnerInviteError("Organization has no team account")
+    for _ in range(5):
+        try:
+            with transaction.atomic():
+                channel = PartnerChannel.objects.create(
+                    organization=organization,
+                    revenue_share_percent=revenue_share_percent,
+                    is_active=True,
+                )
+                PartnerInviteLink.objects.create(
+                    partner_channel=channel,
+                    token=secrets.token_urlsafe(24),
+                    is_active=True,
+                )
+        except IntegrityError:
+            continue
+        else:
+            return channel
+    raise PartnerInviteError("Could not mint a unique invite token")
+
+
+def _assign_token(link: PartnerInviteLink) -> None:
+    for _ in range(5):
+        link.token = secrets.token_urlsafe(24)
+        try:
+            with transaction.atomic():
+                link.save(update_fields=["token", "regenerated_at"])
+        except IntegrityError:
+            continue
+        else:
+            return
+    raise PartnerInviteError("Could not mint a unique invite token")
+
+
+def _view(link: PartnerInviteLink) -> PartnerInviteLinkView:
+    base = settings.PARTNER_JOIN_BASE_URL.rstrip("/")
+    return PartnerInviteLinkView(
+        url=f"{base}/join/{link.token}",
+        is_active=link.is_active,
+        created_at=link.created_at,
+        regenerated_at=link.regenerated_at,
+    )
+
+
+def _audit(
+    action: str,
+    actor: User,
+    partner_channel: PartnerChannel,
+    request_id: str,
+) -> None:
+    logger.info(
+        "%s actor_user_id=%s partner_channel_id=%s organization_id=%s "
+        "action=%s created_at=%s request_id=%s",
+        action,
+        actor.pk,
+        partner_channel.pk,
+        partner_channel.organization_id,
+        action,
+        timezone.now().isoformat().replace("+00:00", "Z"),
+        request_id,
+    )
+
+
+def _unused_integrity() -> None:
+    """Keep IntegrityError imported for the token insert race retry below."""
+    raise IntegrityError()
