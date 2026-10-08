@@ -218,3 +218,85 @@ def test_purchase_is_idempotent_on_key(
     assert len(provider.submit_calls) == 1
     user.billing_account.refresh_from_db()
     assert user.billing_account.balance == Decimal("5.000000")
+
+
+@pytest.mark.django_db
+@override_settings(BILLING_ENABLED=True, PRICING_PROFILES_ENABLED=False)
+def test_reserve_snapshots_list_and_net_when_pricing_profiles_off(
+    user: User, esim: Esim, topup_result: TopupResult
+) -> None:
+    _fund(user, "10.00")
+    topup = TopupService(FakeTopupProvider(result=topup_result)).purchase(
+        esim, package_id="topup-1gb", idempotency_key="topup-snap-off"
+    )
+    topup.refresh_from_db()
+    assert topup.status == Topup.Status.FULFILLED
+    assert topup.list_price_usd == Decimal("5.00")
+    assert topup.net_price_usd == Decimal("4.500000")
+    assert topup.amount == Decimal("5.00")
+
+
+@pytest.mark.django_db
+@override_settings(BILLING_ENABLED=True, PRICING_PROFILES_ENABLED=True)
+def test_reserve_snapshots_list_and_net_when_pricing_profiles_on(
+    user: User, esim: Esim, topup_result: TopupResult
+) -> None:
+    from apps.pricing.models import FloorPolicy, PricingProfile
+
+    profile = PricingProfile.objects.create(
+        name="Family",
+        slug="family-topup-snap",
+        discount_percent=Decimal("10.00"),
+        floor_policy=FloorPolicy.WHOLESALE,
+    )
+    account = user.billing_account
+    account.pricing_profile = profile
+    account.save(update_fields=["pricing_profile", "updated_at"])
+    _fund(user, "10.00")
+
+    topup = TopupService(FakeTopupProvider(result=topup_result)).purchase(
+        esim, package_id="topup-1gb", idempotency_key="topup-snap-on"
+    )
+    topup.refresh_from_db()
+    # L=5.00 N=4.50 D=10% → customer pays 4.95. List and net stay the package snapshot.
+    assert topup.amount == Decimal("4.950000")
+    assert topup.list_price_usd == Decimal("5.00")
+    assert topup.net_price_usd == Decimal("4.500000")
+
+
+@pytest.mark.django_db
+@override_settings(BILLING_ENABLED=True, PRICING_PROFILES_ENABLED=False)
+def test_reserve_keeps_null_net_and_still_snapshots_list(
+    user: User, esim: Esim, topup_result: TopupResult
+) -> None:
+    _fund(user, "10.00")
+    package = TopupPackage(
+        external_id="topup-1gb",
+        title="1 GB Top-up",
+        data_allowance="1 GB",
+        validity_days=7,
+        price_usd=Decimal("5.00"),
+        net_price_usd=None,
+        is_unlimited=False,
+        plan_type="topup",
+    )
+    topup = TopupService(
+        FakeTopupProvider(topups=[package], result=topup_result)
+    ).purchase(esim, package_id="topup-1gb", idempotency_key="topup-snap-null-net")
+    topup.refresh_from_db()
+    assert topup.list_price_usd == Decimal("5.00")
+    assert topup.net_price_usd is None
+
+
+@pytest.mark.django_db
+@override_settings(BILLING_ENABLED=True, PRICING_PROFILES_ENABLED=False)
+def test_failed_reserve_keeps_commercial_snapshot(user: User, esim: Esim) -> None:
+    _fund(user, "10.00")
+    with pytest.raises(ProviderFulfillmentError):
+        TopupService(FakeTopupProvider(fail=True)).purchase(
+            esim, package_id="topup-1gb", idempotency_key="topup-snap-fail"
+        )
+    topup = Topup.objects.get()
+    assert topup.status == Topup.Status.FAILED
+    assert topup.list_price_usd == Decimal("5.00")
+    assert topup.net_price_usd == Decimal("4.500000")

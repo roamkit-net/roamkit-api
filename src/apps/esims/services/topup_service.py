@@ -10,7 +10,12 @@ from django.db import IntegrityError, transaction
 
 from apps.billing.exceptions import BillingDisabledError
 from apps.billing.models import LedgerReferenceType
+from apps.billing.partner_channel import PartnerMarginAccrual
 from apps.billing.services import credit_service
+from apps.billing.services.partner_margin import (
+    build_source_id,
+    partner_margin_service,
+)
 from apps.esims.exceptions import TopupPackageNotFoundError
 from apps.esims.models import Topup
 from apps.orders.exceptions import (
@@ -145,6 +150,12 @@ class TopupService:
                 account=account, package=package
             )
             amount = pricing_kwargs.get("amount", package.price_usd)
+            # Package list and wholesale, independent of the pricing-profile flag.
+            create_fields = {
+                key: value for key, value in pricing_kwargs.items() if key != "amount"
+            }
+            create_fields["list_price_usd"] = package.price_usd
+            create_fields["net_price_usd"] = package.net_price_usd
 
             try:
                 topup = Topup.objects.create(
@@ -154,7 +165,7 @@ class TopupService:
                     amount=amount,
                     status=Topup.Status.FULFILLING,
                     idempotency_key=idempotency_key,
-                    **{k: v for k, v in pricing_kwargs.items() if k != "amount"},
+                    **create_fields,
                 )
             except IntegrityError:
                 existing = Topup.objects.filter(idempotency_key=idempotency_key).first()
@@ -237,6 +248,16 @@ class TopupService:
             topup.external_order_id = result.external_order_id
             topup.status = Topup.Status.FULFILLED
             topup.save(update_fields=["external_order_id", "status", "updated_at"])
+            partner_margin_service.accrue(
+                source_type=PartnerMarginAccrual.SourceType.TOPUP,
+                source_id=build_source_id(
+                    source_type=PartnerMarginAccrual.SourceType.TOPUP,
+                    source_uuid=topup.pk,
+                ),
+                list_price=topup.list_price_usd,
+                net_price=topup.net_price_usd,
+                customer=topup.account.user,
+            )
 
         event_bus.publish(
             TopupCompleted(

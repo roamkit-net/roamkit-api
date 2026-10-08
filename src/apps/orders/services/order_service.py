@@ -10,7 +10,12 @@ from django.db import IntegrityError, transaction
 
 from apps.billing.exceptions import BillingDisabledError
 from apps.billing.models import LedgerReferenceType
+from apps.billing.partner_channel import PartnerMarginAccrual
 from apps.billing.services import credit_service, ensure_billing_account
+from apps.billing.services.partner_margin import (
+    build_source_id,
+    partner_margin_service,
+)
 from apps.esims.models import Esim
 from apps.esims.services.lifecycle_service import lifecycle_service
 from apps.orders.exceptions import IdempotencyKeyRequiredError, SpendInProgressError
@@ -281,6 +286,16 @@ class OrderService:
                         activation_policy=policy,
                     )
                 )
+            partner_margin_service.accrue(
+                source_type=PartnerMarginAccrual.SourceType.ORDER,
+                source_id=build_source_id(
+                    source_type=PartnerMarginAccrual.SourceType.ORDER,
+                    source_uuid=order.pk,
+                ),
+                list_price=order.list_price_usd,
+                net_price=order.net_price_usd,
+                customer=actor,
+            )
         return esims
 
     def _publish_created_events(
