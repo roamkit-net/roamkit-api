@@ -50,3 +50,35 @@ class BillingVoucherRedeemRateThrottle(SimpleRateThrottle):
             reason="rate_limited",
         )
         return super().throttle_failure()
+
+
+class PartnerGrantRateThrottle(SimpleRateThrottle):
+    """New partner grants per authenticated user and channel.
+
+    Not attached as ``throttle_classes``: an idempotent replay must still
+    succeed after the limit. The view calls :meth:`allow_request` only when
+    no grant row exists for the key.
+    """
+
+    scope = "partner_grant"
+
+    def get_rate(self) -> str | None:
+        rates = settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {})
+        try:
+            return rates[self.scope]
+        except KeyError as exc:
+            msg = (
+                f"No default throttle rate set for scope '{self.scope}' "
+                "in REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']."
+            )
+            raise ImproperlyConfigured(msg) from exc
+
+    def get_cache_key(self, request: Request, view: APIView) -> str | None:
+        channel_id = getattr(view, "partner_channel_id", None)
+        user = getattr(request, "user", None)
+        if channel_id is None or user is None or not user.is_authenticated:
+            return None
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": f"{user.pk}:{channel_id}",
+        }

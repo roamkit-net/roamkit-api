@@ -73,6 +73,7 @@ class PartnerGrantService:
         customer: User,
         amount: Decimal | int | str,
         idempotency_key: str,
+        request_id: str | None = None,
     ) -> PartnerCreditGrant:
         if not idempotency_key:
             raise PartnerGrantError("idempotency_key is required")
@@ -124,7 +125,7 @@ class PartnerGrantService:
                     reference_id=str(grant_id),
                     idempotency_key=f"partner-grant-in:{grant_id}",
                 )
-                return PartnerCreditGrant.objects.create(
+                created = PartnerCreditGrant.objects.create(
                     id=grant_id,
                     partner_channel=partner_channel,
                     customer_user=customer,
@@ -142,6 +143,9 @@ class PartnerGrantService:
             if raced is None:
                 raise
             return self._matching(raced, customer, quantized)
+        if request_id is not None:
+            _audit_created(created, request_id)
+        return created
 
     @staticmethod
     def _require_grant_membership(actor: User, partner_channel: PartnerChannel) -> None:
@@ -198,6 +202,24 @@ class PartnerGrantService:
                 "idempotency_key was already used for a different grant"
             )
         return grant
+
+
+def _audit_created(grant: PartnerCreditGrant, request_id: str) -> None:
+    """HTTP audit after the grant transaction has committed."""
+    created_at = grant.created_at.isoformat().replace("+00:00", "Z")
+    logger.info(
+        "partner_grant.created actor_user_id=%s partner_channel_id=%s "
+        "organization_id=%s action=%s created_at=%s request_id=%s "
+        "target_customer_id=%s amount=%s",
+        grant.granted_by_user_id_snapshot,
+        grant.partner_channel_id,
+        grant.partner_channel.organization_id,
+        "partner_grant.created",
+        created_at,
+        request_id,
+        grant.customer_user_id_snapshot,
+        f"{grant.amount:.6f}",
+    )
 
 
 partner_grant_service = PartnerGrantService()

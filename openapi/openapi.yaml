@@ -715,6 +715,65 @@ paths:
       summary: Deposit metadata
       tags:
       - Billing
+  /api/v1/billing/partner-grants/:
+    post:
+      description: Move credits from the caller's single partner-channel team account to an attributed
+        customer's personal account. The body is only customer_id, amount, and idempotency_key.
+      operationId: billing_partner_grant
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PartnerGrantRequestRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerGrantResponse'
+          description: Created grant, or the original grant on replay
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerGrantCode'
+          description: invalid_request or invalid_amount
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerGrantCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerGrantCode'
+          description: partner_access_denied or partner_grant_forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerGrantCode'
+          description: partner_channel_disabled or customer_not_found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerGrantCode'
+          description: partner_context_ambiguous, idempotency_key_conflict, insufficient_funds, or customer_attribution_changed
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerGrantCode'
+          description: rate_limited
+      security:
+      - bearerAuth: []
+      summary: Grant partner credits to an attributed customer
+      tags:
+      - Billing
   /api/v1/billing/verify-cex/:
     post:
       description: Verify an on-chain USDT transfer credited from a CEX or manual send.
@@ -5265,6 +5324,57 @@ components:
       required:
       - count
       - results
+      type: object
+    PartnerGrantCode:
+      description: Partner grant error body. Exactly one code, no field names.
+      properties:
+        code:
+          type: string
+      required:
+      - code
+      type: object
+    PartnerGrantRequestRequest:
+      description: 'Locked grant body: ``customer_id``, ``amount``, ``idempotency_key``.'
+      properties:
+        amount:
+          minLength: 1
+          type: string
+        customer_id:
+          format: int64
+          maximum: 9223372036854775807
+          minimum: 1
+          type: integer
+        idempotency_key:
+          maxLength: 128
+          minLength: 1
+          type: string
+      required:
+      - amount
+      - customer_id
+      - idempotency_key
+      type: object
+    PartnerGrantResponse:
+      properties:
+        amount:
+          format: decimal
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        customer_id:
+          format: int64
+          maximum: 9223372036854775807
+          minimum: 1
+          type: integer
+        grant_id:
+          format: uuid
+          type: string
+      required:
+      - amount
+      - created_at
+      - customer_id
+      - grant_id
       type: object
     PasswordResetConfirmRequest:
       properties:

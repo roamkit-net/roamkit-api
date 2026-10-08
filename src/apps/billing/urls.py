@@ -2,6 +2,7 @@
 
 from django.urls import path
 
+from apps.billing.partner_grant_views import PartnerGrantView
 from apps.billing.views import (
     BalanceView,
     BillingConfigView,
@@ -29,5 +30,10 @@ urlpatterns = [
         "vouchers/redeem/",
         VoucherRedeemView.as_view(),
         name="billing-vouchers-redeem",
+    ),
+    path(
+        "partner-grants/",
+        PartnerGrantView.as_view(),
+        name="billing-partner-grants",
     ),
 ]
