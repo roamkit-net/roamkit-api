@@ -2150,6 +2150,81 @@ paths:
       summary: Accept an organization invite
       tags:
       - Organizations
+  /api/v1/orgs/partner/customers/:
+    get:
+      description: Current attributions for the caller's single partner channel, with earnings from stored
+        accruals.
+      operationId: orgs_partner_customers
+      parameters:
+      - in: query
+        name: order
+        schema:
+          enum:
+          - asc
+          - desc
+          type: string
+      - in: query
+        name: page
+        schema:
+          type: integer
+      - in: query
+        name: page_size
+        schema:
+          type: integer
+      - in: query
+        name: q
+        schema:
+          type: string
+      - in: query
+        name: sort
+        schema:
+          enum:
+          - accrual_count
+          - attributed_at
+          - total_partner_earned
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerCustomersPage'
+          description: Customer page
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: invalid_page, invalid_page_size, invalid_sort, invalid_order, or invalid_query
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_context_ambiguous
+      security:
+      - bearerAuth: []
+      summary: Partner channel customers
+      tags:
+      - Organizations
   /api/v1/orgs/partner/summary/:
     get:
       description: Stored margin total, display balance, and accrual counts for the caller's single partner
@@ -5373,6 +5448,54 @@ components:
           type: string
       required:
       - code
+      type: object
+    PartnerCustomer:
+      properties:
+        accrual_count:
+          minimum: 0
+          type: integer
+        attributed_at:
+          format: date-time
+          type: string
+        customer_id:
+          format: int64
+          maximum: 9223372036854775807
+          minimum: 1
+          type: integer
+        email:
+          type: string
+        total_partner_earned:
+          format: decimal
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
+          type: string
+      required:
+      - accrual_count
+      - attributed_at
+      - customer_id
+      - email
+      - total_partner_earned
+      type: object
+    PartnerCustomersPage:
+      properties:
+        count:
+          minimum: 0
+          type: integer
+        page:
+          minimum: 1
+          type: integer
+        page_size:
+          maximum: 100
+          minimum: 1
+          type: integer
+        results:
+          items:
+            $ref: '#/components/schemas/PartnerCustomer'
+          type: array
+      required:
+      - count
+      - page
+      - page_size
+      - results
       type: object
     PartnerGrantCode:
       description: Partner grant error body. Exactly one code, no field names.

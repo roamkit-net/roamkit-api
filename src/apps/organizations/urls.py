@@ -2,6 +2,7 @@
 
 from django.urls import path
 
+from apps.billing.partner_customers_views import PartnerCustomersView
 from apps.billing.partner_summary_views import PartnerSummaryView
 from apps.organizations.views import (
     OrganizationDetailView,
@@ -26,6 +27,11 @@ urlpatterns = [
         "partner/summary/",
         PartnerSummaryView.as_view(),
         name="partner-summary",
+    ),
+    path(
+        "partner/customers/",
+        PartnerCustomersView.as_view(),
+        name="partner-customers",
     ),
     path(
         "invites/accept/",
