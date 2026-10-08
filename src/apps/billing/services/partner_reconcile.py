@@ -102,5 +102,5 @@ def _orphan_ledgers(
 
 
 def _invite_drift() -> list[str]:
-    missing = PartnerChannel.objects.filter(invite_link__isnull=True)
+    missing = PartnerChannel.objects.filter(invite_links__isnull=True)
     return [f"partner channel {channel.pk} has no invite link" for channel in missing]

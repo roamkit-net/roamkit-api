@@ -25,6 +25,7 @@ from apps.billing.partner_channel import (
 )
 from apps.billing.services.partner_attribution import consume_partner_pending
 from apps.billing.services.partner_invite import (
+    canonical_invite_link,
     create_partner_channel,
     issue_join_signature,
     regenerate_invite_link,
@@ -81,7 +82,7 @@ def _role(channel, user: User, role: str) -> None:
 def test_owner_reads_and_regenerates_one_link(caplog, client: Client) -> None:
     owner = _user("owner")
     channel = _channel(owner)
-    old = channel.invite_link.token
+    old = canonical_invite_link(channel).token
     pending_user = _user("pending", active=False)
     PendingPartnerAttribution.objects.create(
         user=pending_user,
@@ -143,7 +144,7 @@ def test_viewer_reads_and_cannot_mutate(client: Client) -> None:
     assert denied.json() == {"code": "partner_invite_forbidden"}
     assert "X-Partner-Role" not in denied
     assert admin_denied.json() == {"code": "partner_invite_forbidden"}
-    assert channel.invite_link.is_active is True
+    assert canonical_invite_link(channel).is_active is True
 
 
 @ENABLED
@@ -168,7 +169,7 @@ def test_repeat_deactivate_does_not_audit(caplog, client: Client) -> None:
 def test_flag_off_hides_invite_and_join(client: Client) -> None:
     owner = _user("owner")
     channel = _channel(owner)
-    token = channel.invite_link.token
+    token = canonical_invite_link(channel).token
 
     response = client.get("/api/v1/orgs/partner/invite-link/", **_auth(owner))
     signed = client.post(
@@ -188,10 +189,11 @@ def test_flag_off_hides_invite_and_join(client: Client) -> None:
 def test_inactive_channel_still_signs_and_inactive_link_does_not() -> None:
     owner = _user("owner")
     channel = _channel(owner, active=False)
-    token = channel.invite_link.token
+    link = canonical_invite_link(channel)
+    token = link.token
     assert issue_join_signature(token) is not None
-    channel.invite_link.is_active = False
-    channel.invite_link.save(update_fields=["is_active"])
+    link.is_active = False
+    link.save(update_fields=["is_active"])
     assert issue_join_signature(token) is None
     assert issue_join_signature("missing") is None
 
@@ -201,7 +203,7 @@ def test_inactive_channel_still_signs_and_inactive_link_does_not() -> None:
 def test_register_activation_creates_attribution() -> None:
     owner = _user("owner")
     channel = _channel(owner)
-    signed = issue_join_signature(channel.invite_link.token)
+    signed = issue_join_signature(canonical_invite_link(channel).token)
     email = f"new-{uuid.uuid4()}@example.com"
     register_user(email=email, partner_pending=signed)
     user = User.objects.get(email=email)
@@ -227,14 +229,14 @@ def test_existing_user_consume_and_second_partner_is_noop() -> None:
     customer = _user("customer")
     channel = _channel(owner)
     other = _channel(other_owner)
-    signed = issue_join_signature(channel.invite_link.token)
+    signed = issue_join_signature(canonical_invite_link(channel).token)
 
     assert consume_partner_pending(customer, signed) == "created"
     assert (
         CustomerAttribution.objects.get(user=customer).partner_channel_id == channel.pk
     )
 
-    other_signed = issue_join_signature(other.invite_link.token)
+    other_signed = issue_join_signature(canonical_invite_link(other).token)
     assert consume_partner_pending(customer, other_signed) == "noop"
     assert (
         CustomerAttribution.objects.get(user=customer).partner_channel_id == channel.pk
@@ -247,7 +249,7 @@ def test_old_token_consume_is_ignored() -> None:
     owner = _user("owner")
     customer = _user("customer")
     channel = _channel(owner)
-    signed = issue_join_signature(channel.invite_link.token)
+    signed = issue_join_signature(canonical_invite_link(channel).token)
     regenerate_invite_link(channel, actor=owner, request_id="req")
     assert unsign_partner_pending(signed) is not None
     assert consume_partner_pending(customer, signed) == "ignored"
@@ -260,7 +262,7 @@ def test_parallel_consumes_create_one_attribution() -> None:
     owner = _user("owner")
     customer = _user("customer")
     channel = _channel(owner)
-    signed = issue_join_signature(channel.invite_link.token)
+    signed = issue_join_signature(canonical_invite_link(channel).token)
 
     def once(_: int) -> str:
         connection.close()
@@ -290,13 +292,13 @@ def test_cleanup_deletes_only_expired_pending() -> None:
     PendingPartnerAttribution.objects.create(
         user=expired_user,
         partner_channel=channel,
-        invite_token_snapshot=channel.invite_link.token,
+        invite_token_snapshot=canonical_invite_link(channel).token,
         expires_at=timezone.now() - timedelta(minutes=1),
     )
     PendingPartnerAttribution.objects.create(
         user=fresh_user,
         partner_channel=channel,
-        invite_token_snapshot=channel.invite_link.token,
+        invite_token_snapshot=canonical_invite_link(channel).token,
         expires_at=timezone.now() + timedelta(hours=1),
     )
 

@@ -7,6 +7,7 @@ services in this module.
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from typing import Any
 
 from django.conf import settings
@@ -24,6 +25,31 @@ class RefuseDeleteQuerySet(models.QuerySet):
 
 class RefuseDeleteManager(models.Manager.from_queryset(RefuseDeleteQuerySet)):
     """Default manager for rows that cannot be deleted."""
+
+
+class PartnerInviteLinkQuerySet(RefuseDeleteQuerySet):
+    """Block classification edits once a visit exists.
+
+    Token regenerate stays allowed.
+    """
+
+    _FROZEN_FIELDS = frozenset(
+        {"partner_channel", "partner_channel_id", "source", "campaign", "content"}
+    )
+
+    def update(self, **kwargs: Any) -> int:
+        frozen = self._FROZEN_FIELDS & kwargs.keys()
+        has_visit = self.filter(visits__isnull=False).exists()
+        if frozen and has_visit:
+            raise AppendOnlyViolation(
+                "PartnerInviteLink partner_channel, source, campaign, and content "
+                "are frozen after the first visit"
+            )
+        return super().update(**kwargs)
+
+
+class PartnerInviteLinkManager(models.Manager.from_queryset(PartnerInviteLinkQuerySet)):
+    """Invite links can be updated, except frozen fields after the first visit."""
 
 
 class ImmutableQuerySet(RefuseDeleteQuerySet):
@@ -108,34 +134,182 @@ class PartnerChannel(models.Model):
 
 
 class PartnerInviteLink(models.Model):
-    """The one permanent invite link for a PartnerChannel (ADR 023)."""
+    """One invite link on a PartnerChannel.
+
+    A channel may have many links. The portal canonical link is the row with
+    the smallest ``(created_at, id)``, resolved by
+    ``canonical_invite_link`` — not by an unordered ``.first()``.
+
+    ``token`` is not a form field. Only regenerate writes it.
+
+    After the first ``InviteVisit``, ``save`` and ``QuerySet.update`` reject
+    changes to ``partner_channel``, ``source``, ``campaign``, and ``content``.
+    ``name``, ``bonus_amount``, and ``is_active`` stay writable. Token changes
+    only through regenerate.
+    """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    partner_channel = models.OneToOneField(
+    partner_channel = models.ForeignKey(
         PartnerChannel,
         on_delete=models.PROTECT,
-        related_name="invite_link",
+        related_name="invite_links",
     )
-    token = models.CharField(max_length=64, unique=True)
+    token = models.CharField(max_length=64, unique=True, editable=False)
+    name = models.CharField(max_length=128, blank=True, default="")
+    bonus_amount = models.DecimalField(
+        max_digits=20,
+        decimal_places=6,
+        default=Decimal("0.000000"),
+    )
+    source = models.CharField(max_length=64, blank=True, default="")
+    campaign = models.CharField(max_length=64, blank=True, default="")
+    content = models.CharField(max_length=64, blank=True, default="")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     regenerated_at = models.DateTimeField(null=True, blank=True)
 
-    objects = RefuseDeleteManager()
+    objects = PartnerInviteLinkManager()
 
     class Meta:
         verbose_name = "partner invite link"
         verbose_name_plural = "partner invite links"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(bonus_amount__gte=0),
+                name="billing_invite_link_bonus_gte_0",
+            ),
+        ]
+
+    _FROZEN_FIELDS = frozenset(
+        {"partner_channel", "partner_channel_id", "source", "campaign", "content"}
+    )
 
     def __str__(self) -> str:
         return f"PartnerInviteLink {self.partner_channel_id}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        update_fields = kwargs.get("update_fields")
+        if self.pk and not self._state.adding and self._touches_frozen(update_fields):
+            if self.visits.exists() and self._frozen_values_changed(update_fields):
+                raise AppendOnlyViolation(
+                    "PartnerInviteLink partner_channel, source, campaign, and content "
+                    "are frozen after the first visit"
+                )
+        super().save(*args, **kwargs)
+
+    def _touches_frozen(self, update_fields: Any) -> bool:
+        if update_fields is None:
+            return True
+        return bool(self._FROZEN_FIELDS & set(update_fields))
+
+    def _frozen_values_changed(self, update_fields: Any) -> bool:
+        previous = type(self).objects.get(pk=self.pk)
+        names = ["partner_channel_id", "source", "campaign", "content"]
+        if update_fields is not None:
+            names = []
+            for name in update_fields:
+                if name in ("partner_channel", "partner_channel_id"):
+                    names.append("partner_channel_id")
+                elif name in ("source", "campaign", "content"):
+                    names.append(name)
+        return any(getattr(self, name) != getattr(previous, name) for name in names)
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
         raise AppendOnlyViolation("PartnerInviteLink must not be hard-deleted")
 
 
+class InviteVisit(models.Model):
+    """One immutable click on an invite link. No personal data."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    invite_link = models.ForeignKey(
+        PartnerInviteLink,
+        on_delete=models.PROTECT,
+        related_name="visits",
+    )
+    utm_source = models.CharField(max_length=128, blank=True, default="")
+    utm_medium = models.CharField(max_length=128, blank=True, default="")
+    utm_campaign = models.CharField(max_length=128, blank=True, default="")
+    utm_content = models.CharField(max_length=128, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = RefuseDeleteManager()
+
+    class Meta:
+        verbose_name = "invite visit"
+        verbose_name_plural = "invite visits"
+        indexes = [
+            models.Index(
+                fields=["invite_link", "created_at"],
+                name="bill_invite_visit_link_at",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"InviteVisit {self.pk}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk and not self._state.adding:
+            raise AppendOnlyViolation("InviteVisit is immutable")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        raise AppendOnlyViolation("InviteVisit must not be hard-deleted")
+
+
+_ATTRIBUTION_SNAPSHOT_FIELDS = frozenset(
+    {
+        "invite_visit",
+        "invite_visit_id",
+        "invite_token",
+        "registered_via_invite",
+        "invite_name_snapshot",
+        "invite_source_snapshot",
+        "invite_campaign_snapshot",
+        "invite_content_snapshot",
+        "utm_source_snapshot",
+        "utm_medium_snapshot",
+        "utm_campaign_snapshot",
+        "utm_content_snapshot",
+        "bonus_amount_snapshot",
+    }
+)
+
+
+class CustomerAttributionQuerySet(models.QuerySet):
+    """Snapshot columns are write-once. ``partner_channel`` stays transferable."""
+
+    def update(self, **kwargs: Any) -> int:
+        blocked = _ATTRIBUTION_SNAPSHOT_FIELDS.intersection(kwargs)
+        if blocked:
+            raise AppendOnlyViolation(
+                "CustomerAttribution invite snapshots are write-once"
+            )
+        return super().update(**kwargs)
+
+
+class CustomerAttributionManager(
+    models.Manager.from_queryset(CustomerAttributionQuerySet)
+):
+    """Default manager. Does not block a later channel transfer."""
+
+
 class CustomerAttribution(models.Model):
-    """A customer's single current partner (ADR 023). Not a Membership."""
+    """A customer's single current partner (ADR 023). Not a Membership.
+
+    ``invite_visit`` is the converting click. ``invite_token`` is only the
+    token copied when the row was inserted. One user has one row; the visit
+    itself is not unique.
+
+    ``bonus_amount_snapshot``:
+
+    - ``NULL`` — not eligible (existing account, admin, or a legacy row)
+    - ``0.000000`` — new invite registration through a link whose bonus was 0
+    - greater than 0 — new invite registration and the exact bonus for that row
+
+    This model does not credit that amount.
+    """
 
     class Source(models.TextChoices):
         INVITE_LINK = "invite_link", "Invite link"
@@ -160,9 +334,33 @@ class CustomerAttribution(models.Model):
         blank=True,
         related_name="attributions",
     )
+    invite_visit = models.ForeignKey(
+        InviteVisit,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="customer_attributions",
+    )
     invite_token = models.CharField(max_length=64, null=True, blank=True)
+    registered_via_invite = models.BooleanField(default=False)
+    invite_name_snapshot = models.CharField(max_length=128, blank=True, default="")
+    invite_source_snapshot = models.CharField(max_length=64, blank=True, default="")
+    invite_campaign_snapshot = models.CharField(max_length=64, blank=True, default="")
+    invite_content_snapshot = models.CharField(max_length=64, blank=True, default="")
+    utm_source_snapshot = models.CharField(max_length=128, blank=True, default="")
+    utm_medium_snapshot = models.CharField(max_length=128, blank=True, default="")
+    utm_campaign_snapshot = models.CharField(max_length=128, blank=True, default="")
+    utm_content_snapshot = models.CharField(max_length=128, blank=True, default="")
+    bonus_amount_snapshot = models.DecimalField(
+        max_digits=20,
+        decimal_places=6,
+        null=True,
+        blank=True,
+    )
     attributed_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = CustomerAttributionManager()
 
     class Meta:
         verbose_name = "customer attribution"
@@ -177,9 +375,59 @@ class CustomerAttribution(models.Model):
     def __str__(self) -> str:
         return f"CustomerAttribution {self.user_id}"
 
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        update_fields = kwargs.get("update_fields")
+        if self.pk and not self._state.adding and self._snapshot_touched(update_fields):
+            if self._snapshot_changed(update_fields):
+                raise AppendOnlyViolation(
+                    "CustomerAttribution invite snapshots are write-once"
+                )
+        super().save(*args, **kwargs)
+
+    def _snapshot_touched(self, update_fields: Any) -> bool:
+        if update_fields is None:
+            return True
+        return bool(_ATTRIBUTION_SNAPSHOT_FIELDS & set(update_fields))
+
+    def _snapshot_changed(self, update_fields: Any) -> bool:
+        previous = type(self).objects.get(pk=self.pk)
+        names = _snapshot_attr_names(update_fields)
+        return any(getattr(self, name) != getattr(previous, name) for name in names)
+
+
+def _snapshot_attr_names(update_fields: Any) -> list[str]:
+    names = [
+        "invite_visit_id",
+        "invite_token",
+        "registered_via_invite",
+        "invite_name_snapshot",
+        "invite_source_snapshot",
+        "invite_campaign_snapshot",
+        "invite_content_snapshot",
+        "utm_source_snapshot",
+        "utm_medium_snapshot",
+        "utm_campaign_snapshot",
+        "utm_content_snapshot",
+        "bonus_amount_snapshot",
+    ]
+    if update_fields is None:
+        return names
+    selected: list[str] = []
+    for name in update_fields:
+        if name in ("invite_visit", "invite_visit_id"):
+            selected.append("invite_visit_id")
+        elif name in names:
+            selected.append(name)
+    return selected
+
 
 class PendingPartnerAttribution(models.Model):
-    """Join context for an inactive user after register (ADR 023)."""
+    """Join context for an inactive user after register (ADR 023).
+
+    ``invite_visit`` is the click the next service cut will confirm.
+    ``invite_token_snapshot`` and ``partner_channel`` stay so rows written
+    before that cut can still be matched. Snapshots are not stored here.
+    """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(
@@ -193,6 +441,13 @@ class PendingPartnerAttribution(models.Model):
         related_name="pending_attributions",
     )
     invite_token_snapshot = models.CharField(max_length=64)
+    invite_visit = models.ForeignKey(
+        InviteVisit,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="pending_attributions",
+    )
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -14,6 +14,7 @@ from apps.billing.partner_channel import (
 )
 from apps.billing.services.partner_invite import (
     PartnerInviteError,
+    canonical_invite_link,
     create_partner_channel,
 )
 from apps.organizations.models import Organization
@@ -84,8 +85,9 @@ class PartnerChannelAdmin(admin.ModelAdmin):
 
     @admin.display(description="Invite active")
     def invite_is_active(self, obj: PartnerChannel) -> str:
-        link = PartnerInviteLink.objects.filter(partner_channel=obj).first()
-        if link is None:
+        try:
+            link = canonical_invite_link(obj)
+        except PartnerInviteLink.DoesNotExist:
             return "missing"
         return "yes" if link.is_active else "no"
 
@@ -103,3 +105,24 @@ class PartnerChannelAdmin(admin.ModelAdmin):
     @admin.display(description="Grants")
     def grant_count(self, obj: PartnerChannel) -> int:
         return PartnerCreditGrant.objects.filter(partner_channel=obj).count()
+
+
+@admin.register(PartnerInviteLink)
+class PartnerInviteLinkAdmin(admin.ModelAdmin):
+    """Token stays readonly. Classification freezes in the form after a visit.
+
+    ``save`` rejects the same fields even if the form is bypassed. Regenerate
+    is not this form; it writes ``token`` and ``regenerated_at`` only.
+    """
+
+    list_display = ("partner_channel", "name", "is_active", "created_at")
+    readonly_fields = ("id", "token", "created_at", "updated_at", "regenerated_at")
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = list(self.readonly_fields)
+        if obj is not None and obj.visits.exists():
+            fields.extend(["partner_channel", "source", "campaign", "content"])
+        return fields
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False

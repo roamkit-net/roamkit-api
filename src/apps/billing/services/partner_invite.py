@@ -1,6 +1,7 @@
 """Partner invite link reads and owner mutations (ADR 023).
 
-One permanent link per channel. Regenerate replaces the token on that row.
+A channel may have many links. Portal reads and owner mutations use the
+canonical row: smallest ``(created_at, id)``.
 """
 
 from __future__ import annotations
@@ -56,9 +57,30 @@ def require_partner_owner(user: User, partner_channel: PartnerChannel) -> None:
         raise PartnerInviteForbidden("Invite changes require an owner")
 
 
+def canonical_invite_link(
+    partner_channel: PartnerChannel,
+    *,
+    for_update: bool = False,
+) -> PartnerInviteLink:
+    """Return the portal link: smallest ``(created_at, id)``.
+
+    ``.first()`` is only valid after that ``order_by``. An unordered
+    ``.first()`` is not a canonical link.
+    """
+    qs = PartnerInviteLink.objects.filter(partner_channel=partner_channel).order_by(
+        "created_at",
+        "id",
+    )
+    if for_update:
+        qs = qs.select_for_update()
+    link = qs.first()
+    if link is None:
+        raise PartnerInviteLink.DoesNotExist("Partner channel has no invite link")
+    return link
+
+
 def invite_link_for(partner_channel: PartnerChannel) -> PartnerInviteLinkView:
-    link = partner_channel.invite_link
-    return _view(link)
+    return _view(canonical_invite_link(partner_channel))
 
 
 def regenerate_invite_link(
@@ -68,12 +90,14 @@ def regenerate_invite_link(
     request_id: str | None = None,
 ) -> PartnerInviteLinkView:
     with transaction.atomic():
-        link = PartnerInviteLink.objects.select_for_update().get(
-            partner_channel=partner_channel
-        )
+        link = canonical_invite_link(partner_channel, for_update=True)
         old_token = link.token
         link.regenerated_at = timezone.now()
         _assign_token(link)
+        # Legacy bridge: pending rows written before invite_visit existed are
+        # still matched by the token snapshot. Visits are not deleted.
+        # The next service cut also drops a pending row whose visit predates
+        # regenerated_at.
         PendingPartnerAttribution.objects.filter(
             partner_channel=partner_channel,
             invite_token_snapshot=old_token,
@@ -91,9 +115,7 @@ def set_invite_active(
     request_id: str | None = None,
 ) -> PartnerInviteLinkView:
     with transaction.atomic():
-        link = PartnerInviteLink.objects.select_for_update().get(
-            partner_channel=partner_channel
-        )
+        link = canonical_invite_link(partner_channel, for_update=True)
         changed = link.is_active != active
         if changed:
             link.is_active = active
@@ -142,6 +164,11 @@ def create_partner_channel(
                 PartnerInviteLink.objects.create(
                     partner_channel=channel,
                     token=secrets.token_urlsafe(24),
+                    name="",
+                    bonus_amount=Decimal("0.000000"),
+                    source="",
+                    campaign="",
+                    content="",
                     is_active=True,
                 )
         except IntegrityError:
