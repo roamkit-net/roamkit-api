@@ -48,7 +48,7 @@ class ActivationError(Exception):
         super().__init__(message)
 
 
-def register_user(*, email: str) -> None:
+def register_user(*, email: str, partner_pending: str | None = None) -> None:
     """Start email-only registration: create pending user or resend mail.
 
     Always succeeds from the caller's perspective (no email enumeration).
@@ -75,6 +75,7 @@ def register_user(*, email: str) -> None:
                 return
             else:
                 send_activation_email(user)
+                _record_partner_pending(user, partner_pending)
                 return
 
         if user.is_active:
@@ -148,4 +149,19 @@ def activate_user(
     user.set_password(password)
     user.is_active = True
     user.save(update_fields=["password", "is_active", "updated_at"])
+    _apply_partner_pending(user)
     return user
+
+
+def _record_partner_pending(user, signed: str | None) -> None:
+    if not signed:
+        return
+    from apps.billing.services.partner_attribution import record_pending_for_new_user
+
+    record_pending_for_new_user(user, signed)
+
+
+def _apply_partner_pending(user) -> None:
+    from apps.billing.services.partner_attribution import apply_pending_on_activation
+
+    apply_pending_on_activation(user)

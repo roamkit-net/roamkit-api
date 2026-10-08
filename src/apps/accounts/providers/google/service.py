@@ -105,6 +105,7 @@ def _touch_login(user: User, identity: GoogleIdentity) -> None:
 
 
 def _link_or_activate(user: User, identity: GoogleIdentity) -> GoogleLoginOutcome:
+    was_inactive = not user.is_active
     if user.google_sub and user.google_sub != identity.subject:
         metrics.incr("google_conflict_total")
         event_bus.publish(GoogleLoginConflict(google_sub=identity.subject))
@@ -136,6 +137,12 @@ def _link_or_activate(user: User, identity: GoogleIdentity) -> GoogleLoginOutcom
         ]
     )
     user.save(update_fields=list(dict.fromkeys(update_fields)))
+    if was_inactive:
+        from apps.billing.services.partner_attribution import (
+            apply_pending_on_activation,
+        )
+
+        apply_pending_on_activation(user)
     if outcome is GoogleLoginOutcome.LINKED:
         metrics.incr("google_auto_link_total")
         event_bus.publish(

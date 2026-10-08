@@ -78,7 +78,10 @@ class RegisterView(APIView):
 
     def post(self, request: Request) -> Response:
         enforce_human_verification(request, endpoint="auth_register")
-        serializer = RegisterSerializer(data=request.data)
+        serializer = RegisterSerializer(
+            data=request.data,
+            context={"partner_pending": request.headers.get("X-Partner-Pending")},
+        )
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(

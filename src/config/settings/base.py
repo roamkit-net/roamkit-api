@@ -124,6 +124,7 @@ CORS_ALLOWED_ORIGINS = [
     "https://roamkit.net",
     "https://www.roamkit.net",
 ]
+CORS_EXPOSE_HEADERS = ["X-Partner-Role"]
 
 # Browser clients send headers that django-cors-headers defaults omit.
 # Missing entries → OPTIONS preflight fails → "Failed to fetch" in the web app.
@@ -133,6 +134,7 @@ CORS_ALLOW_HEADERS = (
     *default_headers,
     "x-request-id",
     "if-match",
+    "x-partner-pending",
 )
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
@@ -384,6 +386,11 @@ SUBSCRIPTIONS_ENABLED = (
 PARTNER_CHANNEL_ENABLED = (
     os.environ.get("PARTNER_CHANNEL_ENABLED", "false").lower() == "true"
 )
+# Consumer host that serves /join/<token>. Staging must set the staging host.
+PARTNER_JOIN_BASE_URL = os.environ.get(
+    "PARTNER_JOIN_BASE_URL", "https://roamkit.net"
+).rstrip("/")
+PARTNER_JOIN_RATE_LIMIT = int(os.environ.get("PARTNER_JOIN_RATE_LIMIT", "60"))
 VOUCHERS_ENABLED = os.environ.get("VOUCHERS_ENABLED", "false").lower() == "true"
 # eSIM Auto Top-up v1 (design lock) — master + rollout; spend still via TopupService.
 AUTO_TOPUP_ENABLED = os.environ.get("AUTO_TOPUP_ENABLED", "false").lower() == "true"

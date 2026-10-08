@@ -2225,6 +2225,231 @@ paths:
       summary: Partner channel customers
       tags:
       - Organizations
+  /api/v1/orgs/partner/grants/:
+    get:
+      description: Stored credit grants for the caller's single partner channel.
+      operationId: orgs_partner_grants
+      parameters:
+      - in: query
+        name: order
+        schema:
+          enum:
+          - asc
+          - desc
+          type: string
+      - in: query
+        name: page
+        schema:
+          type: integer
+      - in: query
+        name: page_size
+        schema:
+          type: integer
+      - in: query
+        name: sort
+        schema:
+          enum:
+          - amount
+          - created_at
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerGrantsPage'
+          description: Grant page
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: invalid_page, invalid_page_size, invalid_sort, or invalid_order
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_context_ambiguous
+      security:
+      - bearerAuth: []
+      summary: Partner channel grant history
+      tags:
+      - Organizations
+  /api/v1/orgs/partner/invite-link/:
+    get:
+      operationId: orgs_partner_invite_link
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerInviteLink'
+          description: Invite link
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied or partner_invite_forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_context_ambiguous
+      security:
+      - bearerAuth: []
+      summary: Partner invite link
+      tags:
+      - Organizations
+  /api/v1/orgs/partner/invite-link/activate/:
+    post:
+      operationId: orgs_partner_invite_link_activate
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerInviteLink'
+          description: Invite link
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied or partner_invite_forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_context_ambiguous
+      security:
+      - bearerAuth: []
+      summary: Activate partner invite link
+      tags:
+      - Organizations
+  /api/v1/orgs/partner/invite-link/deactivate/:
+    post:
+      operationId: orgs_partner_invite_link_deactivate
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerInviteLink'
+          description: Invite link
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied or partner_invite_forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_context_ambiguous
+      security:
+      - bearerAuth: []
+      summary: Deactivate partner invite link
+      tags:
+      - Organizations
+  /api/v1/orgs/partner/invite-link/regenerate/:
+    post:
+      operationId: orgs_partner_invite_link_regenerate
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerInviteLink'
+          description: Invite link
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied or partner_invite_forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_context_ambiguous
+      security:
+      - bearerAuth: []
+      summary: Regenerate partner invite link
+      tags:
+      - Organizations
   /api/v1/orgs/partner/summary/:
     get:
       description: Stored margin total, display balance, and accrual counts for the caller's single partner
@@ -5497,6 +5722,19 @@ components:
       - page_size
       - results
       type: object
+    PartnerGrantActor:
+      properties:
+        email:
+          type: string
+        user_id:
+          format: int64
+          maximum: 9223372036854775807
+          minimum: 1
+          type: integer
+      required:
+      - email
+      - user_id
+      type: object
     PartnerGrantCode:
       description: Partner grant error body. Exactly one code, no field names.
       properties:
@@ -5504,6 +5742,38 @@ components:
           type: string
       required:
       - code
+      type: object
+    PartnerGrantHistory:
+      properties:
+        amount:
+          format: decimal
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        customer_id:
+          format: int64
+          maximum: 9223372036854775807
+          minimum: 1
+          type: integer
+        email:
+          nullable: true
+          type: string
+        grant_id:
+          format: uuid
+          type: string
+        granted_by:
+          allOf:
+          - $ref: '#/components/schemas/PartnerGrantActor'
+          nullable: true
+      required:
+      - amount
+      - created_at
+      - customer_id
+      - email
+      - grant_id
+      - granted_by
       type: object
     PartnerGrantRequestRequest:
       description: 'Locked grant body: ``customer_id``, ``amount``, ``idempotency_key``.'
@@ -5547,6 +5817,47 @@ components:
       - created_at
       - customer_id
       - grant_id
+      type: object
+    PartnerGrantsPage:
+      properties:
+        count:
+          minimum: 0
+          type: integer
+        page:
+          minimum: 1
+          type: integer
+        page_size:
+          maximum: 100
+          minimum: 1
+          type: integer
+        results:
+          items:
+            $ref: '#/components/schemas/PartnerGrantHistory'
+          type: array
+      required:
+      - count
+      - page
+      - page_size
+      - results
+      type: object
+    PartnerInviteLink:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        is_active:
+          type: boolean
+        regenerated_at:
+          format: date-time
+          nullable: true
+          type: string
+        url:
+          type: string
+      required:
+      - created_at
+      - is_active
+      - regenerated_at
+      - url
       type: object
     PartnerSummary:
       description: Six-decimal strings for money. Counts stay integers.

@@ -83,6 +83,7 @@ def test_anonymous_is_authentication_required(client: Client) -> None:
     assert response.status_code == 401
     assert response.json() == {"code": "authentication_required"}
     assert response["Cache-Control"] == "no-store"
+    assert "X-Partner-Role" not in response
 
 
 @ENABLED
@@ -96,6 +97,7 @@ def test_flag_off_is_disabled(client: Client, settings) -> None:
 
     assert response.status_code == 404
     assert response.json() == {"code": "partner_channel_disabled"}
+    assert "X-Partner-Role" not in response
 
 
 @ENABLED
@@ -110,6 +112,7 @@ def test_summary_returns_stored_totals(client: Client) -> None:
 
     assert response.status_code == 200
     assert response["Cache-Control"] == "no-store"
+    assert response["X-Partner-Role"] == "owner"
     assert response.json() == {
         "total_earned": "7.666000",
         "available_balance": "2.000000",
