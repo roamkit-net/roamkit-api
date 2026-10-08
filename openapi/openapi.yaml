@@ -404,7 +404,7 @@ paths:
                     access: eyJ...
                     refresh: eyJ...
               schema:
-                $ref: '#/components/schemas/GoogleAuthTokenResponse'
+                $ref: '#/components/schemas/AuthTokenResponse'
           description: JWT token pair
         '400':
           content:
@@ -570,8 +570,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DetailMessage'
-          description: Password updated
+                $ref: '#/components/schemas/AuthTokenResponse'
+          description: JWT token pair
         '400':
           content:
             application/json:
@@ -3377,6 +3377,17 @@ components:
       - status
       - validity_days
       type: object
+    AuthTokenResponse:
+      description: JWT pair shared by Google sign-in and password-reset confirm.
+      properties:
+        access:
+          type: string
+        refresh:
+          type: string
+      required:
+      - access
+      - refresh
+      type: object
     AutoTopupPolicy:
       description: Persisted auto top-up policy response (v2 triggers + v3 lifetime).
       properties:
@@ -4327,17 +4338,6 @@ components:
           writeOnly: true
       required:
       - credential
-      type: object
-    GoogleAuthTokenResponse:
-      description: Same JWT pair shape as password ``/auth/token/``.
-      properties:
-        access:
-          type: string
-        refresh:
-          type: string
-      required:
-      - access
-      - refresh
       type: object
     HealthItem:
       properties:

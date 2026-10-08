@@ -251,15 +251,44 @@ def test_password_reset_confirm_updates_password(client: Client, user: User) -> 
     )
 
     assert response.status_code == 200
+    body = response.json()
+    assert body["access"]
+    assert body["refresh"]
     user.refresh_from_db()
     assert user.check_password(new_password)
+    assert user.last_login_provider == User.LastLoginProvider.PASSWORD
 
-    login = client.post(
-        "/api/v1/auth/token/",
-        data=json.dumps({"email": user.email, "password": new_password}),
+    me = client.get(
+        "/api/v1/auth/me/",
+        HTTP_AUTHORIZATION=f"Bearer {body['access']}",
+    )
+    assert me.status_code == 200
+    assert me.json()["email"] == user.email
+
+    refreshed = client.post(
+        "/api/v1/auth/token/refresh/",
+        data=json.dumps({"refresh": body["refresh"]}),
         content_type="application/json",
     )
-    assert login.status_code == 200
+    assert refreshed.status_code == 200
+    assert refreshed.json()["access"]
+
+    reused = client.post(
+        "/api/v1/auth/password-reset/confirm/",
+        data=json.dumps(
+            {
+                "uid": uid,
+                "token": token,
+                "password": new_password,
+                "password_confirm": new_password,
+            }
+        ),
+        content_type="application/json",
+    )
+    assert reused.status_code == 400
+    reused_body = reused.json()
+    assert "access" not in reused_body
+    assert "refresh" not in reused_body
 
 
 @pytest.mark.django_db
@@ -281,6 +310,9 @@ def test_password_reset_confirm_rejects_invalid_token(
     )
 
     assert response.status_code == 400
+    body = response.json()
+    assert "access" not in body
+    assert "refresh" not in body
 
 
 @pytest.mark.django_db

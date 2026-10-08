@@ -17,15 +17,16 @@ from rest_framework_simplejwt.serializers import (
     TokenObtainPairSerializer,
     TokenRefreshSerializer,
 )
+from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from apps.accounts.providers.google import authenticate_with_google
 from apps.accounts.providers.google.errors import GoogleAuthError, GoogleAuthErrorCode
 from apps.accounts.serializers import (
     ActivateSerializer,
+    AuthTokenResponseSerializer,
     GoogleAuthErrorSerializer,
     GoogleAuthSerializer,
-    GoogleAuthTokenResponseSerializer,
     MeDisplayNameSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
@@ -170,7 +171,8 @@ class PasswordResetRequestView(APIView):
         request=PasswordResetConfirmSerializer,
         responses={
             200: OpenApiResponse(
-                response=DetailMessageSerializer, description="Password updated"
+                response=AuthTokenResponseSerializer,
+                description="JWT token pair",
             ),
             400: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Invalid token or password"
@@ -188,9 +190,13 @@ class PasswordResetConfirmView(APIView):
     def post(self, request: Request) -> Response:
         serializer = PasswordResetConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        user = serializer.save()
+        User.objects.filter(pk=user.pk).update(
+            last_login_provider=User.LastLoginProvider.PASSWORD
+        )
+        refresh = RefreshToken.for_user(user)
         return Response(
-            {"detail": "Password has been reset."},
+            {"access": str(refresh.access_token), "refresh": str(refresh)},
             status=status.HTTP_200_OK,
         )
 
@@ -383,7 +389,7 @@ class AuthTokenRefreshView(TokenRefreshView):
         ],
         responses={
             200: OpenApiResponse(
-                response=GoogleAuthTokenResponseSerializer,
+                response=AuthTokenResponseSerializer,
                 description="JWT token pair",
             ),
             400: OpenApiResponse(
