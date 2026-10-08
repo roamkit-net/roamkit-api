@@ -9,6 +9,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from apps.billing.models import DepositRequest
+from apps.billing.services.partner_customers import PartnerCustomersQuery
 
 _BIGINT_MAX = 2**63 - 1
 _GRANT_FIELDS = frozenset({"customer_id", "amount", "idempotency_key"})
@@ -195,3 +196,85 @@ class PartnerChannelCodeSerializer(serializers.Serializer):
     """Partner read error body. Exactly one code, no field names."""
 
     code = serializers.CharField()
+
+
+_QUERY_INT_RE = re.compile(r"^(?:0|[1-9]\d*)$")
+_CUSTOMER_SORTS = frozenset({"attributed_at", "total_partner_earned", "accrual_count"})
+_CUSTOMER_ORDERS = frozenset({"asc", "desc"})
+
+
+class PartnerCustomersQueryError(Exception):
+    """Customers query failed the locked envelope."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def parse_partner_customers_query(params: object) -> PartnerCustomersQuery:
+    """Validate customers query params. ``q`` is trimmed before the length check."""
+    if not hasattr(params, "get"):
+        raise PartnerCustomersQueryError("invalid_query")
+    return PartnerCustomersQuery(
+        page=_query_int(params.get("page", "1"), "invalid_page", minimum=1),
+        page_size=_query_int(
+            params.get("page_size", "50"),
+            "invalid_page_size",
+            minimum=1,
+            maximum=100,
+        ),
+        sort=_query_choice(
+            params.get("sort", "total_partner_earned"),
+            _CUSTOMER_SORTS,
+            "invalid_sort",
+        ),
+        order=_query_choice(
+            params.get("order", "desc"), _CUSTOMER_ORDERS, "invalid_order"
+        ),
+        q=_trimmed_query(params.get("q", "")),
+    )
+
+
+def _query_int(
+    raw: object,
+    code: str,
+    *,
+    minimum: int,
+    maximum: int | None = None,
+) -> int:
+    if not isinstance(raw, str) or _QUERY_INT_RE.fullmatch(raw) is None:
+        raise PartnerCustomersQueryError(code)
+    value = int(raw)
+    if value < minimum or (maximum is not None and value > maximum):
+        raise PartnerCustomersQueryError(code)
+    return value
+
+
+def _query_choice(raw: object, allowed: frozenset[str], code: str) -> str:
+    if not isinstance(raw, str) or raw not in allowed:
+        raise PartnerCustomersQueryError(code)
+    return raw
+
+
+def _trimmed_query(raw: object) -> str:
+    if not isinstance(raw, str):
+        raise PartnerCustomersQueryError("invalid_query")
+    q = raw.strip()
+    if len(q) > 254:
+        raise PartnerCustomersQueryError("invalid_query")
+    return q
+
+
+class PartnerCustomerSerializer(serializers.Serializer):
+    customer_id = serializers.IntegerField(min_value=1, max_value=_BIGINT_MAX)
+    email = serializers.CharField()
+    attributed_at = serializers.DateTimeField()
+    total_partner_earned = serializers.DecimalField(max_digits=20, decimal_places=6)
+    accrual_count = serializers.IntegerField(min_value=0)
+
+
+class PartnerCustomersPageSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+    page = serializers.IntegerField(min_value=1)
+    page_size = serializers.IntegerField(min_value=1, max_value=100)
+    results = PartnerCustomerSerializer(many=True)
