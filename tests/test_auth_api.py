@@ -118,11 +118,44 @@ def test_activate_sets_password_and_enables_login(client: Client) -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["email"] == "activate@example.com"
+    assert payload["access"]
+    assert payload["refresh"]
+    assert "email" not in payload
 
     user.refresh_from_db()
     assert user.is_active is True
     assert user.check_password(PASSWORD)
+    assert user.last_login_provider == User.LastLoginProvider.PASSWORD
+
+    me = client.get(
+        "/api/v1/auth/me/",
+        HTTP_AUTHORIZATION=f"Bearer {payload['access']}",
+    )
+    assert me.status_code == 200
+    assert me.json()["email"] == "activate@example.com"
+
+    refreshed = client.post(
+        "/api/v1/auth/token/refresh/",
+        data=json.dumps({"refresh": payload["refresh"]}),
+        content_type="application/json",
+    )
+    assert refreshed.status_code == 200
+    assert refreshed.json()["access"]
+
+    reused = client.post(
+        "/api/v1/auth/activate/",
+        data=json.dumps(
+            {
+                "uid": uid,
+                "token": token,
+                "password": PASSWORD,
+                "password_confirm": PASSWORD,
+            }
+        ),
+        content_type="application/json",
+    )
+    assert reused.status_code == 400
+    assert "access" not in reused.json()
 
     token_response = client.post(
         "/api/v1/auth/token/",
@@ -156,6 +189,9 @@ def test_activate_rejects_invalid_token(client: Client) -> None:
     )
 
     assert response.status_code == 400
+    body = response.json()
+    assert "access" not in body
+    assert "refresh" not in body
     user.refresh_from_db()
     assert user.is_active is False
 

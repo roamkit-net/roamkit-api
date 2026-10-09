@@ -368,8 +368,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
-          description: Activated user
+                $ref: '#/components/schemas/AuthTokenResponse'
+          description: JWT token pair
         '400':
           content:
             application/json:

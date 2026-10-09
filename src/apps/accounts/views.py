@@ -101,7 +101,10 @@ class RegisterView(APIView):
         auth=[],
         request=ActivateSerializer,
         responses={
-            200: OpenApiResponse(response=UserSerializer, description="Activated user"),
+            200: OpenApiResponse(
+                response=AuthTokenResponseSerializer,
+                description="JWT token pair",
+            ),
             400: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Invalid token or password"
             ),
@@ -119,7 +122,14 @@ class ActivateView(APIView):
         serializer = ActivateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        return Response(UserSerializer(user).data, status=status.HTTP_200_OK)
+        User.objects.filter(pk=user.pk).update(
+            last_login_provider=User.LastLoginProvider.PASSWORD
+        )
+        refresh = RefreshToken.for_user(user)
+        return Response(
+            {"access": str(refresh.access_token), "refresh": str(refresh)},
+            status=status.HTTP_200_OK,
+        )
 
 
 @extend_schema_view(

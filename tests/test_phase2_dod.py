@@ -130,7 +130,8 @@ def test_phase2_dod_register_sandbox_me_esims(
         content_type="application/json",
     )
     assert activate.status_code == 200
-    assert activate.json()["email"] == email
+    assert activate.json()["access"]
+    assert activate.json()["refresh"]
 
     token = client.post(
         "/api/v1/auth/token/",
