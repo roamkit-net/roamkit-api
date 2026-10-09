@@ -50,9 +50,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/roamkit-net/${{ inputs.image-name }}
+          # Immutable SHA only. The branch tag is applied after Trivy, on this
+          # same manifest, so a failed scan cannot move :main or :develop.
           tags: |
             type=raw,value=${{ github.sha }}
-            type=ref,event=branch
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -77,3 +78,30 @@ jobs:
           exit-code: 1
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+
+      - name: Promote scanned image to branch tag
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          case "${{ github.ref_name }}" in
+            main|develop) ;;
+            *)
+              echo "ERROR: refusing to promote branch tag for ${{ github.ref_name }}" >&2
+              exit 1
+              ;;
+          esac
+          SRC="ghcr.io/roamkit-net/${{ inputs.image-name }}:${{ github.sha }}"
+          DEST="ghcr.io/roamkit-net/${{ inputs.image-name }}:${{ github.ref_name }}"
+          src_digest="$(docker buildx imagetools inspect "$SRC" | awk '/^Digest:/ {print $2; exit}')"
+          if [ -z "${src_digest}" ]; then
+            echo "ERROR: scanned image has no digest: ${SRC}" >&2
+            exit 1
+          fi
+          # Retag the existing manifest. Do not build a second image.
+          docker buildx imagetools create --tag "$DEST" "$SRC"
+          dest_digest="$(docker buildx imagetools inspect "$DEST" | awk '/^Digest:/ {print $2; exit}')"
+          if [ "${src_digest}" != "${dest_digest}" ]; then
+            echo "ERROR: branch tag digest ${dest_digest} != scanned digest ${src_digest}" >&2
+            exit 1
+          fi
+          echo "Promoted ${DEST} to scanned digest ${src_digest}"

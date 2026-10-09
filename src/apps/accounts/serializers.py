@@ -20,9 +20,18 @@ User = get_user_model()
 class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
-    def create(self, validated_data: dict) -> dict:
-        register_user(email=validated_data["email"])
-        return validated_data
+    def create(self, validated_data: dict):
+        return register_user(
+            email=validated_data["email"],
+            partner_pending=self.context.get("partner_pending"),
+        )
+
+
+class AccountExistsSerializer(serializers.Serializer):
+    """Verified-invite response when the email already has an active account."""
+
+    code = serializers.ChoiceField(choices=["account_exists"])
+    detail = serializers.CharField()
 
 
 class ActivateSerializer(serializers.Serializer):
@@ -82,8 +91,37 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ("id", "email", "is_staff", "created_at", "updated_at")
+        fields = (
+            "id",
+            "email",
+            "display_name",
+            "is_staff",
+            "created_at",
+            "updated_at",
+        )
         read_only_fields = fields
+
+
+class MeDisplayNameSerializer(serializers.Serializer):
+    """The only field a customer may change on their own profile."""
+
+    display_name = serializers.CharField(
+        max_length=255,
+        allow_blank=True,
+        trim_whitespace=True,
+    )
+
+    def to_internal_value(self, data):
+        if hasattr(data, "keys"):
+            extra = set(data.keys()) - {"display_name"}
+            if extra:
+                raise serializers.ValidationError(
+                    {
+                        field: ["This field cannot be changed."]
+                        for field in sorted(extra)
+                    }
+                )
+        return super().to_internal_value(data)
 
 
 class GoogleAuthSerializer(serializers.Serializer):
@@ -92,8 +130,8 @@ class GoogleAuthSerializer(serializers.Serializer):
     credential = serializers.CharField(write_only=True, min_length=1, max_length=8192)
 
 
-class GoogleAuthTokenResponseSerializer(serializers.Serializer):
-    """Same JWT pair shape as password ``/auth/token/``."""
+class AuthTokenResponseSerializer(serializers.Serializer):
+    """JWT pair shared by Google sign-in and password-reset confirm."""
 
     access = serializers.CharField()
     refresh = serializers.CharField()

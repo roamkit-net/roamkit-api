@@ -44,6 +44,50 @@ def test_cors_allowed_origins_includes_www() -> None:
     assert WWW_ORIGIN in settings.CORS_ALLOWED_ORIGINS
 
 
+def test_team_origins_are_split_by_environment() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "src" / "config" / "settings"
+    staging = (root / "staging.py").read_text()
+    production = (root / "production.py").read_text()
+    base = (root / "base.py").read_text()
+    assert "https://team.staging.roamkit.net" in staging
+    assert "https://team.roamkit.net" not in staging
+    assert "https://team.roamkit.net" in production
+    assert "https://team.staging.roamkit.net" not in production
+    assert "https://team.roamkit.net" not in base
+    assert "https://team.staging.roamkit.net" not in base
+
+
+def test_cors_expose_headers_names_partner_role() -> None:
+    from django.conf import settings
+
+    assert "X-Partner-Role" in settings.CORS_EXPOSE_HEADERS
+
+
+def test_team_origin_receives_expose_headers_without_the_role(client: Client) -> None:
+    """The browser may read X-Partner-Role only when a partner read sets it."""
+    from django.test import override_settings
+
+    origin = "https://team.roamkit.net"
+    with override_settings(
+        CORS_ALLOWED_ORIGINS=[
+            "http://localhost:3000",
+            "https://staging.roamkit.net",
+            "https://roamkit.net",
+            "https://www.roamkit.net",
+            origin,
+        ]
+    ):
+        response = client.get("/api/v1/billing/config/", HTTP_ORIGIN=origin)
+
+    assert response.headers.get("Access-Control-Allow-Origin") == origin
+    assert "x-partner-role" in _allow_list(
+        response.headers.get("Access-Control-Expose-Headers", "")
+    )
+    assert response.headers.get("X-Partner-Role") is None
+
+
 def test_cors_preflight_allows_www_origin_for_billing_config(client: Client) -> None:
     """www GET /billing/config/ must receive ACAO or catalog prices stay skeleton."""
     response = client.options(

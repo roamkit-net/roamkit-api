@@ -17,15 +17,18 @@ from rest_framework_simplejwt.serializers import (
     TokenObtainPairSerializer,
     TokenRefreshSerializer,
 )
+from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from apps.accounts.providers.google import authenticate_with_google
 from apps.accounts.providers.google.errors import GoogleAuthError, GoogleAuthErrorCode
 from apps.accounts.serializers import (
+    AccountExistsSerializer,
     ActivateSerializer,
+    AuthTokenResponseSerializer,
     GoogleAuthErrorSerializer,
     GoogleAuthSerializer,
-    GoogleAuthTokenResponseSerializer,
+    MeDisplayNameSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     RegisterSerializer,
@@ -33,7 +36,10 @@ from apps.accounts.serializers import (
 )
 from apps.accounts.services.human_verification.enforce import enforce_human_verification
 from apps.accounts.services.password_reset import GENERIC_PASSWORD_RESET_MESSAGE
-from apps.accounts.services.registration import GENERIC_REGISTER_MESSAGE
+from apps.accounts.services.registration import (
+    GENERIC_REGISTER_MESSAGE,
+    RegistrationResult,
+)
 from apps.accounts.throttles import (
     AuthActivateRateThrottle,
     AuthGoogleRateThrottle,
@@ -53,8 +59,9 @@ User = get_user_model()
         operation_id="auth_register",
         summary="Start registration",
         description=(
-            "Begin registration with email only. Always returns a generic success "
-            "message (no account enumeration)."
+            "Begin registration with email only. Without a verified invite the "
+            "response is a generic success message. A verified invite for an "
+            "active existing account returns account_exists."
         ),
         auth=[],
         request=RegisterSerializer,
@@ -65,6 +72,10 @@ User = get_user_model()
             ),
             400: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Validation error"
+            ),
+            409: OpenApiResponse(
+                response=AccountExistsSerializer,
+                description="Verified invite for an active existing account",
             ),
         },
     ),
@@ -78,9 +89,20 @@ class RegisterView(APIView):
 
     def post(self, request: Request) -> Response:
         enforce_human_verification(request, endpoint="auth_register")
-        serializer = RegisterSerializer(data=request.data)
+        serializer = RegisterSerializer(
+            data=request.data,
+            context={"partner_pending": request.headers.get("X-Partner-Pending")},
+        )
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        result = serializer.save()
+        if result == RegistrationResult.ACCOUNT_EXISTS_FOR_INVITE:
+            return Response(
+                {
+                    "code": "account_exists",
+                    "detail": "An account with this email already exists.",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         return Response(
             {"detail": GENERIC_REGISTER_MESSAGE},
             status=status.HTTP_200_OK,
@@ -96,7 +118,10 @@ class RegisterView(APIView):
         auth=[],
         request=ActivateSerializer,
         responses={
-            200: OpenApiResponse(response=UserSerializer, description="Activated user"),
+            200: OpenApiResponse(
+                response=AuthTokenResponseSerializer,
+                description="JWT token pair",
+            ),
             400: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Invalid token or password"
             ),
@@ -114,7 +139,14 @@ class ActivateView(APIView):
         serializer = ActivateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        return Response(UserSerializer(user).data, status=status.HTTP_200_OK)
+        User.objects.filter(pk=user.pk).update(
+            last_login_provider=User.LastLoginProvider.PASSWORD
+        )
+        refresh = RefreshToken.for_user(user)
+        return Response(
+            {"access": str(refresh.access_token), "refresh": str(refresh)},
+            status=status.HTTP_200_OK,
+        )
 
 
 @extend_schema_view(
@@ -166,7 +198,8 @@ class PasswordResetRequestView(APIView):
         request=PasswordResetConfirmSerializer,
         responses={
             200: OpenApiResponse(
-                response=DetailMessageSerializer, description="Password updated"
+                response=AuthTokenResponseSerializer,
+                description="JWT token pair",
             ),
             400: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Invalid token or password"
@@ -184,9 +217,13 @@ class PasswordResetConfirmView(APIView):
     def post(self, request: Request) -> Response:
         serializer = PasswordResetConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        user = serializer.save()
+        User.objects.filter(pk=user.pk).update(
+            last_login_provider=User.LastLoginProvider.PASSWORD
+        )
+        refresh = RefreshToken.for_user(user)
         return Response(
-            {"detail": "Password has been reset."},
+            {"access": str(refresh.access_token), "refresh": str(refresh)},
             status=status.HTTP_200_OK,
         )
 
@@ -204,14 +241,44 @@ class PasswordResetConfirmView(APIView):
             ),
         },
     ),
+    patch=extend_schema(
+        tags=["Users"],
+        operation_id="users_me_partial_update",
+        summary="Update display name",
+        description=(
+            "Set or clear the authenticated user's display name. "
+            "An empty name means callers show the email. "
+            "Email and staff status cannot be changed here."
+        ),
+        request=MeDisplayNameSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=UserSerializer, description="Updated profile"
+            ),
+            400: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Invalid display name"
+            ),
+            401: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Authentication required"
+            ),
+        },
+    ),
 )
 class MeView(APIView):
-    """Return the authenticated user's profile."""
+    """Return or update the authenticated user's display name."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request) -> Response:
         return Response(UserSerializer(request.user).data)
+
+    def patch(self, request: Request) -> Response:
+        serializer = MeDisplayNameSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = request.user
+        user.display_name = serializer.validated_data["display_name"]
+        user.save(update_fields=["display_name", "updated_at"])
+        return Response(UserSerializer(user).data)
 
 
 @extend_schema_view(
@@ -349,7 +416,7 @@ class AuthTokenRefreshView(TokenRefreshView):
         ],
         responses={
             200: OpenApiResponse(
-                response=GoogleAuthTokenResponseSerializer,
+                response=AuthTokenResponseSerializer,
                 description="JWT token pair",
             ),
             400: OpenApiResponse(
@@ -385,7 +452,8 @@ class GoogleAuthView(APIView):
         serializer = GoogleAuthSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         result = authenticate_with_google(
-            credential=serializer.validated_data["credential"]
+            credential=serializer.validated_data["credential"],
+            partner_pending=request.headers.get("X-Partner-Pending"),
         )
         return Response(
             {"access": result.access, "refresh": result.refresh},

@@ -54,6 +54,7 @@ def serialize_user_list_item(user: User) -> dict[str, Any]:
     return {
         "id": user.pk,
         "email": user.email,
+        "display_name": (user.display_name or "").strip(),
         "is_active": user.is_active,
         "is_staff": user.is_staff,
         "last_login": (
@@ -140,6 +141,7 @@ def serialize_user_detail(user: User) -> dict[str, Any]:
         "schema_version": USER_DETAIL_SCHEMA_VERSION,
         "id": user.pk,
         "email": user.email,
+        "display_name": (user.display_name or "").strip(),
         "is_active": user.is_active,
         "is_staff": user.is_staff,
         "created_at": user.created_at.isoformat().replace("+00:00", "Z"),

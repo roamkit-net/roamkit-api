@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from apps.billing.models import DepositRequest
+from apps.billing.services.partner_customers import PartnerCustomersQuery
+from apps.billing.services.partner_grants import PartnerGrantsQuery
+
+_BIGINT_MAX = 2**63 - 1
+_GRANT_FIELDS = frozenset({"customer_id", "amount", "idempotency_key"})
+_AMOUNT_RE = re.compile(r"^(?:0|[1-9]\d{0,13})(?:\.\d{1,6})?$")
+_MONEY_QUANT = Decimal("0.000001")
 
 
 class BalanceSerializer(serializers.Serializer):
@@ -75,3 +86,278 @@ class VoucherRedeemResponseSerializer(serializers.Serializer):
 class VoucherErrorSerializer(serializers.Serializer):
     code = serializers.CharField()
     detail = serializers.CharField()
+
+
+class PartnerGrantBodyError(Exception):
+    """Grant body failed the locked envelope. ``code`` is the HTTP code string."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+@dataclass(frozen=True, slots=True)
+class PartnerGrantBody:
+    customer_id: int
+    amount: Decimal
+    idempotency_key: str
+
+
+def parse_partner_grant_body(data: object) -> PartnerGrantBody:
+    """Accept only the three grant fields. Unknown keys are ``invalid_request``.
+
+    ``invalid_amount`` is returned only when every other field is acceptable
+    and ``amount`` itself is not a positive ``Decimal(20,6)`` string.
+    """
+    if not isinstance(data, dict):
+        raise PartnerGrantBodyError("invalid_request")
+
+    other_invalid = bool(set(data) - _GRANT_FIELDS or _GRANT_FIELDS - set(data))
+    customer_id = data.get("customer_id", None)
+    idempotency_key = data.get("idempotency_key", None)
+    if (
+        isinstance(customer_id, bool)
+        or not isinstance(customer_id, int)
+        or not 1 <= customer_id <= _BIGINT_MAX
+    ):
+        other_invalid = True
+    if not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 128:
+        other_invalid = True
+    if other_invalid:
+        raise PartnerGrantBodyError("invalid_request")
+
+    amount = _parse_grant_amount(data.get("amount"))
+    if amount is None:
+        raise PartnerGrantBodyError("invalid_amount")
+    assert isinstance(customer_id, int)
+    assert isinstance(idempotency_key, str)
+    return PartnerGrantBody(
+        customer_id=customer_id,
+        amount=amount,
+        idempotency_key=idempotency_key,
+    )
+
+
+def _parse_grant_amount(raw: object) -> Decimal | None:
+    if not isinstance(raw, str) or _AMOUNT_RE.fullmatch(raw) is None:
+        return None
+    value = Decimal(raw)
+    if not value.is_finite() or value <= 0:
+        return None
+    return value.quantize(_MONEY_QUANT)
+
+
+class PartnerGrantRequestSerializer(serializers.Serializer):
+    """Locked grant body: ``customer_id``, ``amount``, ``idempotency_key``."""
+
+    customer_id = serializers.IntegerField(min_value=1, max_value=_BIGINT_MAX)
+    amount = serializers.CharField()
+    idempotency_key = serializers.CharField(
+        min_length=1, max_length=128, trim_whitespace=False
+    )
+
+    def to_internal_value(self, data: object) -> dict[str, object]:
+        parsed = parse_partner_grant_body(data)
+        return {
+            "customer_id": parsed.customer_id,
+            "amount": parsed.amount,
+            "idempotency_key": parsed.idempotency_key,
+        }
+
+
+class PartnerGrantResponseSerializer(serializers.Serializer):
+    grant_id = serializers.UUIDField()
+    customer_id = serializers.IntegerField(min_value=1, max_value=_BIGINT_MAX)
+    amount = serializers.DecimalField(max_digits=20, decimal_places=6)
+    created_at = serializers.DateTimeField()
+
+
+class PartnerGrantCodeSerializer(serializers.Serializer):
+    """Partner grant error body. Exactly one code, no field names."""
+
+    code = serializers.CharField()
+
+
+class PartnerSummaryCountsSerializer(serializers.Serializer):
+    order = serializers.IntegerField(min_value=0)
+    topup = serializers.IntegerField(min_value=0)
+    subscription = serializers.IntegerField(min_value=0)
+    total = serializers.IntegerField(min_value=0)
+
+
+class PartnerSummarySerializer(serializers.Serializer):
+    """Six-decimal strings for money. Counts stay integers."""
+
+    total_earned = serializers.DecimalField(max_digits=20, decimal_places=6)
+    available_balance = serializers.DecimalField(max_digits=20, decimal_places=6)
+    accrual_counts = PartnerSummaryCountsSerializer()
+
+
+class PartnerChannelCodeSerializer(serializers.Serializer):
+    """Partner read error body. Exactly one code, no field names."""
+
+    code = serializers.CharField()
+
+
+_QUERY_INT_RE = re.compile(r"^(?:0|[1-9]\d*)$")
+_CUSTOMER_SORTS = frozenset({"attributed_at", "total_partner_earned", "accrual_count"})
+_CUSTOMER_ORDERS = frozenset({"asc", "desc"})
+
+
+class PartnerCustomersQueryError(Exception):
+    """Customers query failed the locked envelope."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def parse_partner_customers_query(params: object) -> PartnerCustomersQuery:
+    """Validate customers query params. ``q`` is trimmed before the length check."""
+    if not hasattr(params, "get"):
+        raise PartnerCustomersQueryError("invalid_query")
+    return PartnerCustomersQuery(
+        page=_query_int(params.get("page", "1"), "invalid_page", minimum=1),
+        page_size=_query_int(
+            params.get("page_size", "50"),
+            "invalid_page_size",
+            minimum=1,
+            maximum=100,
+        ),
+        sort=_query_choice(
+            params.get("sort", "total_partner_earned"),
+            _CUSTOMER_SORTS,
+            "invalid_sort",
+        ),
+        order=_query_choice(
+            params.get("order", "desc"), _CUSTOMER_ORDERS, "invalid_order"
+        ),
+        q=_trimmed_query(params.get("q", "")),
+    )
+
+
+def _query_int(
+    raw: object,
+    code: str,
+    *,
+    minimum: int,
+    maximum: int | None = None,
+    error: type[Exception] = PartnerCustomersQueryError,
+) -> int:
+    if not isinstance(raw, str) or _QUERY_INT_RE.fullmatch(raw) is None:
+        raise error(code)
+    value = int(raw)
+    if value < minimum or (maximum is not None and value > maximum):
+        raise error(code)
+    return value
+
+
+def _query_choice(
+    raw: object,
+    allowed: frozenset[str],
+    code: str,
+    *,
+    error: type[Exception] = PartnerCustomersQueryError,
+) -> str:
+    if not isinstance(raw, str) or raw not in allowed:
+        raise error(code)
+    return raw
+
+
+def _trimmed_query(raw: object) -> str:
+    if not isinstance(raw, str):
+        raise PartnerCustomersQueryError("invalid_query")
+    q = raw.strip()
+    if len(q) > 254:
+        raise PartnerCustomersQueryError("invalid_query")
+    return q
+
+
+class PartnerCustomerSerializer(serializers.Serializer):
+    customer_id = serializers.IntegerField(min_value=1, max_value=_BIGINT_MAX)
+    email = serializers.CharField()
+    display_name = serializers.CharField(allow_blank=True)
+    attributed_at = serializers.DateTimeField()
+    total_partner_earned = serializers.DecimalField(max_digits=20, decimal_places=6)
+    accrual_count = serializers.IntegerField(min_value=0)
+
+
+class PartnerCustomersPageSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+    page = serializers.IntegerField(min_value=1)
+    page_size = serializers.IntegerField(min_value=1, max_value=100)
+    results = PartnerCustomerSerializer(many=True)
+
+
+_GRANT_SORTS = frozenset({"created_at", "amount"})
+
+
+class PartnerGrantsQueryError(Exception):
+    """Grants query failed the locked envelope."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def parse_partner_grants_query(params: object) -> PartnerGrantsQuery:
+    """Validate grants query params. There is no ``q``."""
+    if not hasattr(params, "get"):
+        raise PartnerGrantsQueryError("invalid_page")
+    return PartnerGrantsQuery(
+        page=_query_int(
+            params.get("page", "1"),
+            "invalid_page",
+            minimum=1,
+            error=PartnerGrantsQueryError,
+        ),
+        page_size=_query_int(
+            params.get("page_size", "50"),
+            "invalid_page_size",
+            minimum=1,
+            maximum=100,
+            error=PartnerGrantsQueryError,
+        ),
+        sort=_query_choice(
+            params.get("sort", "created_at"),
+            _GRANT_SORTS,
+            "invalid_sort",
+            error=PartnerGrantsQueryError,
+        ),
+        order=_query_choice(
+            params.get("order", "desc"),
+            _CUSTOMER_ORDERS,
+            "invalid_order",
+            error=PartnerGrantsQueryError,
+        ),
+    )
+
+
+class PartnerGrantActorSerializer(serializers.Serializer):
+    user_id = serializers.IntegerField(min_value=1, max_value=_BIGINT_MAX)
+    email = serializers.CharField()
+    display_name = serializers.CharField(allow_blank=True)
+
+
+class PartnerGrantHistorySerializer(serializers.Serializer):
+    grant_id = serializers.UUIDField()
+    customer_id = serializers.IntegerField(min_value=1, max_value=_BIGINT_MAX)
+    email = serializers.CharField(allow_null=True)
+    display_name = serializers.CharField(allow_blank=True)
+    amount = serializers.DecimalField(max_digits=20, decimal_places=6)
+    granted_by = PartnerGrantActorSerializer(allow_null=True)
+    created_at = serializers.DateTimeField()
+
+
+class PartnerGrantsPageSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+    page = serializers.IntegerField(min_value=1)
+    page_size = serializers.IntegerField(min_value=1, max_value=100)
+    results = PartnerGrantHistorySerializer(many=True)
+
+
+class PartnerInviteLinkSerializer(serializers.Serializer):
+    url = serializers.CharField()
+    is_active = serializers.BooleanField()
+    created_at = serializers.DateTimeField()
+    regenerated_at = serializers.DateTimeField(allow_null=True)

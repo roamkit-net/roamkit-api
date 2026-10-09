@@ -184,6 +184,25 @@ class EsimLifecycleEvent(models.Model):
         return f"{self.event_type} ({self.esim_id})"
 
 
+class TopupNetPriceImmutable(Exception):
+    """Raised when ``Topup.net_price_usd`` is changed after insert (ADR 023)."""
+
+
+class TopupQuerySet(models.QuerySet):
+    """Reject updates of the write-once wholesale snapshot."""
+
+    def update(self, **kwargs: object) -> int:
+        if "net_price_usd" in kwargs:
+            raise TopupNetPriceImmutable(
+                "Topup.net_price_usd is write-once and cannot be updated"
+            )
+        return super().update(**kwargs)
+
+
+class TopupManager(models.Manager.from_queryset(TopupQuerySet)):
+    """Default manager for top-ups."""
+
+
 class Topup(models.Model):
     """A prepaid credit spend that applies a top-up package to an eSIM."""
 
@@ -211,6 +230,16 @@ class Topup(models.Model):
         null=True,
         blank=True,
         help_text="Provider list price at purchase (ADR 019).",
+    )
+    net_price_usd = models.DecimalField(
+        max_digits=20,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text=(
+            "Wholesale net at top-up creation (ADR 023). Write-once. "
+            "Null is never backfilled."
+        ),
     )
     discount_percent = models.DecimalField(
         max_digits=5,
@@ -243,6 +272,8 @@ class Topup(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = TopupManager()
+
     class Meta:
         ordering = ["-created_at"]
         verbose_name = "top-up"
@@ -257,6 +288,22 @@ class Topup(models.Model):
                 name="esims_topup_amount_gt_0",
             ),
         ]
+
+    def save(self, *args: object, **kwargs: object) -> None:
+        update_fields = kwargs.get("update_fields")
+        touches_net = update_fields is None or "net_price_usd" in update_fields
+        if self.pk and not self._state.adding and touches_net:
+            stored = (
+                type(self)
+                .objects.filter(pk=self.pk)
+                .values_list("net_price_usd", flat=True)
+                .first()
+            )
+            if stored != self.net_price_usd:
+                raise TopupNetPriceImmutable(
+                    "Topup.net_price_usd is write-once and cannot be updated"
+                )
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"Topup {self.pk} ({self.status})"

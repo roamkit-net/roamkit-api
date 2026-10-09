@@ -73,6 +73,9 @@ class OrganizationCreateSerializer(serializers.Serializer):
 class MembershipSerializer(serializers.ModelSerializer):
     user_id = serializers.IntegerField(read_only=True)
     user_email = serializers.EmailField(source="user.email", read_only=True)
+    user_display_name = serializers.CharField(
+        source="user.display_name", read_only=True
+    )
 
     class Meta:
         model = Membership
@@ -80,6 +83,7 @@ class MembershipSerializer(serializers.ModelSerializer):
             "id",
             "user_id",
             "user_email",
+            "user_display_name",
             "role",
             "status",
             "created_at",
@@ -106,6 +110,7 @@ class OrganizationInviteSerializer(serializers.ModelSerializer):
         source="invited_by.email",
         read_only=True,
     )
+    display_name = serializers.SerializerMethodField()
 
     class Meta:
         model = OrganizationInvite
@@ -114,6 +119,7 @@ class OrganizationInviteSerializer(serializers.ModelSerializer):
             "organization_id",
             "email",
             "email_normalized",
+            "display_name",
             "role",
             "status",
             "expires_at",
@@ -124,6 +130,17 @@ class OrganizationInviteSerializer(serializers.ModelSerializer):
             "updated_at",
         )
         read_only_fields = fields
+
+    def get_display_name(self, obj: OrganizationInvite) -> str:
+        from django.contrib.auth import get_user_model
+
+        name = (
+            get_user_model()
+            .objects.filter(email__iexact=obj.email_normalized)
+            .values_list("display_name", flat=True)
+            .first()
+        )
+        return (name or "").strip()
 
 
 class OrganizationInviteCreateSerializer(serializers.Serializer):

@@ -1,8 +1,9 @@
 # Deploy to Hetzner production on merge to main (ADR 013 / Gate C)
 #
-# Cross-repo pairing: this workflow owns API_IMAGE (this repo SHA).
-# WEB_IMAGE uses the roamkit-web :main branch tag — never this repo's SHA.
-# Persist pins into host .env so later recreates do not drift (Gate D lesson).
+# This workflow owns API_IMAGE only (immutable git SHA).
+# It reads WEB_IMAGE only to fail if the existing pin is missing or mutable.
+# It must not set or overwrite WEB_IMAGE. Build identity stays inside the
+# image. Do not write it into the shared runtime .env.
 
 name: Deploy Production
 
@@ -42,29 +43,82 @@ jobs:
             set -euo pipefail
             STACK_DIR="${{ inputs.stack-dir }}"
             cd "$STACK_DIR"
+            count_key() {
+              grep -c -E "^${1}=" .env 2>/dev/null || true
+            }
+            assert_immutable() {
+              name="$1"
+              ref="$2"
+              case "$name" in
+                API_IMAGE) repo="ghcr.io/roamkit-net/roamkit-api" ;;
+                WEB_IMAGE) repo="ghcr.io/roamkit-net/roamkit-web" ;;
+                *)
+                  echo "ERROR: unknown pin ${name}" >&2
+                  exit 1
+                  ;;
+              esac
+              case "$ref" in
+                "${repo}@sha256:"*)
+                  hex="${ref##*@sha256:}"
+                  if ! printf '%s' "$hex" | grep -Eq '^[0-9a-f]{64}$'; then
+                    echo "ERROR: ${name} digest is not 64 hex chars: ${ref}" >&2
+                    exit 1
+                  fi
+                  ;;
+                "${repo}:"*)
+                  tag="${ref##*:}"
+                  if ! printf '%s' "$tag" | grep -Eq '^[0-9a-f]{40}$'; then
+                    echo "ERROR: ${name} must be an immutable 40-hex SHA or sha256 digest, got: ${ref}" >&2
+                    exit 1
+                  fi
+                  ;;
+                *)
+                  echo "ERROR: ${name} must be an immutable ${repo} SHA tag or sha256 digest, got: ${ref}" >&2
+                  exit 1
+                  ;;
+              esac
+            }
+            append_pin() {
+              key="$1"
+              value="$2"
+              if [ -s .env ]; then
+                last="$(tail -c1 .env || true)"
+                if [ -n "${last}" ] && [ "${last}" != $'\n' ]; then
+                  printf '\n' >> .env
+                fi
+              fi
+              printf '%s=%s\n' "${key}" "${value}" >> .env
+            }
+            web_count="$(count_key WEB_IMAGE)"
+            api_count="$(count_key API_IMAGE)"
+            web_count="${web_count:-0}"
+            api_count="${api_count:-0}"
+            if [ "${web_count}" -ne 1 ]; then
+              echo "ERROR: WEB_IMAGE must appear exactly once in ${STACK_DIR}/.env (found ${web_count})" >&2
+              exit 1
+            fi
+            if [ "${api_count}" -gt 1 ]; then
+              echo "ERROR: API_IMAGE appears ${api_count} times in ${STACK_DIR}/.env" >&2
+              exit 1
+            fi
+            web_pin="$(grep -E '^WEB_IMAGE=' .env | cut -d= -f2- | tr -d '[:space:]')"
+            assert_immutable WEB_IMAGE "${web_pin}"
             API_IMAGE="ghcr.io/roamkit-net/roamkit-api:${{ github.sha }}"
-            WEB_IMAGE="ghcr.io/roamkit-net/roamkit-web:main"
-            export API_IMAGE WEB_IMAGE
-            # Persist pins + API fingerprint (env_file overrides image bake).
-            if grep -q '^API_IMAGE=' .env; then
+            assert_immutable API_IMAGE "${API_IMAGE}"
+            if [ "${api_count}" -eq 1 ]; then
               sed -i "s|^API_IMAGE=.*|API_IMAGE=${API_IMAGE}|" .env
             else
-              echo "API_IMAGE=${API_IMAGE}" >> .env
+              append_pin API_IMAGE "${API_IMAGE}"
             fi
-            if grep -q '^WEB_IMAGE=' .env; then
-              sed -i "s|^WEB_IMAGE=.*|WEB_IMAGE=${WEB_IMAGE}|" .env
-            else
-              echo "WEB_IMAGE=${WEB_IMAGE}" >> .env
-            fi
-            if grep -q '^ROAMKIT_GIT_SHA=' .env; then
-              sed -i "s|^ROAMKIT_GIT_SHA=.*|ROAMKIT_GIT_SHA=${{ github.sha }}|" .env
-            else
-              echo "ROAMKIT_GIT_SHA=${{ github.sha }}" >> .env
-            fi
-            if grep -q '^ROAMKIT_IMAGE_TAG=' .env; then
-              sed -i "s|^ROAMKIT_IMAGE_TAG=.*|ROAMKIT_IMAGE_TAG=${{ github.sha }}|" .env
-            else
-              echo "ROAMKIT_IMAGE_TAG=${{ github.sha }}" >> .env
+            sed -i \
+              -e '/^ROAMKIT_GIT_SHA=/d' \
+              -e '/^ROAMKIT_IMAGE_TAG=/d' \
+              -e '/^ROAMKIT_BUILD_DATE=/d' \
+              .env
+            after="$(grep -E '^WEB_IMAGE=' .env | cut -d= -f2- | tr -d '[:space:]')"
+            if [ "${after}" != "${web_pin}" ]; then
+              echo "ERROR: WEB_IMAGE changed during API deploy (was ${web_pin}, now ${after})" >&2
+              exit 1
             fi
             ./scripts/deploy-production.sh
 

@@ -2,6 +2,15 @@
 
 from django.urls import path
 
+from apps.billing.partner_customers_views import PartnerCustomersView
+from apps.billing.partner_grants_views import PartnerGrantsView
+from apps.billing.partner_invite_views import (
+    PartnerInviteActivateView,
+    PartnerInviteDeactivateView,
+    PartnerInviteLinkView,
+    PartnerInviteRegenerateView,
+)
+from apps.billing.partner_summary_views import PartnerSummaryView
 from apps.organizations.views import (
     OrganizationDetailView,
     OrganizationDeviceBindingDetailView,
@@ -21,6 +30,41 @@ from apps.organizations.views import (
 
 urlpatterns = [
     path("", OrganizationListView.as_view(), name="organization-list"),
+    path(
+        "partner/summary/",
+        PartnerSummaryView.as_view(),
+        name="partner-summary",
+    ),
+    path(
+        "partner/customers/",
+        PartnerCustomersView.as_view(),
+        name="partner-customers",
+    ),
+    path(
+        "partner/grants/",
+        PartnerGrantsView.as_view(),
+        name="partner-grants",
+    ),
+    path(
+        "partner/invite-link/",
+        PartnerInviteLinkView.as_view(),
+        name="partner-invite-link",
+    ),
+    path(
+        "partner/invite-link/regenerate/",
+        PartnerInviteRegenerateView.as_view(),
+        name="partner-invite-regenerate",
+    ),
+    path(
+        "partner/invite-link/activate/",
+        PartnerInviteActivateView.as_view(),
+        name="partner-invite-activate",
+    ),
+    path(
+        "partner/invite-link/deactivate/",
+        PartnerInviteDeactivateView.as_view(),
+        name="partner-invite-deactivate",
+    ),
     path(
         "invites/accept/",
         OrganizationInviteAcceptView.as_view(),

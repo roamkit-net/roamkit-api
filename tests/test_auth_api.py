@@ -118,11 +118,44 @@ def test_activate_sets_password_and_enables_login(client: Client) -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["email"] == "activate@example.com"
+    assert payload["access"]
+    assert payload["refresh"]
+    assert "email" not in payload
 
     user.refresh_from_db()
     assert user.is_active is True
     assert user.check_password(PASSWORD)
+    assert user.last_login_provider == User.LastLoginProvider.PASSWORD
+
+    me = client.get(
+        "/api/v1/auth/me/",
+        HTTP_AUTHORIZATION=f"Bearer {payload['access']}",
+    )
+    assert me.status_code == 200
+    assert me.json()["email"] == "activate@example.com"
+
+    refreshed = client.post(
+        "/api/v1/auth/token/refresh/",
+        data=json.dumps({"refresh": payload["refresh"]}),
+        content_type="application/json",
+    )
+    assert refreshed.status_code == 200
+    assert refreshed.json()["access"]
+
+    reused = client.post(
+        "/api/v1/auth/activate/",
+        data=json.dumps(
+            {
+                "uid": uid,
+                "token": token,
+                "password": PASSWORD,
+                "password_confirm": PASSWORD,
+            }
+        ),
+        content_type="application/json",
+    )
+    assert reused.status_code == 400
+    assert "access" not in reused.json()
 
     token_response = client.post(
         "/api/v1/auth/token/",
@@ -156,6 +189,9 @@ def test_activate_rejects_invalid_token(client: Client) -> None:
     )
 
     assert response.status_code == 400
+    body = response.json()
+    assert "access" not in body
+    assert "refresh" not in body
     user.refresh_from_db()
     assert user.is_active is False
 
@@ -251,15 +287,44 @@ def test_password_reset_confirm_updates_password(client: Client, user: User) -> 
     )
 
     assert response.status_code == 200
+    body = response.json()
+    assert body["access"]
+    assert body["refresh"]
     user.refresh_from_db()
     assert user.check_password(new_password)
+    assert user.last_login_provider == User.LastLoginProvider.PASSWORD
 
-    login = client.post(
-        "/api/v1/auth/token/",
-        data=json.dumps({"email": user.email, "password": new_password}),
+    me = client.get(
+        "/api/v1/auth/me/",
+        HTTP_AUTHORIZATION=f"Bearer {body['access']}",
+    )
+    assert me.status_code == 200
+    assert me.json()["email"] == user.email
+
+    refreshed = client.post(
+        "/api/v1/auth/token/refresh/",
+        data=json.dumps({"refresh": body["refresh"]}),
         content_type="application/json",
     )
-    assert login.status_code == 200
+    assert refreshed.status_code == 200
+    assert refreshed.json()["access"]
+
+    reused = client.post(
+        "/api/v1/auth/password-reset/confirm/",
+        data=json.dumps(
+            {
+                "uid": uid,
+                "token": token,
+                "password": new_password,
+                "password_confirm": new_password,
+            }
+        ),
+        content_type="application/json",
+    )
+    assert reused.status_code == 400
+    reused_body = reused.json()
+    assert "access" not in reused_body
+    assert "refresh" not in reused_body
 
 
 @pytest.mark.django_db
@@ -281,6 +346,9 @@ def test_password_reset_confirm_rejects_invalid_token(
     )
 
     assert response.status_code == 400
+    body = response.json()
+    assert "access" not in body
+    assert "refresh" not in body
 
 
 @pytest.mark.django_db
@@ -406,7 +474,83 @@ def test_me_returns_authenticated_user(client: Client, user: User) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["email"] == user.email
+    assert payload["display_name"] == ""
     assert payload["id"] == user.pk
+
+
+def _access(client: Client, user: User) -> str:
+    token_response = client.post(
+        "/api/v1/auth/token/",
+        data=json.dumps({"email": user.email, "password": PASSWORD}),
+        content_type="application/json",
+    )
+    return token_response.json()["access"]
+
+
+@pytest.mark.django_db
+def test_me_patch_sets_and_clears_display_name(client: Client, user: User) -> None:
+    access = _access(client, user)
+
+    renamed = client.patch(
+        "/api/v1/auth/me/",
+        data=json.dumps({"display_name": "  Ada Lovelace  "}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["display_name"] == "Ada Lovelace"
+    assert renamed.json()["email"] == user.email
+    user.refresh_from_db()
+    assert user.display_name == "Ada Lovelace"
+
+    cleared = client.patch(
+        "/api/v1/auth/me/",
+        data=json.dumps({"display_name": "   "}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["display_name"] == ""
+    user.refresh_from_db()
+    assert user.display_name == ""
+
+
+@pytest.mark.django_db
+def test_me_patch_rejects_email_change_and_overlong_name(
+    client: Client, user: User
+) -> None:
+    access = _access(client, user)
+
+    rejected = client.patch(
+        "/api/v1/auth/me/",
+        data=json.dumps({"display_name": "Ada", "email": "other@example.com"}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert rejected.status_code == 400
+    user.refresh_from_db()
+    assert user.email != "other@example.com"
+    assert user.display_name == ""
+
+    too_long = client.patch(
+        "/api/v1/auth/me/",
+        data=json.dumps({"display_name": "A" * 256}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {access}",
+    )
+    assert too_long.status_code == 400
+    user.refresh_from_db()
+    assert user.display_name == ""
+
+
+@pytest.mark.django_db
+def test_me_patch_requires_authentication(client: Client) -> None:
+    response = client.patch(
+        "/api/v1/auth/me/",
+        data=json.dumps({"display_name": "Ada"}),
+        content_type="application/json",
+    )
+    assert response.status_code == 401
 
 
 @pytest.mark.django_db

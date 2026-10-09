@@ -40,6 +40,14 @@ PUBLIC_OPERATION_IDS = frozenset(
 
 _API_PREFIXES = ("api/v1/", "api/internal/")
 
+# Next.js proxies these server-to-server. They stay out of the public schema.
+UNDOCUMENTED_API_PATHS = frozenset(
+    {
+        "/api/internal/partner/join-sign/",
+        "/api/internal/partner/consume/",
+    }
+)
+
 
 def _normalize_path(path: str) -> str:
     path = "/" + path.lstrip("/")
@@ -87,7 +95,7 @@ def _iter_operations(schema: dict):
 @pytest.mark.django_db
 def test_openapi_path_coverage_is_complete() -> None:
     """Documented API routes (/api/v1/, /api/internal/) must match OpenAPI."""
-    django_paths = _collect_documented_api_paths()
+    django_paths = _collect_documented_api_paths() - UNDOCUMENTED_API_PATHS
     schema = SchemaGenerator().get_schema(request=None, public=True)
     openapi_paths = {
         _normalize_path(p) if not p.endswith("/") else p
@@ -102,6 +110,19 @@ def test_openapi_path_coverage_is_complete() -> None:
     assert (
         not extra_in_schema
     ), f"OpenAPI paths without Django routes: {extra_in_schema}"
+
+
+@pytest.mark.django_db
+def test_partner_join_routes_stay_out_of_openapi() -> None:
+    """Join sign and consume are proxied by the web app, not a public contract."""
+    django_paths = _collect_documented_api_paths()
+    assert UNDOCUMENTED_API_PATHS <= django_paths
+    schema = SchemaGenerator().get_schema(request=None, public=True)
+    openapi_paths = {
+        _normalize_path(path.rstrip("/") + "/") for path in (schema.get("paths") or {})
+    }
+    leaked = sorted(UNDOCUMENTED_API_PATHS & openapi_paths)
+    assert not leaked, f"Internal partner routes leaked into OpenAPI: {leaked}"
 
 
 def test_committed_openapi_matches_generator() -> None:

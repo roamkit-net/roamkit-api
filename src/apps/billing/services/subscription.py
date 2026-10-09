@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.billing.exceptions import (
@@ -16,7 +16,15 @@ from apps.billing.exceptions import (
     SubscriptionsDisabledError,
 )
 from apps.billing.models import LedgerReferenceType, Subscription
+from apps.billing.partner_channel import (
+    PartnerMarginAccrual,
+    SubscriptionRenewalCycle,
+)
 from apps.billing.services.credit import CreditService, credit_service
+from apps.billing.services.partner_margin import (
+    build_source_id,
+    partner_margin_service,
+)
 from shared.events.billing_events import (
     CreditDebited,
     SubscriptionPaused,
@@ -36,9 +44,13 @@ SUBSCRIPTION_PERIOD_DAYS = 30
 class SubscriptionService:
     """Renew due subscriptions against prepaid credits.
 
-    Flow per subscription (``select_for_update``):
-    - funded → ``CreditService.debit(SUBSCRIPTION)`` + bump ``next_billing_date``
-    - underfunded → ``PAUSED`` + ``SubscriptionPaused`` (email → /me/deposit)
+    Flow per subscription:
+    - open the renewal cycle before the money transaction
+    - lock that cycle, then the subscription
+    - funded → debit ``price_per_period``, move ``next_billing_date``,
+      mark the cycle ``renewed``
+    - underfunded → cycle and subscription ``paused``
+    - a rolled-back debit leaves the cycle ``pending``
 
     Gated by ``BILLING_ENABLED`` and ``SUBSCRIPTIONS_ENABLED``.
     """
@@ -73,10 +85,26 @@ class SubscriptionService:
         """Renew a single subscription. Returns ``renewed``|``paused``|``skipped``."""
         self._require_enabled()
         today = as_of or timezone.localdate()
+        try:
+            current = Subscription.objects.select_related("esim__order__package").get(
+                pk=subscription_id
+            )
+        except Subscription.DoesNotExist:
+            return "skipped"
+        if current.status != Subscription.Status.ACTIVE:
+            return "skipped"
+        if current.next_billing_date > today:
+            return "skipped"
+        billing_date = current.next_billing_date
+        get_or_create_renewal_cycle(current, billing_date)
 
         events: list[CreditDebited | SubscriptionRenewed | SubscriptionPaused] = []
         outcome = "skipped"
         with transaction.atomic():
+            cycle = SubscriptionRenewalCycle.objects.select_for_update().get(
+                subscription_id=subscription_id,
+                billing_date=billing_date,
+            )
             try:
                 locked = (
                     Subscription.objects.select_for_update()
@@ -86,12 +114,21 @@ class SubscriptionService:
             except Subscription.DoesNotExist:
                 return "skipped"
 
+            pair_matches = (
+                cycle.subscription_id == locked.pk
+                and cycle.billing_date == billing_date
+            )
+            if not pair_matches:
+                raise RuntimeError(
+                    "Renewal cycle does not match this subscription billing date"
+                )
+            if cycle.status == SubscriptionRenewalCycle.Status.RENEWED:
+                return "renewed"
             if locked.status != Subscription.Status.ACTIVE:
                 return "skipped"
-            if locked.next_billing_date > today:
+            if locked.next_billing_date != billing_date:
                 return "skipped"
 
-            billing_date = locked.next_billing_date
             idempotency_key = (
                 f"subscription-renew:{locked.pk}:{billing_date.isoformat()}"
             )
@@ -105,6 +142,8 @@ class SubscriptionService:
                     idempotency_key=idempotency_key,
                 )
             except InsufficientFundsError as exc:
+                cycle.status = SubscriptionRenewalCycle.Status.PAUSED
+                cycle.save(update_fields=["status"])
                 locked.status = Subscription.Status.PAUSED
                 locked.save(update_fields=["status", "updated_at"])
                 events.append(
@@ -125,15 +164,23 @@ class SubscriptionService:
                 )
                 outcome = "paused"
             else:
-                # Idempotent replay of the same billing date: still advance only
-                # when the ledger entry is new for this billing_date, or when
-                # next_billing_date still equals that date.
-                if locked.next_billing_date == billing_date:
-                    locked.next_billing_date = billing_date + timedelta(
-                        days=SUBSCRIPTION_PERIOD_DAYS
-                    )
-                    locked.save(update_fields=["next_billing_date", "updated_at"])
-
+                locked.next_billing_date = billing_date + timedelta(
+                    days=SUBSCRIPTION_PERIOD_DAYS
+                )
+                locked.save(update_fields=["next_billing_date", "updated_at"])
+                cycle.status = SubscriptionRenewalCycle.Status.RENEWED
+                cycle.save(update_fields=["status"])
+                partner_margin_service.accrue(
+                    source_type=PartnerMarginAccrual.SourceType.SUBSCRIPTION,
+                    source_id=build_source_id(
+                        source_type=PartnerMarginAccrual.SourceType.SUBSCRIPTION,
+                        source_uuid=locked.pk,
+                        billing_date=billing_date,
+                    ),
+                    list_price=cycle.renewal_list_price_usd,
+                    net_price=cycle.renewal_net_price_usd,
+                    customer=locked.account.user,
+                )
                 events.extend(
                     self._renewed_events(locked, entry, amount=locked.price_per_period)
                 )
@@ -188,6 +235,43 @@ class SubscriptionService:
             raise BillingDisabledError("Billing is disabled")
         if not settings.SUBSCRIPTIONS_ENABLED:
             raise SubscriptionsDisabledError("Subscriptions are disabled")
+
+
+def get_or_create_renewal_cycle(
+    subscription: Subscription,
+    billing_date: date,
+) -> SubscriptionRenewalCycle:
+    """Commit a pending cycle for this pair before any debit.
+
+    The insert is its own transaction. A later debit rollback leaves the row.
+    A second call for the same pair returns that row and does not re-read the
+    catalog. ``Subscription.price_per_period`` is not this snapshot.
+    """
+    existing = SubscriptionRenewalCycle.objects.filter(
+        subscription_id=subscription.pk,
+        billing_date=billing_date,
+    ).first()
+    if existing is not None:
+        return existing
+
+    package = subscription.esim.order.package
+    try:
+        with transaction.atomic():
+            return SubscriptionRenewalCycle.objects.create(
+                subscription=subscription,
+                billing_date=billing_date,
+                renewal_list_price_usd=package.price_usd,
+                renewal_net_price_usd=package.net_price_usd,
+                status=SubscriptionRenewalCycle.Status.PENDING,
+            )
+    except IntegrityError:
+        raced = SubscriptionRenewalCycle.objects.filter(
+            subscription_id=subscription.pk,
+            billing_date=billing_date,
+        ).first()
+        if raced is None:
+            raise
+        return raced
 
 
 subscription_service = SubscriptionService()

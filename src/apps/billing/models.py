@@ -22,6 +22,10 @@ class LedgerReferenceType(models.TextChoices):
     REFUND = "refund", "Refund"
     ADMIN_ADJUSTMENT = "admin_adjustment", "Admin adjustment"
     VOUCHER = "voucher", "Voucher"
+    PARTNER_MARGIN = "partner_margin", "Partner margin"
+    PARTNER_GRANT_OUT = "partner_grant_out", "Partner grant out"
+    PARTNER_GRANT_IN = "partner_grant_in", "Partner grant in"
+    PARTNER_INVITE_BONUS = "partner_invite_bonus", "Partner invite bonus"
 
 
 class RewardType(models.TextChoices):
@@ -703,4 +707,28 @@ REFERENCE_MODELS: dict[str, type[models.Model] | None] = {
     LedgerReferenceType.REFUND: None,
     LedgerReferenceType.ADMIN_ADJUSTMENT: None,
     LedgerReferenceType.VOUCHER: VoucherRedemption,
+    LedgerReferenceType.PARTNER_MARGIN: None,
+    LedgerReferenceType.PARTNER_GRANT_OUT: None,
+    LedgerReferenceType.PARTNER_GRANT_IN: None,
+    LedgerReferenceType.PARTNER_INVITE_BONUS: None,
 }
+
+
+def _register_partner_reference_models() -> None:
+    """Point partner ledger types at their audit rows (ADR 023).
+
+    Imported lazily so ``partner_channel`` can use string FKs without a cycle.
+    """
+    from apps.billing.partner_channel import (
+        CustomerAttribution,
+        PartnerCreditGrant,
+        PartnerMarginAccrual,
+    )
+
+    REFERENCE_MODELS[LedgerReferenceType.PARTNER_MARGIN] = PartnerMarginAccrual
+    REFERENCE_MODELS[LedgerReferenceType.PARTNER_GRANT_OUT] = PartnerCreditGrant
+    REFERENCE_MODELS[LedgerReferenceType.PARTNER_GRANT_IN] = PartnerCreditGrant
+    REFERENCE_MODELS[LedgerReferenceType.PARTNER_INVITE_BONUS] = CustomerAttribution
+
+
+_register_partner_reference_models()

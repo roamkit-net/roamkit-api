@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
+
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -15,12 +18,22 @@ from apps.accounts.services.email import (
 )
 from apps.accounts.tokens import account_activation_token
 from apps.billing.services import ensure_billing_account
+from apps.billing.services.partner_invite_visit import validate_invite_visit
+from apps.billing.services.partner_pending import unsign_partner_pending
 
 User = get_user_model()
 
 GENERIC_REGISTER_MESSAGE = (
     "If this email can be registered, you will receive a confirmation link shortly."
 )
+
+
+class RegistrationResult(StrEnum):
+    """Service outcome. The view maps this; it is not an HTTP status."""
+
+    CREATED = "created"
+    EXISTING = "existing"
+    ACCOUNT_EXISTS_FOR_INVITE = "account_exists_for_invite"
 
 
 class RegistrationError(Exception):
@@ -48,12 +61,17 @@ class ActivationError(Exception):
         super().__init__(message)
 
 
-def register_user(*, email: str) -> None:
-    """Start email-only registration: create pending user or resend mail.
+def register_user(
+    *, email: str, partner_pending: str | None = None
+) -> RegistrationResult:
+    """Start email-only registration: create a pending user or resend mail.
 
-    Always succeeds from the caller's perspective (no email enumeration).
+    ``CREATED`` is only the request that inserted the user row.
+    ``ACCOUNT_EXISTS_FOR_INVITE`` is only a verified invite for an active user.
+    Every other existing account stays on the public anti-enumeration path.
     """
     normalized = User.objects.normalize_email(email)
+    invite = _verified_invite_visit(partner_pending)
     with transaction.atomic():
         user = User.objects.select_for_update().filter(email=normalized).first()
         if user is None:
@@ -66,25 +84,50 @@ def register_user(*, email: str) -> None:
                 # Race: another request created the same email.
                 user = User.objects.filter(email=normalized).first()
                 if user is None:
-                    return
+                    return RegistrationResult.EXISTING
                 if user.is_active:
-                    if user.has_usable_password():
-                        send_password_reset_email(user)
-                    return
+                    return _active_account_result(user, invite)
                 send_activation_email(user)
-                return
+                return RegistrationResult.EXISTING
             else:
                 send_activation_email(user)
-                return
+                _record_partner_pending(user, partner_pending)
+                return RegistrationResult.CREATED
 
         if user.is_active:
-            # Already registered — send reset mail instead of silence so the
-            # "check your email" UX still works for returning users.
-            if user.has_usable_password():
-                send_password_reset_email(user)
-            return
+            return _active_account_result(user, invite)
 
         send_activation_email(user)
+        return RegistrationResult.EXISTING
+
+
+def _verified_invite_visit(signed: str | None):
+    """Visit that passed the existing signature and 30-day checks, or None.
+
+    A missing, raw, expired, or forged value is not a verified invite.
+    """
+    if not signed or not settings.PARTNER_CHANNEL_ENABLED:
+        return None
+    payload = unsign_partner_pending(signed)
+    if payload is None:
+        return None
+    return validate_invite_visit(
+        payload["visit_id"],
+        check_attribution_window=True,
+    )
+
+
+def _active_account_result(user: User, invite) -> RegistrationResult:
+    """One result for an active account, including the insert race.
+
+    A verified invite does not send mail. Public registration still sends
+    the reset email when the account has a usable password.
+    """
+    if invite is not None:
+        return RegistrationResult.ACCOUNT_EXISTS_FOR_INVITE
+    if user.has_usable_password():
+        send_password_reset_email(user)
+    return RegistrationResult.EXISTING
 
 
 def decode_uid(uid: str) -> int | None:
@@ -145,7 +188,23 @@ def activate_user(
             code="invalid_token",
         )
 
-    user.set_password(password)
-    user.is_active = True
-    user.save(update_fields=["password", "is_active", "updated_at"])
+    with transaction.atomic():
+        user.set_password(password)
+        user.is_active = True
+        user.save(update_fields=["password", "is_active", "updated_at"])
+        _apply_partner_pending(user)
     return user
+
+
+def _record_partner_pending(user, signed: str | None) -> None:
+    if not signed:
+        return
+    from apps.billing.services.partner_attribution import record_pending_for_new_user
+
+    record_pending_for_new_user(user, signed)
+
+
+def _apply_partner_pending(user) -> None:
+    from apps.billing.services.partner_attribution import apply_pending_on_activation
+
+    apply_pending_on_activation(user)
