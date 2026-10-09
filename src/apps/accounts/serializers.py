@@ -20,12 +20,18 @@ User = get_user_model()
 class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
-    def create(self, validated_data: dict) -> dict:
-        register_user(
+    def create(self, validated_data: dict):
+        return register_user(
             email=validated_data["email"],
             partner_pending=self.context.get("partner_pending"),
         )
-        return validated_data
+
+
+class AccountExistsSerializer(serializers.Serializer):
+    """Verified-invite response when the email already has an active account."""
+
+    code = serializers.ChoiceField(choices=["account_exists"])
+    detail = serializers.CharField()
 
 
 class ActivateSerializer(serializers.Serializer):

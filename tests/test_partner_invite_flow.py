@@ -367,7 +367,7 @@ def test_existing_register_does_not_create_pending(client: Client) -> None:
     existing = _user("existing")
     assert (
         register_user(email=existing.email, partner_pending=signed)
-        is RegistrationResult.EXISTING
+        is RegistrationResult.ACCOUNT_EXISTS_FOR_INVITE
     )
     assert not PendingPartnerAttribution.objects.filter(user=existing).exists()
 

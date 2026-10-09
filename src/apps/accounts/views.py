@@ -23,6 +23,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from apps.accounts.providers.google import authenticate_with_google
 from apps.accounts.providers.google.errors import GoogleAuthError, GoogleAuthErrorCode
 from apps.accounts.serializers import (
+    AccountExistsSerializer,
     ActivateSerializer,
     AuthTokenResponseSerializer,
     GoogleAuthErrorSerializer,
@@ -35,7 +36,10 @@ from apps.accounts.serializers import (
 )
 from apps.accounts.services.human_verification.enforce import enforce_human_verification
 from apps.accounts.services.password_reset import GENERIC_PASSWORD_RESET_MESSAGE
-from apps.accounts.services.registration import GENERIC_REGISTER_MESSAGE
+from apps.accounts.services.registration import (
+    GENERIC_REGISTER_MESSAGE,
+    RegistrationResult,
+)
 from apps.accounts.throttles import (
     AuthActivateRateThrottle,
     AuthGoogleRateThrottle,
@@ -55,8 +59,9 @@ User = get_user_model()
         operation_id="auth_register",
         summary="Start registration",
         description=(
-            "Begin registration with email only. Always returns a generic success "
-            "message (no account enumeration)."
+            "Begin registration with email only. Without a verified invite the "
+            "response is a generic success message. A verified invite for an "
+            "active existing account returns account_exists."
         ),
         auth=[],
         request=RegisterSerializer,
@@ -67,6 +72,10 @@ User = get_user_model()
             ),
             400: OpenApiResponse(
                 response=ErrorDetailSerializer, description="Validation error"
+            ),
+            409: OpenApiResponse(
+                response=AccountExistsSerializer,
+                description="Verified invite for an active existing account",
             ),
         },
     ),
@@ -85,7 +94,15 @@ class RegisterView(APIView):
             context={"partner_pending": request.headers.get("X-Partner-Pending")},
         )
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        result = serializer.save()
+        if result == RegistrationResult.ACCOUNT_EXISTS_FOR_INVITE:
+            return Response(
+                {
+                    "code": "account_exists",
+                    "detail": "An account with this email already exists.",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         return Response(
             {"detail": GENERIC_REGISTER_MESSAGE},
             status=status.HTTP_200_OK,
