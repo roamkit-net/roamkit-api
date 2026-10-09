@@ -583,8 +583,8 @@ paths:
       - Authentication
   /api/v1/auth/register/:
     post:
-      description: Begin registration with email only. Always returns a generic success message (no account
-        enumeration).
+      description: Begin registration with email only. Without a verified invite the response is a generic
+        success message. A verified invite for an active existing account returns account_exists.
       operationId: auth_register
       requestBody:
         content:
@@ -605,6 +605,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
           description: Validation error
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountExists'
+          description: Verified invite for an active existing account
       summary: Start registration
       tags:
       - Authentication
@@ -3293,6 +3299,17 @@ paths:
       - Public
 components:
   schemas:
+    AccountExists:
+      description: Verified-invite response when the email already has an active account.
+      properties:
+        code:
+          $ref: '#/components/schemas/CodeEnum'
+        detail:
+          type: string
+      required:
+      - code
+      - detail
+      type: object
     ActivateRequest:
       properties:
         password:
@@ -3562,6 +3579,11 @@ components:
       - token_name
       - token_symbol
       type: object
+    CodeEnum:
+      description: '* `account_exists` - account_exists'
+      enum:
+      - account_exists
+      type: string
     CodedError:
       properties:
         code:
