@@ -51,7 +51,8 @@ def test_auth_email_smoke_register_activate_login_reset(client: Client) -> None:
         content_type="application/json",
     )
     assert activate.status_code == 200
-    assert activate.json()["email"] == email
+    assert activate.json()["access"]
+    assert activate.json()["refresh"]
 
     login = client.post(
         "/api/v1/auth/token/",
