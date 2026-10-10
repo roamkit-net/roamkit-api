@@ -82,3 +82,13 @@ class PartnerGrantRateThrottle(SimpleRateThrottle):
             "scope": self.scope,
             "ident": f"{user.pk}:{channel_id}",
         }
+
+
+class PartnerInviteMutationThrottle(PartnerGrantRateThrottle):
+    """Invite regenerate/activate/deactivate per user and channel.
+
+    Applied only after the caller is authorized to manage that channel, so an
+    inaccessible id does not create a throttle key.
+    """
+
+    scope = "partner_invite"

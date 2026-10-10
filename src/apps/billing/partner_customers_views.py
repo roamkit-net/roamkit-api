@@ -30,6 +30,7 @@ from apps.billing.services.partner_context import (
     stamp_partner_role,
 )
 from apps.billing.services.partner_customers import partner_customers_service
+from apps.billing.services.partner_log import PartnerLegacyUsageMixin
 
 _NO_STORE = "no-store"
 
@@ -97,7 +98,8 @@ def _coded(http_status: int, code: str) -> Response:
         },
     ),
 )
-class PartnerCustomersView(APIView):
+class PartnerCustomersView(PartnerLegacyUsageMixin, APIView):
+    legacy_endpoint = "orgs.partner.customers"
     """Read customers. Auth, flag, summary resolver, then the list service."""
 
     permission_classes = [IsAuthenticated]
