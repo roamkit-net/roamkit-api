@@ -207,6 +207,39 @@ def consume_partner_pending(user: User, signed: str | None) -> str:
     return _CREATED
 
 
+class CustomerAttributionExists(Exception):
+    """Assign refused because this user already has a partner."""
+
+
+def assign_customer_attribution(
+    *,
+    user: User,
+    partner_channel: PartnerChannel,
+    actor: User,
+) -> CustomerAttribution:
+    """Bind a customer who has no partner yet.
+
+    ``source`` is admin. Invite snapshots stay empty and no bonus is credited.
+    A second row is not inserted. The actor is required and is not stored on
+    the attribution; the caller records them in the admin log.
+    """
+    if actor.pk is None:
+        raise ValueError("Assign requires an actor")
+    with transaction.atomic():
+        User.objects.select_for_update().get(pk=user.pk)
+        if CustomerAttribution.objects.filter(user_id=user.pk).exists():
+            raise CustomerAttributionExists("This customer already has a partner")
+        ensure_current_attribution_allowed(user=user, channel=partner_channel)
+        return CustomerAttribution.objects.create(
+            user=user,
+            partner_channel=partner_channel,
+            source=CustomerAttribution.Source.ADMIN,
+            registered_via_invite=False,
+            bonus_amount_snapshot=None,
+            attributed_at=timezone.now(),
+        )
+
+
 def transfer_customer_attribution(
     *,
     user: User,

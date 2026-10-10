@@ -205,6 +205,7 @@ def test_individual_owner_sees_only_current_channel_customers(client: Client) ->
     assert response.status_code == 200
     assert response["Cache-Control"] == "no-store"
     assert response["X-Partner-Role"] == "owner"
+    assert type(response["X-Partner-Role"]) is str
     body = response.json()
     assert body["count"] == 1
     assert body["page"] == 1
@@ -215,6 +216,7 @@ def test_individual_owner_sees_only_current_channel_customers(client: Client) ->
             "email": ada.email,
             "display_name": "Ada",
             "attributed_at": body["results"][0]["attributed_at"],
+            "credit_balance": "0.000000",
             "total_partner_earned": "1.250000",
             "accrual_count": 1,
         }
@@ -300,10 +302,15 @@ def test_team_owner_admin_and_viewer_can_read(client: Client) -> None:
     assert admin_response["X-Partner-Role"] == "admin"
     assert viewer_response.status_code == 200
     assert viewer_response["X-Partner-Role"] == "viewer"
+    member_response = _get(client, member, channel.pk)
+
     assert _ids(owner_response) == [customer.pk]
     assert _ids(admin_response) == [customer.pk]
     assert _ids(viewer_response) == [customer.pk]
-    for actor in (member, suspended, revoked):
+    assert member_response.status_code == 200
+    assert member_response["X-Partner-Role"] == "member"
+    assert _ids(member_response) == [customer.pk]
+    for actor in (suspended, revoked):
         denied = _get(client, actor, channel.pk)
         assert denied.status_code == 403
         assert denied.json() == {"code": "partner_access_denied"}
@@ -432,3 +439,180 @@ def test_individual_only_user_cannot_use_the_legacy_endpoint(client: Client) -> 
     assert legacy.json() == {"code": "partner_access_denied"}
     assert current.status_code == 200
     assert current.json()["count"] == 1
+
+
+def _keys(response, customer_id: int) -> set[str]:
+    for row in response.json()["results"]:
+        if row["customer_id"] == customer_id:
+            return set(row)
+    raise AssertionError("customer missing")
+
+
+@ENABLED
+@pytest.mark.django_db
+def test_customer_fields_follow_the_role(client: Client) -> None:
+    owner = _user("owner")
+    admin = _user("admin")
+    member = _user("member")
+    viewer = _user("viewer")
+    channel = _team(owner, "Fleet")
+    customer = _user("ada")
+    _attribute(customer, channel)
+    _membership(user=admin, channel=channel, role=MembershipRole.ADMIN)
+    _membership(user=member, channel=channel, role=MembershipRole.MEMBER)
+    _membership(user=viewer, channel=channel, role=MembershipRole.VIEWER)
+    credit_service.credit(
+        customer.billing_account,
+        Decimal("15.500000"),
+        reference_type=LedgerReferenceType.ADMIN_ADJUSTMENT,
+        reference_id=f"bal-{uuid.uuid4()}",
+        idempotency_key=f"bal-{uuid.uuid4()}",
+    )
+    identity = {"customer_id", "email", "display_name", "attributed_at"}
+    owner_fields = identity | {
+        "credit_balance",
+        "total_partner_earned",
+        "accrual_count",
+    }
+    member_fields = identity | {"credit_balance", "accrual_count"}
+
+    owner_row = _get(client, owner, channel.pk).json()["results"][0]
+    admin_row = _get(client, admin, channel.pk).json()["results"][0]
+    member_response = _get(client, member, channel.pk)
+    viewer_response = _get(client, viewer, channel.pk)
+
+    assert set(owner_row) == owner_fields
+    assert set(admin_row) == owner_fields
+    assert owner_row["credit_balance"] == "15.500000"
+    assert admin_row["credit_balance"] == "15.500000"
+    assert owner_row["total_partner_earned"] == "0.000000"
+    assert _keys(member_response, customer.pk) == member_fields
+    assert member_response.json()["results"][0]["credit_balance"] == "15.500000"
+    assert "total_partner_earned" not in member_response.content.decode()
+    assert _keys(viewer_response, customer.pk) == identity
+    assert b"credit_balance" not in viewer_response.content
+    assert b"total_partner_earned" not in viewer_response.content
+    assert b"accrual_count" not in viewer_response.content
+
+
+@ENABLED
+@pytest.mark.django_db
+def test_missing_personal_account_is_null_and_is_not_created(client: Client) -> None:
+    owner = _user("owner")
+    channel = _individual(owner)
+    customer = _user("ada")
+    _attribute(customer, channel)
+    customer.billing_account.delete()
+    before = Account.objects.count()
+
+    response = _get(client, owner, channel.pk)
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["credit_balance"] is None
+    assert Account.objects.count() == before
+    assert not Account.objects.filter(user=customer).exists()
+
+
+@ENABLED
+@pytest.mark.django_db
+def test_member_cannot_open_other_partner_routes(client: Client) -> None:
+    owner = _user("owner")
+    member = _user("member")
+    channel = _team(owner, "Fleet")
+    _membership(user=member, channel=channel, role=MembershipRole.MEMBER)
+    headers = _auth(member)
+    paths = (
+        f"/api/v1/partner/channels/{channel.pk}/summary/",
+        f"/api/v1/partner/channels/{channel.pk}/grants/",
+        f"/api/v1/partner/channels/{channel.pk}/invite-link/",
+    )
+
+    for path in paths:
+        response = client.get(path, **headers)
+        assert response.status_code == 403
+        assert response.json() == {"code": "partner_access_denied"}
+        assert "X-Partner-Role" not in response
+
+    grant = client.post(
+        f"/api/v1/partner/channels/{channel.pk}/grants/",
+        data={"amount": "1.000000"},
+        content_type="application/json",
+        **headers,
+    )
+    assert grant.status_code == 403
+    assert grant.json() == {"code": "partner_access_denied"}
+
+
+@ENABLED
+@pytest.mark.django_db
+def test_customers_sort_defaults_and_hidden_fields_are_rejected(client: Client) -> None:
+    owner = _user("owner")
+    member = _user("member")
+    viewer = _user("viewer")
+    channel = _team(owner, "Fleet")
+    _membership(user=member, channel=channel, role=MembershipRole.MEMBER)
+    _membership(user=viewer, channel=channel, role=MembershipRole.VIEWER)
+    earlier = _user("earlier")
+    later = _user("later")
+    _attribute(earlier, channel)
+    later_row = _attribute(later, channel)
+    later_row.attributed_at = _AT + timedelta(days=1)
+    later_row.save(update_fields=["attributed_at"])
+    _accrual(channel, owner.billing_account, earlier, "2.000000")
+
+    owner_default = _ids(_get(client, owner, channel.pk))
+    member_default = _ids(_get(client, member, channel.pk))
+    viewer_default = _ids(_get(client, viewer, channel.pk))
+    owner_explicit = _ids(
+        _get(client, owner, channel.pk, sort="total_partner_earned", order="desc")
+    )
+    member_accruals = _ids(
+        _get(client, member, channel.pk, sort="accrual_count", order="desc")
+    )
+
+    assert owner_default == owner_explicit == [earlier.pk, later.pk]
+    assert member_default == viewer_default == [later.pk, earlier.pk]
+    assert member_accruals == [earlier.pk, later.pk]
+    for actor, sort in (
+        (member, "total_partner_earned"),
+        (viewer, "total_partner_earned"),
+        (viewer, "accrual_count"),
+        (owner, "credit_balance"),
+    ):
+        denied = _get(client, actor, channel.pk, sort=sort)
+        assert denied.status_code == 400
+        assert denied.json() == {"code": "invalid_sort"}
+    for actor in (owner, member, viewer):
+        allowed = _get(client, actor, channel.pk, sort="attributed_at", order="asc")
+        assert allowed.status_code == 200
+        assert _ids(allowed) == [earlier.pk, later.pk]
+
+
+@ENABLED
+@pytest.mark.django_db
+def test_role_change_applies_on_the_next_customers_read(client: Client) -> None:
+    owner = _user("owner")
+    actor = _user("actor")
+    channel = _team(owner, "Fleet")
+    customer = _user("ada")
+    _attribute(customer, channel)
+    membership = Membership.objects.create(
+        organization=channel.organization,
+        user=actor,
+        role=MembershipRole.VIEWER,
+        status=MembershipStatus.ACTIVE,
+    )
+
+    as_viewer = _get(client, actor, channel.pk)
+    membership.role = MembershipRole.MEMBER
+    membership.save(update_fields=["role"])
+    as_member = _get(client, actor, channel.pk)
+    membership.status = MembershipStatus.SUSPENDED
+    membership.save(update_fields=["status"])
+    suspended = _get(client, actor, channel.pk)
+
+    assert "credit_balance" not in as_viewer.json()["results"][0]
+    assert "credit_balance" in as_member.json()["results"][0]
+    assert "total_partner_earned" not in as_member.json()["results"][0]
+    assert suspended.status_code == 403
+    assert suspended.json() == {"code": "partner_access_denied"}

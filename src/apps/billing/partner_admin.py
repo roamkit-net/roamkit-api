@@ -16,6 +16,10 @@ from apps.billing.partner_channel import (
     PartnerInviteLink,
     PartnerMarginAccrual,
 )
+from apps.billing.services.partner_attribution import (
+    assign_customer_attribution,
+    transfer_customer_attribution,
+)
 from apps.billing.services.partner_invite import (
     PartnerInviteError,
     canonical_invite_link,
@@ -23,6 +27,10 @@ from apps.billing.services.partner_invite import (
     create_partner_channel,
     persist_with_unique_invite_token,
     update_partner_channel_settings,
+)
+from apps.billing.services.partner_self_referral import (
+    PartnerSelfReferralConflict,
+    ensure_current_attribution_allowed,
 )
 from apps.billing.services.partner_settlement import (
     PartnerChannelOwnershipInvalid,
@@ -253,3 +261,81 @@ class PartnerInviteLinkAdmin(admin.ModelAdmin):
             super(PartnerInviteLinkAdmin, self).save_model(request, obj, form, change)
 
         persist_with_unique_invite_token(obj, _persist)
+
+
+class CustomerAttributionAdminForm(forms.ModelForm):
+    """The model is not saved by this form. Admin calls the services."""
+
+    class Meta:
+        model = CustomerAttribution
+        fields = ("user", "partner_channel")
+
+    def clean(self):
+        cleaned = super().clean()
+        channel = cleaned.get("partner_channel")
+        adding = self.instance._state.adding
+        user = cleaned.get("user") if adding else self.instance.user
+        if user is None or channel is None:
+            return cleaned
+        if adding and CustomerAttribution.objects.filter(user_id=user.pk).exists():
+            raise ValidationError("This customer already has a partner.")
+        same_channel = not adding and self.instance.partner_channel_id == channel.pk
+        if same_channel:
+            return cleaned
+        try:
+            ensure_current_attribution_allowed(user=user, channel=channel)
+        except PartnerSelfReferralConflict as exc:
+            raise ValidationError(str(exc)) from exc
+        return cleaned
+
+
+@admin.register(CustomerAttribution)
+class CustomerAttributionAdmin(admin.ModelAdmin):
+    form = CustomerAttributionAdminForm
+    list_display = ("user", "partner_channel", "source", "attributed_at")
+    search_fields = ("user__email", "user__display_name")
+    list_filter = ("source",)
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("user", "partner_channel")
+
+    def get_fields(self, request, obj=None):
+        if obj is None:
+            return ["user", "partner_channel"]
+        return [
+            "user",
+            "partner_channel",
+            "source",
+            "attributed_at",
+            "registered_via_invite",
+            "bonus_amount_snapshot",
+        ]
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj is None:
+            return []
+        return [
+            "user",
+            "source",
+            "attributed_at",
+            "registered_via_invite",
+            "bonus_amount_snapshot",
+        ]
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False
+
+    def save_model(self, request, obj, form, change) -> None:
+        channel = form.cleaned_data["partner_channel"]
+        if change:
+            transfer_customer_attribution(user=obj.user, partner_channel=channel)
+            obj.partner_channel = channel
+            return
+        created = assign_customer_attribution(
+            user=form.cleaned_data["user"],
+            partner_channel=channel,
+            actor=request.user,
+        )
+        obj.pk = created.pk
+        obj.user = created.user
+        obj.partner_channel = created.partner_channel

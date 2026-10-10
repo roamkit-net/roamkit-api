@@ -2194,8 +2194,12 @@ paths:
       - Organizations
   /api/v1/orgs/partner/customers/:
     get:
-      description: Current attributions for the caller's single partner channel, with earnings from stored
-        accruals.
+      description: 'Current attributions for the caller''s single team channel. An active member may read
+        this route only. Field visibility and the default sort follow the resolved role: owner and admin
+        receive credit_balance, total_partner_earned, and accrual_count; member omits total_partner_earned;
+        viewer receives identity and attributed_at only. credit_balance is the personal Account balance
+        cache, or null when that Account is missing. Forbidden fields are omitted. An explicit sort the
+        role cannot see is invalid_sort.'
       operationId: orgs_partner_customers
       parameters:
       - in: query
@@ -3267,10 +3271,13 @@ paths:
       - Catalog
   /api/v1/partner/channels/{channel_id}/customers/:
     get:
-      description: Current attributions for the channel in the path, with earnings from stored accruals
-        on that same channel. The channel id is not authority. A missing channel and an inaccessible channel
-        are the same partner_access_denied response. Channel is_active does not hide customers. There
-        is no fallback to another context.
+      description: Current attributions for the channel in the path. An active member may read this route
+        and no other partner route. Owner and admin results include credit_balance (personal Account.balance
+        cache, 6dp string or null when that Account is missing), total_partner_earned, and accrual_count.
+        Member results include credit_balance and accrual_count and omit total_partner_earned. Viewer
+        results are customer_id, email, display_name, and attributed_at only. Forbidden fields are omitted.
+        Omitted sort defaults to total_partner_earned for owner and admin, and to attributed_at for member
+        and viewer. A sort the role cannot see is invalid_sort. The channel id is not authority.
       operationId: partner_channel_customers
       parameters:
       - in: path
@@ -3340,6 +3347,59 @@ paths:
       security:
       - bearerAuth: []
       summary: Customers for one partner channel
+      tags:
+      - Partner
+  /api/v1/partner/channels/{channel_id}/customers/{customer_id}/plans/:
+    get:
+      description: Owner and admin only. The channel id is not authority. A missing channel, a foreign
+        channel, and member, viewer, suspended, or revoked membership are the same partner_access_denied
+        response. A customer who is not currently attributed to the authorized channel is customer_not_found.
+        The body is only active and expired. Archived eSIMs are omitted and the response does not say
+        that they exist. location_title, package_title, and data_allowance are required strings; an empty
+        snapshot stays an empty string. validity_days and the usage cache fields are nullable. usage_is_unlimited
+        is true, false, or null as stored. Usage is the local cache. This read does not refresh the provider
+        and does not create an Account. No count, pagination, or internal ids.
+      operationId: partner_channel_customer_plans
+      parameters:
+      - in: path
+        name: channel_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      - in: path
+        name: customer_id
+        required: true
+        schema:
+          type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerCustomerPlans'
+          description: Active and expired local eSIM snapshots
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled or customer_not_found
+      security:
+      - bearerAuth: []
+      summary: Cached eSIM plans for one attributed customer
       tags:
       - Partner
   /api/v1/partner/channels/{channel_id}/grants/:
@@ -4576,10 +4636,13 @@ components:
 
         * `admin` - admin
 
+        * `member` - member
+
         * `viewer` - viewer'
       enum:
       - owner
       - admin
+      - member
       - viewer
       type: string
     ErrorDetail:
@@ -6262,9 +6325,12 @@ components:
           type: boolean
         can_manage_invite:
           type: boolean
+        can_view_customer_plans:
+          type: boolean
       required:
       - can_grant
       - can_manage_invite
+      - can_view_customer_plans
       type: object
     PartnerContextItem:
       description: Display metadata for one authorized partner context.
@@ -6300,12 +6366,29 @@ components:
       - contexts
       type: object
     PartnerCustomer:
+      description: 'Role-dependent customer object.
+
+
+        Owner and admin receive every field. Member omits ``total_partner_earned``.
+
+        Viewer receives only ``customer_id``, ``email``, ``display_name``, and
+
+        ``attributed_at``. ``credit_balance`` is the personal Account cache as a
+
+        6dp string, or JSON null when that Account does not exist. A missing
+
+        Account is not zero, and the customers read does not create one.'
       properties:
         accrual_count:
           minimum: 0
           type: integer
         attributed_at:
           format: date-time
+          type: string
+        credit_balance:
+          format: decimal
+          nullable: true
+          pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
           type: string
         customer_id:
           format: int64
@@ -6321,12 +6404,72 @@ components:
           pattern: ^-?\d{0,14}(?:\.\d{0,6})?$
           type: string
       required:
-      - accrual_count
       - attributed_at
       - customer_id
       - display_name
       - email
-      - total_partner_earned
+      type: object
+    PartnerCustomerPlan:
+      description: One local eSIM snapshot. Empty snapshot strings stay empty strings.
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        data_allowance:
+          type: string
+        location_title:
+          type: string
+        package_title:
+          type: string
+        status:
+          type: string
+        usage_expired_at:
+          format: date-time
+          nullable: true
+          type: string
+        usage_is_unlimited:
+          nullable: true
+          type: boolean
+        usage_remaining_mb:
+          nullable: true
+          type: integer
+        usage_synced_at:
+          format: date-time
+          nullable: true
+          type: string
+        usage_total_mb:
+          nullable: true
+          type: integer
+        validity_days:
+          nullable: true
+          type: integer
+      required:
+      - created_at
+      - data_allowance
+      - location_title
+      - package_title
+      - status
+      - usage_expired_at
+      - usage_is_unlimited
+      - usage_remaining_mb
+      - usage_synced_at
+      - usage_total_mb
+      - validity_days
+      type: object
+    PartnerCustomerPlans:
+      description: Active and expired plans only. No count, ids, or archived metadata.
+      properties:
+        active:
+          items:
+            $ref: '#/components/schemas/PartnerCustomerPlan'
+          type: array
+        expired:
+          items:
+            $ref: '#/components/schemas/PartnerCustomerPlan'
+          type: array
+      required:
+      - active
+      - expired
       type: object
     PartnerCustomersPage:
       properties:

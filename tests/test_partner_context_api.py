@@ -195,7 +195,11 @@ def test_lists_individual_and_team_contexts_without_financial_fields(
         "label": "Ada",
         "effective_role": "owner",
         "is_active": True,
-        "capabilities": {"can_grant": True, "can_manage_invite": True},
+        "capabilities": {
+            "can_grant": True,
+            "can_manage_invite": True,
+            "can_view_customer_plans": True,
+        },
     }
     assert body["contexts"][1]["label"] == "Alpha"
     assert body["contexts"][1]["effective_role"] == "owner"
@@ -203,6 +207,7 @@ def test_lists_individual_and_team_contexts_without_financial_fields(
     assert body["contexts"][2]["capabilities"] == {
         "can_grant": False,
         "can_manage_invite": False,
+        "can_view_customer_plans": False,
     }
     leaked = _keys(body) & {
         "account",
@@ -258,17 +263,26 @@ def test_role_matrix_and_inactive_channel_stay_visible(client: Client) -> None:
     assert owner_body[0]["capabilities"] == {
         "can_grant": True,
         "can_manage_invite": True,
+        "can_view_customer_plans": True,
     }
     assert admin_body[0]["effective_role"] == "admin"
     assert admin_body[0]["capabilities"] == {
         "can_grant": True,
         "can_manage_invite": False,
+        "can_view_customer_plans": True,
     }
     assert viewer_body[0]["effective_role"] == "viewer"
     assert viewer_body[0]["capabilities"] == {
         "can_grant": False,
         "can_manage_invite": False,
+        "can_view_customer_plans": False,
     }
-    assert _get(client, member).json() == {"contexts": []}
+    member_body = _get(client, member).json()["contexts"]
+    assert member_body[0]["effective_role"] == "member"
+    assert member_body[0]["capabilities"] == {
+        "can_grant": False,
+        "can_manage_invite": False,
+        "can_view_customer_plans": False,
+    }
     assert _get(client, suspended).json() == {"contexts": []}
     assert _get(client, revoked).json() == {"contexts": []}
