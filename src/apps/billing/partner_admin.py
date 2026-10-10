@@ -21,6 +21,7 @@ from apps.billing.services.partner_invite import (
     canonical_invite_link,
     create_individual_partner_channel,
     create_partner_channel,
+    persist_with_unique_invite_token,
     update_partner_channel_settings,
 )
 from apps.billing.services.partner_settlement import (
@@ -221,6 +222,7 @@ class PartnerInviteLinkAdmin(admin.ModelAdmin):
 
     ``save`` rejects the same fields even if the form is bypassed. Regenerate
     is not this form; it writes ``token`` and ``regenerated_at`` only.
+    Add mints a token because this form does not post one.
     """
 
     list_display = ("partner_channel", "name", "is_active", "created_at")
@@ -234,3 +236,13 @@ class PartnerInviteLinkAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None) -> bool:
         return False
+
+    def save_model(self, request, obj, form, change) -> None:
+        if change or obj.token:
+            super().save_model(request, obj, form, change)
+            return
+
+        def _persist() -> None:
+            super(PartnerInviteLinkAdmin, self).save_model(request, obj, form, change)
+
+        persist_with_unique_invite_token(obj, _persist)

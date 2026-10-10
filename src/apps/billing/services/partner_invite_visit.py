@@ -14,7 +14,11 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from apps.billing.partner_channel import InviteVisit, PartnerInviteLink
+from apps.billing.partner_channel import (
+    InviteVisit,
+    PartnerInviteLink,
+    partner_invite_token_is_usable,
+)
 from apps.billing.services.partner_pending import sign_partner_pending
 
 UTM_FIELDS = ("utm_source", "utm_medium", "utm_campaign", "utm_content")
@@ -51,7 +55,10 @@ def record_visit(
 
     Unknown or inactive tokens insert nothing. The same lock serializes regenerate.
     """
-    if not token or not settings.PARTNER_CHANNEL_ENABLED:
+    if (
+        not partner_invite_token_is_usable(token)
+        or not settings.PARTNER_CHANNEL_ENABLED
+    ):
         return None
     utm_values = normalize_utm(utm)
     with transaction.atomic():

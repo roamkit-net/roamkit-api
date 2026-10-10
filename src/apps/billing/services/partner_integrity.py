@@ -16,6 +16,7 @@ from apps.billing.partner_channel import (
     PartnerChannel,
     PartnerCreditGrant,
     PartnerInviteLink,
+    partner_invite_token_is_usable,
 )
 from apps.billing.services.credit import credit_service
 from apps.billing.services.partner_reconcile import collect_partner_drift
@@ -166,6 +167,6 @@ def _invite_shape() -> list[PartnerIntegrityIssue]:
     issues: list[PartnerIntegrityIssue] = []
     links = PartnerInviteLink.objects.select_related("partner_channel")
     for link in links.iterator():
-        if not link.token:
+        if not partner_invite_token_is_usable(link.token):
             issues.append(_issue("invite_token_missing", link.partner_channel))
     return issues
