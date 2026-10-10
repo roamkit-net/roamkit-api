@@ -30,6 +30,7 @@ from apps.billing.services.partner_context import (
     stamp_partner_role,
 )
 from apps.billing.services.partner_grants import partner_grants_service
+from apps.billing.services.partner_log import PartnerLegacyUsageMixin
 
 _NO_STORE = "no-store"
 
@@ -92,7 +93,8 @@ def _coded(http_status: int, code: str) -> Response:
         },
     ),
 )
-class PartnerGrantsView(APIView):
+class PartnerGrantsView(PartnerLegacyUsageMixin, APIView):
+    legacy_endpoint = "orgs.partner.grants"
     """Read grant history. Auth, flag, summary resolver, then the list service."""
 
     permission_classes = [IsAuthenticated]

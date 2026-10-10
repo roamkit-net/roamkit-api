@@ -21,6 +21,7 @@ from apps.billing.services.partner_context import (
     resolve_partner_summary_channel,
     stamp_partner_role,
 )
+from apps.billing.services.partner_log import PartnerLegacyUsageMixin
 from apps.billing.services.partner_summary import partner_summary_service
 
 _NO_STORE = "no-store"
@@ -65,7 +66,8 @@ def _coded(http_status: int, code: str) -> Response:
         },
     ),
 )
-class PartnerSummaryView(APIView):
+class PartnerSummaryView(PartnerLegacyUsageMixin, APIView):
+    legacy_endpoint = "orgs.partner.summary"
     """Read summary. Auth, then the summary resolver, then the service."""
 
     permission_classes = [IsAuthenticated]

@@ -10,7 +10,15 @@ from typing import TYPE_CHECKING
 
 from django.db import transaction
 
-from apps.organizations.exceptions import LastOwnerError, NotAllowedError
+from apps.billing.services.partner_self_referral import (
+    PartnerSelfReferralConflict,
+    ensure_active_membership_allowed,
+)
+from apps.organizations.exceptions import (
+    InviteConflictError,
+    LastOwnerError,
+    NotAllowedError,
+)
 from apps.organizations.models import (
     Membership,
     MembershipRole,
@@ -27,6 +35,13 @@ from apps.organizations.services.context import resolve_organization_context
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
+
+
+def _reject_attributed_member(user: User, organization: Organization) -> None:
+    try:
+        ensure_active_membership_allowed(user=user, organization=organization)
+    except PartnerSelfReferralConflict as exc:
+        raise InviteConflictError(str(exc)) from exc
 
 
 def _active_owner_count(organization: Organization) -> int:
@@ -50,6 +65,7 @@ def transfer_ownership(
     org = ctx.organization
     assert org is not None
     assert ctx.membership is not None
+    _reject_attributed_member(new_owner, org)
 
     target = (
         Membership.objects.select_for_update()
@@ -93,6 +109,7 @@ def set_member_role(
     require_manage_members(ctx)
     org = ctx.organization
     assert org is not None
+    _reject_attributed_member(target_user, org)
 
     target = (
         Membership.objects.select_for_update()

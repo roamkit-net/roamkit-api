@@ -39,8 +39,10 @@ from apps.billing.services.partner_grant import (
     PartnerGrantForbidden,
     PartnerGrantIdempotencyConflict,
     PartnerGrantNegativeBalance,
+    PartnerGrantSameAccount,
     partner_grant_service,
 )
+from apps.billing.services.partner_log import PartnerLegacyUsageMixin
 from apps.billing.throttles import PartnerGrantRateThrottle
 from core.http.request_id import get_or_create_request_id
 
@@ -99,7 +101,8 @@ def _coded(http_status: int, code: str) -> Response:
         },
     ),
 )
-class PartnerGrantView(APIView):
+class PartnerGrantView(PartnerLegacyUsageMixin, APIView):
+    legacy_endpoint = "billing.partner_grants"
     """Grant credits. Tenant, body, and errors follow ADR 023."""
 
     permission_classes = [IsAuthenticated]
@@ -160,6 +163,8 @@ class PartnerGrantView(APIView):
             return _coded(status.HTTP_409_CONFLICT, "customer_attribution_changed")
         except PartnerGrantIdempotencyConflict:
             return _coded(status.HTTP_409_CONFLICT, "idempotency_key_conflict")
+        except PartnerGrantSameAccount:
+            return _coded(status.HTTP_409_CONFLICT, "partner_grant_same_account")
         except (InsufficientFundsError, PartnerGrantNegativeBalance):
             return _coded(status.HTTP_409_CONFLICT, "insufficient_funds")
         except InvalidAmountError:

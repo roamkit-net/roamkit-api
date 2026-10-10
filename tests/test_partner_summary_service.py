@@ -173,3 +173,34 @@ def test_inactive_channel_still_returns_stored_history() -> None:
     assert summary.total_earned == Decimal("3.000000")
     assert summary.accrual_counts.topup == 1
     assert summary.accrual_counts.total == 1
+
+
+@ENABLED
+@pytest.mark.django_db
+def test_summarize_for_account_shares_the_same_calculation() -> None:
+    owner = _user("owner")
+    channel = _channel_for(owner)
+    _accrual(channel, source_type="order", partner_share="1.250000")
+    credit_service.credit(
+        owner.billing_account,
+        Decimal("4.000000"),
+        reference_type=LedgerReferenceType.ADMIN_ADJUSTMENT,
+        reference_id=f"personal-{uuid.uuid4()}",
+        idempotency_key=f"personal-{uuid.uuid4()}",
+    )
+
+    legacy = partner_summary_service.summarize(channel)
+    same_account = partner_summary_service.summarize_for_account(
+        channel,
+        channel.organization.account,
+    )
+    personal = partner_summary_service.summarize_for_account(
+        channel,
+        owner.billing_account,
+    )
+
+    assert same_account == legacy
+    assert personal.total_earned == legacy.total_earned
+    assert personal.accrual_counts == legacy.accrual_counts
+    assert personal.available_balance == Decimal("4.000000")
+    assert legacy.available_balance != personal.available_balance

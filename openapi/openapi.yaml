@@ -26,6 +26,9 @@ tags:
 - description: Team organizations and memberships (ADR 020). Authorize via organization_id; never via
     client account_id.
   name: Organizations
+- description: Partner channel context (ADR 024). Authorize via the authenticated user and the path channel_id.
+    The channel id is not authority by itself.
+  name: Partner
 - description: Device-facing endpoints authenticated by opaque device credential (not user JWT). Used
     by managed devices / UEM.
   name: Device
@@ -2335,6 +2338,7 @@ paths:
       - Organizations
   /api/v1/orgs/partner/invite-link/:
     get:
+      description: Record that a legacy partner route was called. Does not change the response.
       operationId: orgs_partner_invite_link
       responses:
         '200':
@@ -2374,6 +2378,7 @@ paths:
       - Organizations
   /api/v1/orgs/partner/invite-link/activate/:
     post:
+      description: Record that a legacy partner route was called. Does not change the response.
       operationId: orgs_partner_invite_link_activate
       responses:
         '200':
@@ -2413,6 +2418,7 @@ paths:
       - Organizations
   /api/v1/orgs/partner/invite-link/deactivate/:
     post:
+      description: Record that a legacy partner route was called. Does not change the response.
       operationId: orgs_partner_invite_link_deactivate
       responses:
         '200':
@@ -2452,6 +2458,7 @@ paths:
       - Organizations
   /api/v1/orgs/partner/invite-link/regenerate/:
     post:
+      description: Record that a legacy partner route was called. Does not change the response.
       operationId: orgs_partner_invite_link_regenerate
       responses:
         '200':
@@ -3258,6 +3265,492 @@ paths:
       summary: List packages
       tags:
       - Catalog
+  /api/v1/partner/channels/{channel_id}/customers/:
+    get:
+      description: Current attributions for the channel in the path, with earnings from stored accruals
+        on that same channel. The channel id is not authority. A missing channel and an inaccessible channel
+        are the same partner_access_denied response. Channel is_active does not hide customers. There
+        is no fallback to another context.
+      operationId: partner_channel_customers
+      parameters:
+      - in: path
+        name: channel_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      - in: query
+        name: order
+        schema:
+          enum:
+          - asc
+          - desc
+          type: string
+      - in: query
+        name: page
+        schema:
+          type: integer
+      - in: query
+        name: page_size
+        schema:
+          type: integer
+      - in: query
+        name: q
+        schema:
+          type: string
+      - in: query
+        name: sort
+        schema:
+          enum:
+          - accrual_count
+          - attributed_at
+          - total_partner_earned
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerCustomersPage'
+          description: Customer page
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: invalid_page, invalid_page_size, invalid_sort, invalid_order, or invalid_query
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled
+      security:
+      - bearerAuth: []
+      summary: Customers for one partner channel
+      tags:
+      - Partner
+  /api/v1/partner/channels/{channel_id}/grants/:
+    get:
+      description: Stored credit grants for the channel in the path. The channel id is not authority.
+        A missing channel and an inaccessible channel are the same partner_access_denied response. There
+        is no fallback.
+      operationId: partner_channel_grants
+      parameters:
+      - in: path
+        name: channel_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      - in: query
+        name: order
+        schema:
+          enum:
+          - asc
+          - desc
+          type: string
+      - in: query
+        name: page
+        schema:
+          type: integer
+      - in: query
+        name: page_size
+        schema:
+          type: integer
+      - in: query
+        name: sort
+        schema:
+          enum:
+          - amount
+          - created_at
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerGrantsPage'
+          description: Grant page
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: invalid_page, invalid_page_size, invalid_sort, or invalid_order
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled
+      security:
+      - bearerAuth: []
+      summary: Grant history for one partner channel
+      tags:
+      - Partner
+    post:
+      description: Move credits from this channel's settlement account to a customer who is currently
+        attributed to this same channel. The path channel id is the only partner selector. The body is
+        customer_id, amount, and idempotency_key. An individual grant may spend the whole available personal
+        balance. A missing channel and an inaccessible channel are the same partner_access_denied response.
+        There is no fallback to another context.
+      operationId: partner_channel_grant
+      parameters:
+      - in: path
+        name: channel_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PartnerGrantRequestRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerGrantResponse'
+          description: Created grant, or the original grant on replay
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: invalid_request or invalid_amount
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied or partner_grant_forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled or customer_not_found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: insufficient_funds, customer_attribution_changed, idempotency_key_conflict, or
+            partner_grant_same_account
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: rate_limited
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_settlement_account_missing
+      security:
+      - bearerAuth: []
+      summary: Grant credits on one partner channel
+      tags:
+      - Partner
+  /api/v1/partner/channels/{channel_id}/invite-link/:
+    get:
+      description: Canonical invite link for the channel in the path. Viewer may read. The channel id
+        is not authority.
+      operationId: partner_channel_invite_link
+      parameters:
+      - in: path
+        name: channel_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerInviteLink'
+          description: Invite link
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled or partner_invite_missing
+      security:
+      - bearerAuth: []
+      summary: Invite link for one partner channel
+      tags:
+      - Partner
+  /api/v1/partner/channels/{channel_id}/invite-link/activate/:
+    post:
+      description: Invite link for the path channel. Writes stay owner-only.
+      operationId: partner_channel_invite_link_activate
+      parameters:
+      - in: path
+        name: channel_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerInviteLink'
+          description: Invite link
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied or partner_invite_forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled or partner_invite_missing
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: rate_limited
+      security:
+      - bearerAuth: []
+      summary: Activate one channel invite link
+      tags:
+      - Partner
+  /api/v1/partner/channels/{channel_id}/invite-link/deactivate/:
+    post:
+      description: Invite link for the path channel. Writes stay owner-only.
+      operationId: partner_channel_invite_link_deactivate
+      parameters:
+      - in: path
+        name: channel_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerInviteLink'
+          description: Invite link
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied or partner_invite_forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled or partner_invite_missing
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: rate_limited
+      security:
+      - bearerAuth: []
+      summary: Deactivate one channel invite link
+      tags:
+      - Partner
+  /api/v1/partner/channels/{channel_id}/invite-link/regenerate/:
+    post:
+      description: Invite link for the path channel. Writes stay owner-only.
+      operationId: partner_channel_invite_link_regenerate
+      parameters:
+      - in: path
+        name: channel_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerInviteLink'
+          description: Invite link
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied or partner_invite_forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled or partner_invite_missing
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: rate_limited
+      security:
+      - bearerAuth: []
+      summary: Regenerate one channel invite link
+      tags:
+      - Partner
+  /api/v1/partner/channels/{channel_id}/summary/:
+    get:
+      description: Stored margin total and display balance for the channel in the path. The channel id
+        is not authority. A missing channel and an inaccessible channel are the same partner_access_denied
+        response. There is no fallback to another context.
+      operationId: partner_channel_summary
+      parameters:
+      - in: path
+        name: channel_id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerSummary'
+          description: Channel summary
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_access_denied
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_settlement_account_missing
+      security:
+      - bearerAuth: []
+      summary: Summary for one partner channel
+      tags:
+      - Partner
+  /api/v1/partner/contexts/:
+    get:
+      description: 'Every partner channel this user may access. An empty list is a normal answer. is_active
+        is accrual display status and does not remove a context. capabilities are role checks only: they
+        ignore is_active, the feature flag, attribution, and balance. The response has no account, balance,
+        organization, or user ids.'
+      operationId: partner_contexts_list
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerContextList'
+          description: Authorized contexts, possibly empty
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: authentication_required
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerChannelCode'
+          description: partner_channel_disabled
+      security:
+      - bearerAuth: []
+      summary: List authorized partner contexts
+      tags:
+      - Partner
   /api/v1/public/esim/status/:
     post:
       description: Read-only cache snapshot for a consumer Matching ID (ADR 022). Body must be a JSON
@@ -4078,6 +4571,17 @@ components:
       - data_used
       - expires_at
       type: object
+    EffectiveRoleEnum:
+      description: '* `owner` - owner
+
+        * `admin` - admin
+
+        * `viewer` - viewer'
+      enum:
+      - owner
+      - admin
+      - viewer
+      type: string
     ErrorDetail:
       description: 'Standard DRF ``{"detail": "..."}`` error body.'
       properties:
@@ -4423,6 +4927,14 @@ components:
       - admin
       - member
       - viewer
+      type: string
+    KindEnum:
+      description: '* `individual` - individual
+
+        * `team` - team'
+      enum:
+      - individual
+      - team
       type: string
     LifecycleEvent:
       description: Persisted lifecycle / install telemetry event.
@@ -5742,6 +6254,50 @@ components:
           type: string
       required:
       - code
+      type: object
+    PartnerContextCapabilities:
+      description: Role capabilities only. They do not read channel activity or balance.
+      properties:
+        can_grant:
+          type: boolean
+        can_manage_invite:
+          type: boolean
+      required:
+      - can_grant
+      - can_manage_invite
+      type: object
+    PartnerContextItem:
+      description: Display metadata for one authorized partner context.
+      properties:
+        capabilities:
+          $ref: '#/components/schemas/PartnerContextCapabilities'
+        channel_id:
+          format: uuid
+          type: string
+        effective_role:
+          $ref: '#/components/schemas/EffectiveRoleEnum'
+        is_active:
+          type: boolean
+        kind:
+          $ref: '#/components/schemas/KindEnum'
+        label:
+          type: string
+      required:
+      - capabilities
+      - channel_id
+      - effective_role
+      - is_active
+      - kind
+      - label
+      type: object
+    PartnerContextList:
+      properties:
+        contexts:
+          items:
+            $ref: '#/components/schemas/PartnerContextItem'
+          type: array
+      required:
+      - contexts
       type: object
     PartnerCustomer:
       properties:

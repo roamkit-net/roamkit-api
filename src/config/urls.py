@@ -30,6 +30,7 @@ urlpatterns = [
     path("api/redoc/", redoc_view, name="redoc"),
     path("api/v1/auth/", include("apps.accounts.urls")),
     path("api/v1/billing/", include("apps.billing.urls")),
+    path("api/v1/partner/", include("apps.billing.partner_urls")),
     path("api/v1/orders/", include("apps.orders.urls")),
     path("api/v1/orgs/", include("apps.organizations.urls")),
     path("api/v1/device/", include("apps.organizations.device_urls")),

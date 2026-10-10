@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 from django.contrib import admin
+from django.core.exceptions import ValidationError
+from django.db import transaction
 
+from apps.billing.services.partner_self_referral import (
+    PartnerSelfReferralConflict,
+    ensure_active_membership_allowed,
+)
 from apps.organizations.models import (
     DeviceBinding,
     DeviceBindingEvent,
     FleetCredentialEvent,
     Membership,
+    MembershipStatus,
     Organization,
     OrganizationFleetCredential,
     OrganizationInvite,
@@ -60,6 +67,20 @@ class MembershipAdmin(admin.ModelAdmin):
     )
     raw_id_fields = ("organization", "user")
     readonly_fields = ("id", "created_at", "updated_at")
+
+    def save_model(self, request, obj, form, change) -> None:
+        if obj.status != MembershipStatus.ACTIVE:
+            super().save_model(request, obj, form, change)
+            return
+        with transaction.atomic():
+            try:
+                ensure_active_membership_allowed(
+                    user=obj.user,
+                    organization=obj.organization,
+                )
+            except PartnerSelfReferralConflict as exc:
+                raise ValidationError(str(exc)) from exc
+            super().save_model(request, obj, form, change)
 
     def has_delete_permission(self, request, obj=None) -> bool:
         return False

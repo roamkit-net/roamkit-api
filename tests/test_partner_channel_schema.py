@@ -765,3 +765,130 @@ def test_portal_mutations_follow_canonical_link() -> None:
     assert portal.token != old_token
     assert campaign.token == "campaign-live"
     assert invite_link_for(channel).url.endswith(f"/join/{portal.token}")
+
+
+def _individual(owner: User) -> PartnerChannel:
+    return PartnerChannel.objects.create(
+        kind=PartnerChannel.Kind.INDIVIDUAL,
+        owner_user=owner,
+        organization=None,
+        revenue_share_percent=Decimal("25.00"),
+    )
+
+
+@pytest.mark.django_db
+def test_individual_and_team_owner_shapes() -> None:
+    owner = _user("shape-owner@example.com")
+    individual = _individual(owner)
+    assert individual.kind == PartnerChannel.Kind.INDIVIDUAL
+    assert individual.owner_user_id == owner.pk
+    assert individual.organization_id is None
+
+    team = _channel(_user("shape-team@example.com"))
+    assert team.kind == PartnerChannel.Kind.TEAM
+    assert team.owner_user_id is None
+    assert team.organization_id is not None
+
+    other = _user("shape-other@example.com")
+    org = create_organization(name="Both owners", actor=other)
+    with pytest.raises(IntegrityError), transaction.atomic():
+        PartnerChannel.objects.create(
+            kind=PartnerChannel.Kind.INDIVIDUAL,
+            owner_user=owner,
+            organization=org,
+            revenue_share_percent=Decimal("10"),
+        )
+    with pytest.raises(IntegrityError), transaction.atomic():
+        PartnerChannel.objects.create(
+            kind=PartnerChannel.Kind.INDIVIDUAL,
+            owner_user=None,
+            organization=None,
+            revenue_share_percent=Decimal("10"),
+        )
+    with pytest.raises(IntegrityError), transaction.atomic():
+        PartnerChannel.objects.create(
+            kind=PartnerChannel.Kind.TEAM,
+            owner_user=None,
+            organization=None,
+            revenue_share_percent=Decimal("10"),
+        )
+    with pytest.raises(IntegrityError), transaction.atomic():
+        PartnerChannel.objects.create(
+            kind=PartnerChannel.Kind.TEAM,
+            owner_user=other,
+            organization=None,
+            revenue_share_percent=Decimal("10"),
+        )
+    with pytest.raises(IntegrityError), transaction.atomic():
+        _individual(owner)
+    with pytest.raises(IntegrityError), transaction.atomic():
+        PartnerChannel.objects.create(
+            organization=team.organization,
+            revenue_share_percent=Decimal("10"),
+        )
+
+
+@pytest.mark.django_db
+def test_ownership_is_immutable_on_save_update_and_bulk_update() -> None:
+    owner = _user("immutable@example.com")
+    channel = _channel(owner)
+    other = _user("immutable-other@example.com")
+
+    channel.is_active = False
+    channel.save(update_fields=["is_active"])
+    PartnerChannel.objects.filter(pk=channel.pk).update(
+        revenue_share_percent=Decimal("40.00")
+    )
+    row = PartnerChannel.objects.get(pk=channel.pk)
+    row.revenue_share_percent = Decimal("41.00")
+    PartnerChannel.objects.bulk_update([row], ["revenue_share_percent"])
+    channel.refresh_from_db()
+    assert channel.is_active is False
+    assert channel.revenue_share_percent == Decimal("41.00")
+    assert channel.kind == PartnerChannel.Kind.TEAM
+
+    channel.kind = PartnerChannel.Kind.INDIVIDUAL
+    with pytest.raises(AppendOnlyViolation):
+        channel.save()
+    with pytest.raises(AppendOnlyViolation):
+        channel.save(update_fields=["kind"])
+    with pytest.raises(AppendOnlyViolation):
+        PartnerChannel.objects.filter(pk=channel.pk).update(
+            kind=PartnerChannel.Kind.INDIVIDUAL
+        )
+    with pytest.raises(AppendOnlyViolation):
+        PartnerChannel.objects.filter(pk=channel.pk).update(owner_user_id=other.pk)
+    with pytest.raises(AppendOnlyViolation):
+        PartnerChannel.objects.filter(pk=channel.pk).update(organization_id=None)
+
+    stolen = PartnerChannel.objects.get(pk=channel.pk)
+    stolen.kind = PartnerChannel.Kind.INDIVIDUAL
+    with pytest.raises(AppendOnlyViolation):
+        PartnerChannel.objects.bulk_update([stolen], ["kind"])
+    stolen = PartnerChannel.objects.get(pk=channel.pk)
+    stolen.owner_user = other
+    with pytest.raises(AppendOnlyViolation):
+        PartnerChannel.objects.bulk_update([stolen], ["owner_user"])
+    stolen = PartnerChannel.objects.get(pk=channel.pk)
+    stolen.organization = None
+    with pytest.raises(AppendOnlyViolation):
+        PartnerChannel.objects.bulk_update([stolen], ["organization"])
+
+    channel.refresh_from_db()
+    assert channel.kind == PartnerChannel.Kind.TEAM
+    assert channel.owner_user_id is None
+    assert channel.organization_id is not None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_individual_owner_delete_is_blocked_by_protect() -> None:
+    owner = _user("individual-protect@example.com")
+    channel = _individual(owner)
+    with pytest.raises(IntegrityError):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"DELETE FROM {User._meta.db_table} WHERE id = %s",
+                [owner.pk],
+            )
+    assert PartnerChannel.objects.filter(pk=channel.pk).exists()
+    assert User.objects.filter(pk=owner.pk).exists()

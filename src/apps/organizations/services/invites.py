@@ -9,13 +9,17 @@ import hashlib
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING
 
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import NotFound
 
+from apps.accounts.models import User
+from apps.billing.services.partner_self_referral import (
+    PartnerSelfReferralConflict,
+    ensure_active_membership_allowed,
+)
 from apps.organizations.exceptions import (
     InviteConflictError,
     InviteInvalidError,
@@ -31,9 +35,6 @@ from apps.organizations.models import (
 )
 from apps.organizations.services.authz import require_invite
 from apps.organizations.services.context import resolve_organization_context
-
-if TYPE_CHECKING:
-    from apps.accounts.models import User
 
 
 def normalize_invite_email(email: str) -> str:
@@ -86,6 +87,10 @@ def create_invite(
     email_normalized = normalize_invite_email(email)
     if not email_normalized:
         raise NotAllowedError("Email is required.")
+
+    known_user = User.objects.filter(email__iexact=email_normalized).first()
+    if known_user is not None:
+        _reject_self_referral_membership(known_user, org)
 
     # Already an active member?
     existing_member = (
@@ -186,6 +191,7 @@ def accept_invite(*, actor: User, raw_token: str) -> InviteAcceptResult:
     token_hash = _hash_token(raw_token.strip())
 
     with transaction.atomic():
+        User.objects.select_for_update().get(pk=actor.pk)
         invite = (
             OrganizationInvite.objects.select_for_update()
             .select_related("organization")
@@ -236,6 +242,7 @@ def accept_invite(*, actor: User, raw_token: str) -> InviteAcceptResult:
                     "Invite email does not match authenticated user."
                 )
 
+            _reject_self_referral_membership(actor, invite.organization)
             membership, _created = Membership.objects.get_or_create(
                 organization_id=invite.organization_id,
                 user=actor,
@@ -266,6 +273,14 @@ def accept_invite(*, actor: User, raw_token: str) -> InviteAcceptResult:
             )
 
     raise InviteInvalidError("Invite has expired.")
+
+
+def _reject_self_referral_membership(user: User, organization) -> None:
+    """Refuse an active membership that would duplicate team attribution."""
+    try:
+        ensure_active_membership_allowed(user=user, organization=organization)
+    except PartnerSelfReferralConflict as exc:
+        raise InviteConflictError(str(exc)) from exc
 
 
 def list_pending_invites(*, actor: User, organization_id):

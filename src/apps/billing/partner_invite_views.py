@@ -28,6 +28,7 @@ from apps.billing.services.partner_invite import (
     require_partner_owner,
     set_invite_active,
 )
+from apps.billing.services.partner_log import PartnerLegacyUsageMixin
 from core.http.request_id import get_or_create_request_id
 
 _NO_STORE = "no-store"
@@ -48,7 +49,8 @@ def _link_response(link) -> dict:
     }
 
 
-class _InviteBase(APIView):
+class _InviteBase(PartnerLegacyUsageMixin, APIView):
+    legacy_endpoint = "orgs.partner.invite_link"
     permission_classes = [IsAuthenticated]
 
     def handle_exception(self, exc: Exception) -> Response:
@@ -137,6 +139,8 @@ class PartnerInviteLinkView(_InviteBase):
     ),
 )
 class PartnerInviteRegenerateView(_InviteBase):
+    legacy_endpoint = "orgs.partner.invite_link.regenerate"
+
     def post(self, request: Request) -> Response:
         channel = self._owner_channel(request)
         if isinstance(channel, Response):
@@ -159,6 +163,8 @@ class PartnerInviteRegenerateView(_InviteBase):
     ),
 )
 class PartnerInviteActivateView(_InviteBase):
+    legacy_endpoint = "orgs.partner.invite_link.activate"
+
     def post(self, request: Request) -> Response:
         channel = self._owner_channel(request)
         if isinstance(channel, Response):
@@ -182,6 +188,8 @@ class PartnerInviteActivateView(_InviteBase):
     ),
 )
 class PartnerInviteDeactivateView(_InviteBase):
+    legacy_endpoint = "orgs.partner.invite_link.deactivate"
+
     def post(self, request: Request) -> Response:
         channel = self._owner_channel(request)
         if isinstance(channel, Response):

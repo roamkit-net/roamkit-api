@@ -158,10 +158,10 @@ def test_grant_returns_the_locked_body_and_moves_money_once(
     customer.billing_account.refresh_from_db()
     assert team.balance == Decimal("10.000000")
     assert customer.billing_account.balance == Decimal("10.000000")
-    assert "partner_grant.created" in caplog.text
+    assert "partner.grant.succeeded" in caplog.text
     assert "request_id=req-grant-1" in caplog.text
-    assert f"target_customer_id={customer.pk}" in caplog.text
-    assert "amount=10.000000" in caplog.text
+    assert f"customer_user_id={customer.pk}" in caplog.text
+    assert "amount=" not in caplog.text
     assert customer.email not in caplog.text
 
 
