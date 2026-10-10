@@ -199,6 +199,28 @@ class PartnerChannelCodeSerializer(serializers.Serializer):
     code = serializers.CharField()
 
 
+class PartnerContextCapabilitiesSerializer(serializers.Serializer):
+    """Role capabilities only. They do not read channel activity or balance."""
+
+    can_grant = serializers.BooleanField()
+    can_manage_invite = serializers.BooleanField()
+
+
+class PartnerContextItemSerializer(serializers.Serializer):
+    """Display metadata for one authorized partner context."""
+
+    channel_id = serializers.UUIDField()
+    kind = serializers.ChoiceField(choices=["individual", "team"])
+    label = serializers.CharField()
+    effective_role = serializers.ChoiceField(choices=["owner", "admin", "viewer"])
+    is_active = serializers.BooleanField()
+    capabilities = PartnerContextCapabilitiesSerializer()
+
+
+class PartnerContextListSerializer(serializers.Serializer):
+    contexts = PartnerContextItemSerializer(many=True)
+
+
 _QUERY_INT_RE = re.compile(r"^(?:0|[1-9]\d*)$")
 _CUSTOMER_SORTS = frozenset({"attributed_at", "total_partner_earned", "accrual_count"})
 _CUSTOMER_ORDERS = frozenset({"asc", "desc"})

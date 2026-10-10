@@ -11,7 +11,9 @@ from decimal import Decimal
 from typing import Any
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.expressions import BaseExpression
 
 from apps.billing.models import AppendOnlyViolation
 
@@ -27,10 +29,18 @@ class RefuseDeleteManager(models.Manager.from_queryset(RefuseDeleteQuerySet)):
     """Default manager for rows that cannot be deleted."""
 
 
+def partner_invite_token_is_usable(token: object) -> bool:
+    """A stored invite token must be a non-blank string.
+
+    Whitespace-only is blank. The value is not stripped or rewritten.
+    """
+    return isinstance(token, str) and bool(token.strip())
+
+
 class PartnerInviteLinkQuerySet(RefuseDeleteQuerySet):
     """Block classification edits once a visit exists.
 
-    Token regenerate stays allowed.
+    Token regenerate stays allowed. A blank token is never a write.
     """
 
     _FROZEN_FIELDS = frozenset(
@@ -38,6 +48,9 @@ class PartnerInviteLinkQuerySet(RefuseDeleteQuerySet):
     )
 
     def update(self, **kwargs: Any) -> int:
+        if "token" in kwargs and not isinstance(kwargs["token"], BaseExpression):
+            if not partner_invite_token_is_usable(kwargs["token"]):
+                raise ValidationError("PartnerInviteLink requires a token")
         frozen = self._FROZEN_FIELDS & kwargs.keys()
         has_visit = self.filter(visits__isnull=False).exists()
         if frozen and has_visit:
@@ -46,6 +59,15 @@ class PartnerInviteLinkQuerySet(RefuseDeleteQuerySet):
                 "are frozen after the first visit"
             )
         return super().update(**kwargs)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        # Django 5.1 bulk_update sends Case expressions through update().
+        # Reject a blank token here, before that atomic(savepoint=False) block.
+        if "token" in fields:
+            for obj in objs:
+                if not partner_invite_token_is_usable(obj.token):
+                    raise ValidationError("PartnerInviteLink requires a token")
+        return super().bulk_update(objs, fields, batch_size=batch_size)
 
 
 class PartnerInviteLinkManager(models.Manager.from_queryset(PartnerInviteLinkQuerySet)):
@@ -94,16 +116,76 @@ class RenewalCycleManager(models.Manager.from_queryset(RenewalCycleQuerySet)):
     """Default manager for renewal-cycle rows."""
 
 
-class PartnerChannel(models.Model):
-    """One partner program on an existing Organization (ADR 023).
+_CHANNEL_OWNERSHIP_FIELDS = frozenset(
+    {
+        "kind",
+        "owner_user",
+        "owner_user_id",
+        "organization",
+        "organization_id",
+    }
+)
 
-    Not a money owner. The team Account is ``organization.account``.
+
+class PartnerChannelQuerySet(RefuseDeleteQuerySet):
+    """Ownership is write-once. Activity and revenue share stay writable.
+
+    Django 5.1 ``bulk_update`` calls ``update`` inside ``atomic(savepoint=False)``.
+    Reject ownership fields here first so that refusal does not mark the
+    surrounding transaction broken.
     """
 
+    def update(self, **kwargs: Any) -> int:
+        blocked = _CHANNEL_OWNERSHIP_FIELDS.intersection(kwargs)
+        if blocked:
+            raise AppendOnlyViolation(
+                "PartnerChannel kind, owner_user, and organization are immutable"
+            )
+        return super().update(**kwargs)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        blocked = _CHANNEL_OWNERSHIP_FIELDS.intersection(fields)
+        if blocked:
+            raise AppendOnlyViolation(
+                "PartnerChannel kind, owner_user, and organization are immutable"
+            )
+        return super().bulk_update(objs, fields, batch_size=batch_size)
+
+
+class PartnerChannelManager(models.Manager.from_queryset(PartnerChannelQuerySet)):
+    """Default manager. Blocks hard delete and ownership changes."""
+
+
+class PartnerChannel(models.Model):
+    """Partner program owned by one user or one Organization (ADR 024).
+
+    Not a money owner. The settlement Account is resolved from the owner
+    relation. This model has no Account foreign key.
+    """
+
+    class Kind(models.TextChoices):
+        INDIVIDUAL = "individual", "Individual"
+        TEAM = "team", "Team"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    kind = models.CharField(
+        max_length=16,
+        choices=Kind.choices,
+        default=Kind.TEAM,
+        db_index=True,
+    )
+    owner_user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="individual_partner_channel",
+    )
     organization = models.OneToOneField(
         "organizations.Organization",
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name="partner_channel",
     )
     revenue_share_percent = models.DecimalField(max_digits=5, decimal_places=2)
@@ -111,7 +193,7 @@ class PartnerChannel(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    objects = RefuseDeleteManager()
+    objects = PartnerChannelManager()
 
     class Meta:
         verbose_name = "partner channel"
@@ -122,10 +204,53 @@ class PartnerChannel(models.Model):
                 & models.Q(revenue_share_percent__lte=100),
                 name="billing_partner_channel_share_range",
             ),
+            models.CheckConstraint(
+                condition=models.Q(kind__in=["individual", "team"]),
+                name="billing_partner_channel_kind_valid",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        kind="individual",
+                        owner_user__isnull=False,
+                        organization__isnull=True,
+                    )
+                    | models.Q(
+                        kind="team",
+                        owner_user__isnull=True,
+                        organization__isnull=False,
+                    )
+                ),
+                name="billing_partner_channel_owner_xor",
+            ),
         ]
 
     def __str__(self) -> str:
-        return f"PartnerChannel {self.organization_id}"
+        return f"PartnerChannel {self.pk} ({self.kind})"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            if _CHANNEL_OWNERSHIP_FIELDS.intersection(update_fields):
+                raise AppendOnlyViolation(
+                    "PartnerChannel kind, owner_user, and organization are immutable"
+                )
+        elif not self._state.adding:
+            previous = (
+                type(self)
+                .objects.filter(pk=self.pk)
+                .values("kind", "owner_user_id", "organization_id")
+                .first()
+            )
+            if previous is not None and (
+                previous["kind"] != self.kind
+                or previous["owner_user_id"] != self.owner_user_id
+                or previous["organization_id"] != self.organization_id
+            ):
+                raise AppendOnlyViolation(
+                    "PartnerChannel kind, owner_user, and organization are immutable"
+                )
+        super().save(*args, **kwargs)
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
         raise AppendOnlyViolation(
@@ -140,7 +265,8 @@ class PartnerInviteLink(models.Model):
     the smallest ``(created_at, id)``, resolved by
     ``canonical_invite_link`` — not by an unordered ``.first()``.
 
-    ``token`` is not a form field. Only regenerate writes it.
+    ``token`` is not a form field. Channel creation, admin add, and regenerate
+    write it. A blank token is not a stored state.
 
     After the first ``InviteVisit``, ``save`` and ``QuerySet.update`` reject
     changes to ``partner_channel``, ``source``, ``campaign``, and ``content``.
@@ -189,6 +315,8 @@ class PartnerInviteLink(models.Model):
         return f"PartnerInviteLink {self.partner_channel_id}"
 
     def save(self, *args: Any, **kwargs: Any) -> None:
+        if not partner_invite_token_is_usable(self.token):
+            raise ValidationError("PartnerInviteLink requires a token")
         update_fields = kwargs.get("update_fields")
         if self.pk and not self._state.adding and self._touches_frozen(update_fields):
             if self.visits.exists() and self._frozen_values_changed(update_fields):

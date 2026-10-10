@@ -23,9 +23,15 @@ from apps.billing.partner_channel import (
 )
 from apps.billing.services.credit import credit_service
 from apps.billing.services.partner_invite_visit import validate_invite_visit
+from apps.billing.services.partner_log import log_partner_event
 from apps.billing.services.partner_pending import (
     pending_expires_at,
     unsign_partner_pending,
+)
+from apps.billing.services.partner_self_referral import (
+    PartnerSelfReferralConflict,
+    ensure_current_attribution_allowed,
+    lock_self_referral_rows,
 )
 
 _CREATED = "created"
@@ -94,6 +100,11 @@ def apply_pending_on_activation(user: User) -> None:
     A row with ``invite_visit`` follows that click. The 30-day window is not
     checked again; ``expires_at`` is the 24-hour limit. A row without a visit
     is a legacy pending and still uses the token snapshot.
+
+    A self-referral conflict leaves the pending row in place and does not
+    raise. Account activation must still commit. The row expires on its own
+    and is not applied again after the account is active. No attribution and
+    no registration bonus are written.
     """
     pending = PendingPartnerAttribution.objects.filter(user_id=user.pk).first()
     if pending is None:
@@ -110,6 +121,7 @@ def apply_pending_on_activation(user: User) -> None:
         _apply_legacy_pending(user, pending)
         return
     with transaction.atomic():
+        User.objects.select_for_update().get(pk=user.pk)
         locked = (
             PendingPartnerAttribution.objects.select_for_update()
             .filter(pk=pending.pk)
@@ -130,11 +142,15 @@ def apply_pending_on_activation(user: User) -> None:
         if visit is None:
             locked.delete()
             return
-        attribution = _insert_attribution(
-            user,
-            visit,
-            registered_via_invite=True,
-        )
+        try:
+            attribution = _insert_attribution(
+                user,
+                visit,
+                registered_via_invite=True,
+            )
+        except PartnerSelfReferralConflict:
+            _keep_pending_self_referral(user, locked.partner_channel_id)
+            return
         credit_registration_invite_bonus(attribution=attribution)
         locked.delete()
 
@@ -147,6 +163,7 @@ def attribute_created_invite(user: User, signed: str | None) -> None:
     if payload is None:
         return
     with transaction.atomic():
+        User.objects.select_for_update().get(pk=user.pk)
         if CustomerAttribution.objects.filter(user_id=user.pk).exists():
             return
         visit = _lock_visit(payload["visit_id"], check_attribution_window=True)
@@ -202,6 +219,7 @@ def transfer_customer_attribution(
     email, or Google. A missing row is not created.
     """
     with transaction.atomic():
+        User.objects.select_for_update().get(pk=user.pk)
         attribution = (
             CustomerAttribution.objects.select_for_update()
             .filter(user_id=user.pk)
@@ -213,6 +231,11 @@ def transfer_customer_attribution(
             )
         if attribution.partner_channel_id == partner_channel.pk:
             return attribution
+        channels = [partner_channel]
+        if attribution.partner_channel_id != partner_channel.pk:
+            channels.append(attribution.partner_channel)
+        lock_self_referral_rows(user=user, channels=channels)
+        ensure_current_attribution_allowed(user=user, channel=partner_channel)
         attribution.partner_channel = partner_channel
         attribution.save(update_fields=["partner_channel"])
         return attribution
@@ -269,6 +292,8 @@ def _insert_attribution(
 ) -> CustomerAttribution:
     link = visit.invite_link
     bonus = link.bonus_amount if registered_via_invite else None
+    channel = PartnerChannel.objects.get(pk=link.partner_channel_id)
+    ensure_current_attribution_allowed(user=user, channel=channel)
     return CustomerAttribution.objects.create(
         user=user,
         partner_channel_id=link.partner_channel_id,
@@ -296,6 +321,7 @@ def _apply_legacy_pending(user: User, pending: PendingPartnerAttribution) -> Non
         pending.delete()
         return
     with transaction.atomic():
+        User.objects.select_for_update().get(pk=user.pk)
         locked = (
             PendingPartnerAttribution.objects.select_for_update()
             .filter(pk=pending.pk)
@@ -306,6 +332,12 @@ def _apply_legacy_pending(user: User, pending: PendingPartnerAttribution) -> Non
         if CustomerAttribution.objects.filter(user_id=user.pk).exists():
             locked.delete()
             return
+        channel = PartnerChannel.objects.get(pk=locked.partner_channel_id)
+        try:
+            ensure_current_attribution_allowed(user=user, channel=channel)
+        except PartnerSelfReferralConflict:
+            _keep_pending_self_referral(user, locked.partner_channel_id)
+            return
         CustomerAttribution.objects.create(
             user=user,
             partner_channel_id=locked.partner_channel_id,
@@ -315,6 +347,15 @@ def _apply_legacy_pending(user: User, pending: PendingPartnerAttribution) -> Non
             attributed_at=timezone.now(),
         )
         locked.delete()
+
+
+def _keep_pending_self_referral(user: User, channel_id) -> None:
+    """Leave the pending row. Do not attribute, pay a bonus, or fail activation."""
+    log_partner_event(
+        "partner.self_referral.pending_kept",
+        user_id=user.pk,
+        partner_channel_id=channel_id,
+    )
 
 
 def _current_link(channel_id) -> PartnerInviteLink | None:

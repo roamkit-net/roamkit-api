@@ -1,7 +1,7 @@
-"""Read-only partner dashboard summary (ADR 023).
+"""Read-only partner dashboard summary (ADR 023, ADR 024).
 
 The caller passes an already resolved ``PartnerChannel``. This service does
-not lock rows, open a transaction, or write.
+not lock rows, open a transaction, create Accounts, or write.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from django.db.models import Count, Sum
 
+from apps.billing.models import Account
 from apps.billing.partner_channel import PartnerChannel, PartnerMarginAccrual
 
 _ZERO = Decimal("0.000000")
@@ -32,9 +33,25 @@ class PartnerSummary:
 
 
 class PartnerSummaryService:
-    """Aggregate stored accruals and the team balance cache for one channel."""
+    """Aggregate stored accruals and one Account balance cache."""
 
     def summarize(self, partner_channel: PartnerChannel) -> PartnerSummary:
+        """Legacy TEAM summary. The Account is ``organization.account``."""
+        return self._calculate(partner_channel, partner_channel.organization.account)
+
+    def summarize_for_account(
+        self,
+        partner_channel: PartnerChannel,
+        account: Account,
+    ) -> PartnerSummary:
+        """Same totals for an Account the caller already resolved."""
+        return self._calculate(partner_channel, account)
+
+    def _calculate(
+        self,
+        partner_channel: PartnerChannel,
+        account: Account,
+    ) -> PartnerSummary:
         grouped = (
             PartnerMarginAccrual.objects.filter(partner_channel=partner_channel)
             .values("source_type")
@@ -53,7 +70,6 @@ class PartnerSummaryService:
             earned = row["earned"]
             if earned is not None:
                 total_earned += earned
-        account = partner_channel.organization.account
         account.refresh_from_db(fields=["balance"])
         balance = account.balance
         return PartnerSummary(

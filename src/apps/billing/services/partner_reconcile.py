@@ -12,6 +12,11 @@ from apps.billing.partner_channel import (
     PartnerCreditGrant,
     PartnerMarginAccrual,
 )
+from apps.billing.services.partner_settlement import (
+    PartnerChannelOwnershipInvalid,
+    PartnerSettlementAccountMissing,
+    resolve_partner_settlement_account,
+)
 
 
 def collect_partner_drift() -> list[str]:
@@ -66,13 +71,17 @@ def _grant_drift() -> list[str]:
         credit = grant.credit_ledger_entry
         seen_out.add(debit.pk)
         seen_in.add(credit.pk)
-        team_id = grant.partner_channel.organization.account_id
+        try:
+            settlement = resolve_partner_settlement_account(grant.partner_channel)
+        except (PartnerSettlementAccountMissing, PartnerChannelOwnershipInvalid):
+            issues.append(f"grant {grant.pk} settlement account is not valid")
+            settlement = None
         if debit.reference_type != LedgerReferenceType.PARTNER_GRANT_OUT:
             issues.append(f"grant {grant.pk} debit is not partner_grant_out")
         if credit.reference_type != LedgerReferenceType.PARTNER_GRANT_IN:
             issues.append(f"grant {grant.pk} credit is not partner_grant_in")
-        if debit.account_id != team_id:
-            issues.append(f"grant {grant.pk} debit is not on the team account")
+        if settlement is not None and debit.account_id != settlement.pk:
+            issues.append(f"grant {grant.pk} debit is not on the settlement account")
         if credit.account.kind != AccountKind.PERSONAL:
             issues.append(f"grant {grant.pk} credit is not on a personal account")
         elif credit.account.user_id != grant.customer_user_id_snapshot:

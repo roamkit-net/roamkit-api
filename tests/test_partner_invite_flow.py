@@ -133,7 +133,7 @@ def test_owner_reads_and_regenerates_one_link(caplog, client: Client) -> None:
     assert not PendingPartnerAttribution.objects.filter(user=pending_user).exists()
     assert PartnerInviteLink.objects.filter(partner_channel=channel).count() == 1
     assert old not in caplog.text
-    assert "partner_invite.regenerated" in caplog.text
+    assert "partner.invite.regenerated" in caplog.text
 
 
 @ENABLED
@@ -184,7 +184,7 @@ def test_repeat_deactivate_does_not_audit(caplog, client: Client) -> None:
     assert again.status_code == 200
     assert "X-Partner-Role" not in again
     assert again.json()["is_active"] is False
-    assert "partner_invite.deactivated" not in caplog.text
+    assert "partner.invite.deactivated" not in caplog.text
 
 
 @pytest.mark.django_db

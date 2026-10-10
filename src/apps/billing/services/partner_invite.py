@@ -18,6 +18,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.billing.models import Account, AccountKind
 from apps.billing.partner_channel import (
     PartnerChannel,
     PartnerInviteLink,
@@ -101,7 +102,7 @@ def regenerate_invite_link(
             invite_token_snapshot=old_token,
         ).delete()
     if request_id is not None:
-        _audit("partner_invite.regenerated", actor, partner_channel, request_id)
+        _audit("partner.invite.regenerated", actor, partner_channel, request_id)
     return _view(link)
 
 
@@ -119,7 +120,7 @@ def set_invite_active(
             link.is_active = active
             link.save(update_fields=["is_active"])
     if changed and request_id is not None:
-        action = "partner_invite.activated" if active else "partner_invite.deactivated"
+        action = "partner.invite.activated" if active else "partner.invite.deactivated"
         _audit(action, actor, partner_channel, request_id)
     return _view(link)
 
@@ -135,6 +136,47 @@ def issue_join_signature(
     return recorded[1]
 
 
+def create_individual_partner_channel(
+    *,
+    owner: User,
+    revenue_share_percent: Decimal = _DEFAULT_SHARE,
+) -> PartnerChannel:
+    """Create an individual channel and its invite link, or create neither.
+
+    Uses the owner's existing personal Account. Does not create an Account,
+    an Organization, or change ``Account.kind`` or ``PricingProfile``.
+    """
+    try:
+        account = Account.objects.get(user_id=owner.pk)
+    except Account.DoesNotExist as exc:
+        raise PartnerInviteError("Owner has no personal account") from exc
+    if account.kind != AccountKind.PERSONAL:
+        raise PartnerInviteError("Owner settlement account is not a personal account")
+    return _create_channel_and_link(
+        kind=PartnerChannel.Kind.INDIVIDUAL,
+        owner_user=owner,
+        organization=None,
+        revenue_share_percent=revenue_share_percent,
+    )
+
+
+def update_partner_channel_settings(
+    channel_id,
+    *,
+    is_active: bool,
+    revenue_share_percent: Decimal,
+) -> PartnerChannel:
+    """Change accrual status and revenue share. Ownership stays immutable."""
+    with transaction.atomic():
+        locked = PartnerChannel.objects.select_for_update(of=("self",)).get(
+            pk=channel_id
+        )
+        locked.is_active = is_active
+        locked.revenue_share_percent = revenue_share_percent
+        locked.save(update_fields=["is_active", "revenue_share_percent", "updated_at"])
+        return locked
+
+
 def create_partner_channel(
     *,
     organization: Organization,
@@ -143,17 +185,61 @@ def create_partner_channel(
     """Create the channel and its one invite link, or create neither."""
     if organization.account_id is None:
         raise PartnerInviteError("Organization has no team account")
+    return _create_channel_and_link(
+        kind=PartnerChannel.Kind.TEAM,
+        owner_user=None,
+        organization=organization,
+        revenue_share_percent=revenue_share_percent,
+    )
+
+
+_INVITE_TOKEN_ATTEMPTS = 5
+
+
+def new_partner_invite_token() -> str:
+    """One candidate token. The caller persists it and retries collisions."""
+    return secrets.token_urlsafe(24)
+
+
+def persist_with_unique_invite_token(link: PartnerInviteLink, persist) -> None:
+    """Assign a new token and persist it. Retry a unique collision five times.
+
+    ``persist`` must write ``link`` and nothing else. A failed attempt rolls
+    back only that write. The token is not logged.
+    """
+    last_error: IntegrityError | None = None
+    for _ in range(_INVITE_TOKEN_ATTEMPTS):
+        link.token = new_partner_invite_token()
+        try:
+            with transaction.atomic():
+                persist()
+        except IntegrityError as exc:
+            last_error = exc
+            continue
+        else:
+            return
+    raise PartnerInviteError("Could not mint a unique invite token") from last_error
+
+
+def _create_channel_and_link(
+    *,
+    kind: str,
+    owner_user: User | None,
+    organization: Organization | None,
+    revenue_share_percent: Decimal,
+) -> PartnerChannel:
     for _ in range(5):
         try:
             with transaction.atomic():
                 channel = PartnerChannel.objects.create(
+                    kind=kind,
+                    owner_user=owner_user,
                     organization=organization,
                     revenue_share_percent=revenue_share_percent,
                     is_active=True,
                 )
-                PartnerInviteLink.objects.create(
+                link = PartnerInviteLink(
                     partner_channel=channel,
-                    token=secrets.token_urlsafe(24),
                     name="",
                     bonus_amount=Decimal("0.000000"),
                     source="",
@@ -161,6 +247,7 @@ def create_partner_channel(
                     content="",
                     is_active=True,
                 )
+                persist_with_unique_invite_token(link, link.save)
         except IntegrityError:
             continue
         else:
@@ -169,16 +256,10 @@ def create_partner_channel(
 
 
 def _assign_token(link: PartnerInviteLink) -> None:
-    for _ in range(5):
-        link.token = secrets.token_urlsafe(24)
-        try:
-            with transaction.atomic():
-                link.save(update_fields=["token", "regenerated_at"])
-        except IntegrityError:
-            continue
-        else:
-            return
-    raise PartnerInviteError("Could not mint a unique invite token")
+    persist_with_unique_invite_token(
+        link,
+        lambda: link.save(update_fields=["token", "regenerated_at"]),
+    )
 
 
 def _view(link: PartnerInviteLink) -> PartnerInviteLinkView:
@@ -208,8 +289,3 @@ def _audit(
         timezone.now().isoformat().replace("+00:00", "Z"),
         request_id,
     )
-
-
-def _unused_integrity() -> None:
-    """Keep IntegrityError imported for the token insert race retry below."""
-    raise IntegrityError()

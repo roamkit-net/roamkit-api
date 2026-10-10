@@ -9,8 +9,9 @@ from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, connection, models, transaction
-from django.test import override_settings
+from django.test import Client, override_settings
 from django.utils import timezone
 
 from apps.billing.models import (
@@ -33,12 +34,14 @@ from apps.billing.partner_channel import (
 )
 from apps.billing.services.partner_attribution import invite_snapshot_from_visit
 from apps.billing.services.partner_invite import (
+    PartnerInviteError,
     canonical_invite_link,
     create_partner_channel,
     invite_link_for,
     regenerate_invite_link,
     set_invite_active,
 )
+from apps.billing.services.partner_invite_visit import record_visit
 from apps.catalog.models import Package
 from apps.esims.models import Esim, Topup, TopupNetPriceImmutable
 from apps.orders.models import Order
@@ -740,6 +743,315 @@ def test_create_partner_channel_mints_zero_bonus_canonical_link() -> None:
 
 
 @pytest.mark.django_db
+def test_blank_invite_token_cannot_be_stored() -> None:
+    owner = _user("blank-token@example.com")
+    channel = _channel(owner)
+    with pytest.raises(ValidationError, match="requires a token"):
+        PartnerInviteLink.objects.create(partner_channel=channel, is_active=True)
+    with pytest.raises(ValidationError, match="requires a token"):
+        PartnerInviteLink.objects.create(partner_channel=channel, token=None)
+    with pytest.raises(ValidationError, match="requires a token"):
+        PartnerInviteLink.objects.create(partner_channel=channel, token="   ")
+    link = _link(channel, "kept-token")
+    link.name = "unchanged-name"
+    link.save(update_fields=["name"])
+    link.refresh_from_db()
+    assert link.token == "kept-token"
+    for blank in ("", None, "   "):
+        with pytest.raises(ValidationError, match="requires a token"):
+            PartnerInviteLink.objects.filter(pk=link.pk).update(token=blank)
+    link.refresh_from_db()
+    assert link.token == "kept-token"
+    with pytest.raises(ValidationError, match="requires a token"):
+        PartnerInviteLink.objects.get_or_create(
+            partner_channel=channel,
+            token="",
+            defaults={"is_active": True},
+        )
+    with pytest.raises(ValidationError, match="requires a token"):
+        PartnerInviteLink.objects.update_or_create(
+            pk=link.pk,
+            defaults={"token": ""},
+        )
+    link.token = ""
+    with pytest.raises(ValidationError, match="requires a token"):
+        PartnerInviteLink.objects.bulk_update([link], ["token"])
+    link.refresh_from_db()
+    assert link.token == "kept-token"
+    assert PartnerInviteLink.objects.filter(partner_channel=channel).count() == 1
+
+
+@pytest.mark.django_db
+def test_existing_blank_token_cannot_be_saved_until_replaced() -> None:
+    owner = _user("corrupt-token@example.com")
+    channel = _channel(owner)
+    link = PartnerInviteLink.objects.bulk_create(
+        [
+            PartnerInviteLink(
+                partner_channel=channel,
+                token="",
+                is_active=True,
+            )
+        ]
+    )[0]
+    link.name = "renamed"
+    with pytest.raises(ValidationError, match="requires a token"):
+        link.save(update_fields=["name"])
+    link.refresh_from_db()
+    assert link.name == ""
+    assert link.token == ""
+    assert link.is_active is True
+    link.is_active = False
+    with pytest.raises(ValidationError, match="requires a token"):
+        link.save(update_fields=["is_active"])
+    link.refresh_from_db()
+    assert link.is_active is True
+    assert link.token == ""
+    link.token = "repaired-token"
+    link.is_active = False
+    link.save(update_fields=["token", "is_active"])
+    link.refresh_from_db()
+    assert link.token == "repaired-token"
+    assert link.is_active is False
+
+
+@pytest.mark.django_db
+def test_admin_partner_channel_add_page_opens() -> None:
+    owner = _user("admin-channel-add@example.com")
+    org = create_organization(name="North fleet", actor=owner)
+    client = _staff_client("staff-channel-add@example.com")
+
+    opened = client.get("/admin/billing/partnerchannel/add/")
+    assert opened.status_code == 200
+    assert b"Settlement account" not in opened.content
+
+    created = client.post(
+        "/admin/billing/partnerchannel/add/",
+        {
+            "kind": "team",
+            "owner_user": "",
+            "organization": str(org.pk),
+            "is_active": "on",
+            "revenue_share_percent": "40.00",
+        },
+    )
+    assert created.status_code == 302
+    channel = PartnerChannel.objects.get(organization=org)
+    assert channel.kind == PartnerChannel.Kind.TEAM
+    assert channel.owner_user_id is None
+    assert channel.revenue_share_percent == Decimal("40.00")
+    assert channel.is_active is True
+
+    changed = client.get(f"/admin/billing/partnerchannel/{channel.pk}/change/")
+    assert changed.status_code == 200
+    assert b"Settlement account" in changed.content
+
+
+@pytest.mark.django_db
+def test_admin_add_mints_a_token_for_a_second_active_link() -> None:
+    owner = _user("admin-invite@example.com")
+    channel = _channel(owner)
+    portal = _link(channel, "portal-token-value")
+    staff = _user("staff-invite@example.com")
+    staff.is_staff = True
+    staff.is_superuser = True
+    staff.save(update_fields=["is_staff", "is_superuser"])
+    client = Client()
+    client.force_login(staff)
+    response = client.post(
+        "/admin/billing/partnerinvitelink/add/",
+        {
+            "partner_channel": str(channel.pk),
+            "name": "October bio",
+            "bonus_amount": "10.000000",
+            "source": "test",
+            "campaign": "october",
+            "content": "bio",
+            "is_active": "on",
+        },
+    )
+    assert response.status_code == 302
+    rows = list(
+        PartnerInviteLink.objects.filter(partner_channel=channel).order_by(
+            "created_at", "id"
+        )
+    )
+    assert len(rows) == 2
+    assert rows[0].pk == portal.pk
+    assert rows[0].token == "portal-token-value"
+    added = rows[1]
+    assert added.is_active is True
+    assert added.token
+    assert added.token != portal.token
+    assert added.source == "test"
+    assert added.campaign == "october"
+    assert added.content == "bio"
+    assert canonical_invite_link(channel).pk == portal.pk
+    second_token = added.token
+    regenerate_invite_link(channel, actor=owner)
+    portal.refresh_from_db()
+    added.refresh_from_db()
+    assert portal.token != "portal-token-value"
+    assert portal.token
+    assert added.token == second_token
+    assert added.is_active is True
+    assert canonical_invite_link(channel).pk == portal.pk
+    assert invite_link_for(channel).url.endswith(f"/join/{portal.token}")
+
+
+def _admin_invite_form(channel: PartnerChannel, **overrides: str) -> dict[str, str]:
+    payload = {
+        "partner_channel": str(channel.pk),
+        "name": "October bio",
+        "bonus_amount": "10.000000",
+        "source": "test",
+        "campaign": "october",
+        "content": "bio",
+        "is_active": "on",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _staff_client(email: str) -> Client:
+    staff = _user(email)
+    staff.is_staff = True
+    staff.is_superuser = True
+    staff.save(update_fields=["is_staff", "is_superuser"])
+    client = Client()
+    client.force_login(staff)
+    return client
+
+
+@pytest.mark.django_db
+def test_admin_change_does_not_rotate_invite_token() -> None:
+    owner = _user("admin-change@example.com")
+    channel = _channel(owner)
+    link = _link(channel, "change-token-value")
+    client = _staff_client("staff-change@example.com")
+    response = client.post(
+        f"/admin/billing/partnerinvitelink/{link.pk}/change/",
+        _admin_invite_form(
+            channel,
+            name="Renamed",
+            bonus_amount="2.000000",
+            source="mail",
+            campaign="spring",
+            content="footer",
+            is_active="",
+        ),
+    )
+    assert response.status_code == 302
+    link.refresh_from_db()
+    assert link.token == "change-token-value"
+    assert link.name == "Renamed"
+    assert link.bonus_amount == Decimal("2.000000")
+    assert link.source == "mail"
+    assert link.campaign == "spring"
+    assert link.content == "footer"
+    assert link.is_active is False
+
+
+@pytest.mark.django_db
+def test_admin_add_retries_a_token_collision(monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = _user("admin-collide@example.com")
+    channel = _channel(owner)
+    _link(channel, "taken-token")
+    tokens = iter(["taken-token", "taken-token", "fresh-admin-token"])
+    monkeypatch.setattr(
+        "apps.billing.services.partner_invite.new_partner_invite_token",
+        lambda: next(tokens),
+    )
+    client = _staff_client("staff-collide@example.com")
+    response = client.post(
+        "/admin/billing/partnerinvitelink/add/",
+        _admin_invite_form(channel),
+    )
+    assert response.status_code == 302
+    added = PartnerInviteLink.objects.exclude(token="taken-token").get(
+        partner_channel=channel
+    )
+    assert added.token == "fresh-admin-token"
+    assert (
+        PartnerInviteLink.objects.filter(partner_channel=channel, token="").count() == 0
+    )
+
+
+@pytest.mark.django_db
+def test_admin_add_collision_exhaustion_leaves_no_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = _user("admin-exhaust@example.com")
+    channel = _channel(owner)
+    _link(channel, "taken-token")
+    monkeypatch.setattr(
+        "apps.billing.services.partner_invite.new_partner_invite_token",
+        lambda: "taken-token",
+    )
+    client = _staff_client("staff-exhaust@example.com")
+    before = set(PartnerInviteLink.objects.values_list("pk", flat=True))
+    with pytest.raises(PartnerInviteError, match="unique invite token"):
+        client.post(
+            "/admin/billing/partnerinvitelink/add/",
+            _admin_invite_form(channel),
+        )
+    assert set(PartnerInviteLink.objects.values_list("pk", flat=True)) == before
+
+
+@pytest.mark.django_db
+def test_regenerate_retries_a_token_collision(monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = _user("regen-collide@example.com")
+    other = _user("regen-other@example.com")
+    org = create_organization(name="Regen collide", actor=owner)
+    channel = create_partner_channel(organization=org)
+    _link(_channel(other), "taken-token")
+    tokens = iter(["taken-token", "regenerated-token"])
+    monkeypatch.setattr(
+        "apps.billing.services.partner_invite.new_partner_invite_token",
+        lambda: next(tokens),
+    )
+    regenerate_invite_link(channel, actor=owner)
+    link = canonical_invite_link(channel)
+    assert channel.invite_links.count() == 1
+    assert link.token == "regenerated-token"
+
+
+@pytest.mark.django_db
+@override_settings(PARTNER_CHANNEL_ENABLED=True)
+def test_record_visit_ignores_blank_token() -> None:
+    owner = _user("visit-blank@example.com")
+    channel = _channel(owner)
+    link = _link(channel, "visit-token")
+    assert record_visit("") is None
+    assert record_visit("   ") is None
+    assert record_visit(None) is None
+    assert InviteVisit.objects.filter(invite_link=link).count() == 0
+    assert record_visit(link.token) is not None
+    assert InviteVisit.objects.filter(invite_link=link).count() == 1
+
+
+@pytest.mark.django_db
+def test_service_lifecycle_keeps_one_nonempty_canonical_token() -> None:
+    owner = _user("lifecycle-invite@example.com")
+    org = create_organization(name="Lifecycle org", actor=owner)
+    channel = create_partner_channel(organization=org)
+    first = canonical_invite_link(channel).token
+    assert first
+    regenerated = regenerate_invite_link(channel, actor=owner)
+    assert regenerated.url
+    assert canonical_invite_link(channel).token not in ("", first)
+    set_invite_active(channel, actor=owner, active=False)
+    set_invite_active(channel, actor=owner, active=True)
+    set_invite_active(channel, actor=owner, active=True)
+    again = regenerate_invite_link(channel, actor=owner)
+    link = canonical_invite_link(channel)
+    assert channel.invite_links.count() == 1
+    assert link.is_active is True
+    assert link.token
+    assert again.url.endswith(link.token)
+
+
+@pytest.mark.django_db
 @override_settings(PARTNER_JOIN_BASE_URL="https://roamkit.net")
 def test_portal_mutations_follow_canonical_link() -> None:
     owner = _user("mutate-canon@example.com")
@@ -765,3 +1077,130 @@ def test_portal_mutations_follow_canonical_link() -> None:
     assert portal.token != old_token
     assert campaign.token == "campaign-live"
     assert invite_link_for(channel).url.endswith(f"/join/{portal.token}")
+
+
+def _individual(owner: User) -> PartnerChannel:
+    return PartnerChannel.objects.create(
+        kind=PartnerChannel.Kind.INDIVIDUAL,
+        owner_user=owner,
+        organization=None,
+        revenue_share_percent=Decimal("25.00"),
+    )
+
+
+@pytest.mark.django_db
+def test_individual_and_team_owner_shapes() -> None:
+    owner = _user("shape-owner@example.com")
+    individual = _individual(owner)
+    assert individual.kind == PartnerChannel.Kind.INDIVIDUAL
+    assert individual.owner_user_id == owner.pk
+    assert individual.organization_id is None
+
+    team = _channel(_user("shape-team@example.com"))
+    assert team.kind == PartnerChannel.Kind.TEAM
+    assert team.owner_user_id is None
+    assert team.organization_id is not None
+
+    other = _user("shape-other@example.com")
+    org = create_organization(name="Both owners", actor=other)
+    with pytest.raises(IntegrityError), transaction.atomic():
+        PartnerChannel.objects.create(
+            kind=PartnerChannel.Kind.INDIVIDUAL,
+            owner_user=owner,
+            organization=org,
+            revenue_share_percent=Decimal("10"),
+        )
+    with pytest.raises(IntegrityError), transaction.atomic():
+        PartnerChannel.objects.create(
+            kind=PartnerChannel.Kind.INDIVIDUAL,
+            owner_user=None,
+            organization=None,
+            revenue_share_percent=Decimal("10"),
+        )
+    with pytest.raises(IntegrityError), transaction.atomic():
+        PartnerChannel.objects.create(
+            kind=PartnerChannel.Kind.TEAM,
+            owner_user=None,
+            organization=None,
+            revenue_share_percent=Decimal("10"),
+        )
+    with pytest.raises(IntegrityError), transaction.atomic():
+        PartnerChannel.objects.create(
+            kind=PartnerChannel.Kind.TEAM,
+            owner_user=other,
+            organization=None,
+            revenue_share_percent=Decimal("10"),
+        )
+    with pytest.raises(IntegrityError), transaction.atomic():
+        _individual(owner)
+    with pytest.raises(IntegrityError), transaction.atomic():
+        PartnerChannel.objects.create(
+            organization=team.organization,
+            revenue_share_percent=Decimal("10"),
+        )
+
+
+@pytest.mark.django_db
+def test_ownership_is_immutable_on_save_update_and_bulk_update() -> None:
+    owner = _user("immutable@example.com")
+    channel = _channel(owner)
+    other = _user("immutable-other@example.com")
+
+    channel.is_active = False
+    channel.save(update_fields=["is_active"])
+    PartnerChannel.objects.filter(pk=channel.pk).update(
+        revenue_share_percent=Decimal("40.00")
+    )
+    row = PartnerChannel.objects.get(pk=channel.pk)
+    row.revenue_share_percent = Decimal("41.00")
+    PartnerChannel.objects.bulk_update([row], ["revenue_share_percent"])
+    channel.refresh_from_db()
+    assert channel.is_active is False
+    assert channel.revenue_share_percent == Decimal("41.00")
+    assert channel.kind == PartnerChannel.Kind.TEAM
+
+    channel.kind = PartnerChannel.Kind.INDIVIDUAL
+    with pytest.raises(AppendOnlyViolation):
+        channel.save()
+    with pytest.raises(AppendOnlyViolation):
+        channel.save(update_fields=["kind"])
+    with pytest.raises(AppendOnlyViolation):
+        PartnerChannel.objects.filter(pk=channel.pk).update(
+            kind=PartnerChannel.Kind.INDIVIDUAL
+        )
+    with pytest.raises(AppendOnlyViolation):
+        PartnerChannel.objects.filter(pk=channel.pk).update(owner_user_id=other.pk)
+    with pytest.raises(AppendOnlyViolation):
+        PartnerChannel.objects.filter(pk=channel.pk).update(organization_id=None)
+
+    stolen = PartnerChannel.objects.get(pk=channel.pk)
+    stolen.kind = PartnerChannel.Kind.INDIVIDUAL
+    with pytest.raises(AppendOnlyViolation):
+        PartnerChannel.objects.bulk_update([stolen], ["kind"])
+    stolen = PartnerChannel.objects.get(pk=channel.pk)
+    stolen.owner_user = other
+    with pytest.raises(AppendOnlyViolation):
+        PartnerChannel.objects.bulk_update([stolen], ["owner_user"])
+    stolen = PartnerChannel.objects.get(pk=channel.pk)
+    stolen.organization = None
+    with pytest.raises(AppendOnlyViolation):
+        PartnerChannel.objects.bulk_update([stolen], ["organization"])
+
+    channel.refresh_from_db()
+    assert channel.kind == PartnerChannel.Kind.TEAM
+    assert channel.owner_user_id is None
+    assert channel.organization_id is not None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_individual_owner_delete_is_blocked_by_protect() -> None:
+    owner = _user("individual-protect@example.com")
+    channel = _individual(owner)
+    with pytest.raises(IntegrityError):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"DELETE FROM {User._meta.db_table} WHERE id = %s",
+                [owner.pk],
+            )
+    assert PartnerChannel.objects.filter(pk=channel.pk).exists()
+    assert User.objects.filter(pk=owner.pk).exists()

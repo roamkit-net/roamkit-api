@@ -186,6 +186,7 @@ BILLING_VOUCHER_REDEEM_RATE = os.environ.get("BILLING_VOUCHER_REDEEM_RATE", "10/
 # ADR 023 leaves the grant number unset. This is the runtime default, per user
 # and partner channel. Replay of an existing grant does not consume it.
 PARTNER_GRANT_RATE = os.environ.get("PARTNER_GRANT_RATE", "10/hour")
+PARTNER_INVITE_RATE = os.environ.get("PARTNER_INVITE_RATE", "30/hour")
 DEVICE_STATUS_RATE = os.environ.get("DEVICE_STATUS_RATE", "60/hour")
 DEVICE_COVERAGE_RATE = os.environ.get("DEVICE_COVERAGE_RATE", "60/hour")
 DEVICE_PACKAGES_RATE = os.environ.get("DEVICE_PACKAGES_RATE", "60/hour")
@@ -216,6 +217,7 @@ REST_FRAMEWORK = {
         "auth_google": AUTH_GOOGLE_RATE,
         "billing_voucher_redeem": BILLING_VOUCHER_REDEEM_RATE,
         "partner_grant": PARTNER_GRANT_RATE,
+        "partner_invite": PARTNER_INVITE_RATE,
         "device_status": DEVICE_STATUS_RATE,
         "device_coverage": DEVICE_COVERAGE_RATE,
         "device_packages": DEVICE_PACKAGES_RATE,
@@ -265,6 +267,14 @@ SPECTACULAR_SETTINGS = {
             "description": (
                 "Team organizations and memberships (ADR 020). "
                 "Authorize via organization_id; never via client account_id."
+            ),
+        },
+        {
+            "name": "Partner",
+            "description": (
+                "Partner channel context (ADR 024). "
+                "Authorize via the authenticated user and the path channel_id. "
+                "The channel id is not authority by itself."
             ),
         },
         {

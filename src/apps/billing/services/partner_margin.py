@@ -1,4 +1,4 @@
-"""Partner margin accrual (ADR 023). Order, topup, and subscription hooks."""
+"""Partner margin accrual (ADR 023 / ADR 024). Order, topup, and subscription hooks."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING
 
 from django.conf import settings
-from django.core.exceptions import ObjectDoesNotExist
 
 from apps.billing.models import LedgerReferenceType
 from apps.billing.partner_channel import (
@@ -18,15 +17,17 @@ from apps.billing.partner_channel import (
     PartnerMarginAccrual,
 )
 from apps.billing.services.credit import MONEY_QUANT, CreditService, credit_service
+from apps.billing.services.partner_settlement import (
+    PartnerChannelOwnershipInvalid,
+    PartnerSettlementAccountMissing,
+    resolve_partner_settlement_account,
+)
+from apps.organizations.models import Membership, MembershipStatus
 
 if TYPE_CHECKING:
     from apps.accounts.models import User
 
 logger = logging.getLogger(__name__)
-
-
-class PartnerChannelTeamAccountMissing(Exception):
-    """The channel's organization has no team Account. Rolls the fulfillment back."""
 
 
 def build_source_id(
@@ -48,6 +49,44 @@ def build_source_id(
     return canonical
 
 
+def partner_channel_can_accrue_for_customer(
+    channel: PartnerChannel,
+    customer: User,
+) -> bool:
+    """Defensive economic guard for one channel and one purchasing customer.
+
+    This is not the attribution or membership invariant. It reads the current
+    committed membership rows and does not lock Organization or Membership.
+    A membership created after this check is caught later, when attribution
+    and membership writes fail both directions closed.
+
+    False means this purchase must not earn the channel a commission:
+
+    - individual: the purchasing user is the channel owner
+    - team: the purchasing user has an active membership in the owning
+      organization, including a ``member`` who has no partner-portal access
+
+    Suspended and revoked memberships do not suppress. The helper does not
+    read ``is_active``, attribution, balance, or ``PricingProfile``, and it
+    does not repair an illegal pair.
+    """
+    if (
+        channel.kind == PartnerChannel.Kind.INDIVIDUAL
+        and channel.owner_user_id is not None
+        and channel.owner_user_id == customer.pk
+    ):
+        return False
+    if channel.kind == PartnerChannel.Kind.TEAM and channel.organization_id is not None:
+        active_member = Membership.objects.filter(
+            organization_id=channel.organization_id,
+            user_id=customer.pk,
+            status=MembershipStatus.ACTIVE,
+        ).exists()
+        if active_member:
+            return False
+    return True
+
+
 class PartnerMarginService:
     """Credit a partner share from a commercial snapshot, or skip."""
 
@@ -66,7 +105,14 @@ class PartnerMarginService:
         """Accrue inside the caller's fulfillment transaction.
 
         A skip returns ``None`` and leaves that transaction to commit.
-        A credit or insert failure propagates so the caller rolls back.
+        A credit, insert, or settlement failure propagates so the caller
+        rolls back. Settlement uses ``resolve_partner_settlement_account``
+        and does not create an Account.
+
+        Replay of an existing source pair returns before inactive,
+        self-referral, price, and settlement checks. Self-referral is a
+        business skip. It is not membership locking and it does not repair
+        attribution.
         """
         customer_user_id = None if customer is None else str(customer.pk)
         if not settings.PARTNER_CHANNEL_ENABLED:
@@ -106,18 +152,26 @@ class PartnerMarginService:
             )
             return None
 
-        channel = (
-            PartnerChannel.objects.select_for_update()
-            .select_related("organization__account")
-            .get(pk=attribution.partner_channel_id)
+        channel = PartnerChannel.objects.select_for_update(of=("self",)).get(
+            pk=attribution.partner_channel_id
         )
-        organization_id = str(channel.organization_id)
+        organization_id = (
+            None if channel.organization_id is None else str(channel.organization_id)
+        )
         partner_channel_id = str(channel.pk)
         existing = PartnerMarginAccrual.objects.filter(
             source_type=source_type,
             source_id=source_id,
         ).first()
         if existing is not None:
+            self._log(
+                source_type=source_type,
+                source_id=source_id,
+                customer_user_id=customer_user_id,
+                partner_channel_id=partner_channel_id,
+                organization_id=organization_id,
+                reason="partner_margin.replay",
+            )
             return existing
         if not channel.is_active:
             self._log(
@@ -127,6 +181,16 @@ class PartnerMarginService:
                 partner_channel_id=partner_channel_id,
                 organization_id=organization_id,
                 reason="partner_margin.channel_inactive",
+            )
+            return None
+        if not partner_channel_can_accrue_for_customer(channel, customer):
+            self._log(
+                source_type=source_type,
+                source_id=source_id,
+                customer_user_id=customer_user_id,
+                partner_channel_id=partner_channel_id,
+                organization_id=organization_id,
+                reason="partner_margin.self_referral",
             )
             return None
 
@@ -159,17 +223,27 @@ class PartnerMarginService:
             )
             return None
 
-        team_account = self._team_account(
-            channel,
-            source_type=source_type,
-            source_id=source_id,
-            customer_user_id=customer_user_id,
-            partner_channel_id=partner_channel_id,
-            organization_id=organization_id,
-        )
+        try:
+            settlement_account = resolve_partner_settlement_account(channel)
+        except (
+            PartnerSettlementAccountMissing,
+            PartnerChannelOwnershipInvalid,
+        ) as exc:
+            logger.error(
+                "partner_margin source_type=%s source_id=%s customer_user_id=%s "
+                "partner_channel_id=%s organization_id=%s reason=%s error_type=%s",
+                source_type,
+                source_id,
+                customer_user_id,
+                partner_channel_id,
+                organization_id,
+                "partner_margin.settlement_invalid",
+                type(exc).__name__,
+            )
+            raise
         accrual_id = uuid.uuid4()
         entry = self._credits.credit(
-            team_account,
+            settlement_account,
             partner_share,
             reference_type=LedgerReferenceType.PARTNER_MARGIN,
             reference_id=str(accrual_id),
@@ -196,33 +270,11 @@ class PartnerMarginService:
             customer_user_id=customer_user_id,
             partner_channel_id=partner_channel_id,
             organization_id=organization_id,
-            reason="accrued",
-            partner_share=partner_share,
+            reason="partner_margin.accrued",
             ledger_entry_id=str(entry.pk),
             accrual_id=str(accrual.pk),
         )
         return accrual
-
-    def _team_account(self, channel: PartnerChannel, **log_fields: object):
-        try:
-            team_account = channel.organization.account
-        except ObjectDoesNotExist:
-            team_account = None
-        if team_account is None:
-            logger.error(
-                "partner_margin source_type=%s source_id=%s customer_user_id=%s "
-                "partner_channel_id=%s organization_id=%s reason=%s",
-                log_fields.get("source_type"),
-                log_fields.get("source_id"),
-                log_fields.get("customer_user_id"),
-                log_fields.get("partner_channel_id"),
-                log_fields.get("organization_id"),
-                "partner_channel.team_account_missing",
-            )
-            raise PartnerChannelTeamAccountMissing(
-                "Partner channel organization has no team Account"
-            )
-        return team_account
 
     @staticmethod
     def _price_skip(
@@ -251,21 +303,19 @@ class PartnerMarginService:
         partner_channel_id: str | None,
         organization_id: str | None,
         reason: str,
-        partner_share: Decimal | None = None,
         ledger_entry_id: str | None = None,
         accrual_id: str | None = None,
     ) -> None:
         logger.info(
             "partner_margin source_type=%s source_id=%s customer_user_id=%s "
             "partner_channel_id=%s organization_id=%s reason=%s "
-            "partner_share=%s ledger_entry_id=%s accrual_id=%s",
+            "ledger_entry_id=%s accrual_id=%s",
             source_type,
             source_id,
             customer_user_id,
             partner_channel_id,
             organization_id,
             reason,
-            partner_share,
             ledger_entry_id,
             accrual_id,
         )
