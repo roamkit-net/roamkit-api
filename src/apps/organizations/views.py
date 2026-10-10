@@ -121,6 +121,8 @@ def _map_invite_error(exc: Exception) -> None:
 
 def _map_membership_error(exc: Exception) -> None:
     """Convert membership domain errors to DRF exceptions (never returns)."""
+    if isinstance(exc, InviteConflictError):
+        raise Conflict(detail=str(exc)) from exc
     if isinstance(exc, LastOwnerError):
         raise PermissionDenied(detail=str(exc)) from exc
     if isinstance(exc, NotAllowedError):
@@ -336,7 +338,7 @@ class OrganizationTransferOwnershipView(OrganizationsAPIView):
                 organization_id=organization_id,
                 new_owner=new_owner,
             )
-        except (LastOwnerError, NotAllowedError) as exc:
+        except (InviteConflictError, LastOwnerError, NotAllowedError) as exc:
             _map_membership_error(exc)
             raise
 
@@ -432,7 +434,7 @@ class OrganizationMemberDetailView(OrganizationsAPIView):
                 target_user=membership.user,
                 role=body.validated_data["role"],
             )
-        except (LastOwnerError, NotAllowedError) as exc:
+        except (InviteConflictError, LastOwnerError, NotAllowedError) as exc:
             _map_membership_error(exc)
             raise
         return Response(MembershipSerializer(updated).data)
@@ -469,7 +471,7 @@ class OrganizationMemberRevokeView(OrganizationsAPIView):
                 organization_id=organization_id,
                 target_user=membership.user,
             )
-        except (LastOwnerError, NotAllowedError) as exc:
+        except (InviteConflictError, LastOwnerError, NotAllowedError) as exc:
             _map_membership_error(exc)
             raise
         return Response(MembershipSerializer(updated).data)

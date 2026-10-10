@@ -18,6 +18,7 @@ from rest_framework.views import APIView
 from apps.billing.services.partner_attribution import consume_partner_pending
 from apps.billing.services.partner_invite import issue_join_signature
 from apps.billing.services.partner_invite_visit import UTM_FIELDS
+from apps.billing.services.partner_self_referral import PartnerSelfReferralConflict
 
 logger = logging.getLogger(__name__)
 _NO_STORE = "no-store"
@@ -78,7 +79,15 @@ class PartnerConsumeView(APIView):
         if isinstance(request.data, dict):
             raw = request.data.get("payload", "")
             payload = raw if isinstance(raw, str) else ""
-        result = consume_partner_pending(request.user, payload)
+        try:
+            result = consume_partner_pending(request.user, payload)
+        except PartnerSelfReferralConflict:
+            response = Response(
+                {"code": "partner_self_referral"},
+                status=status.HTTP_409_CONFLICT,
+            )
+            response["Cache-Control"] = _NO_STORE
+            return response
         response = Response({"status": result}, status=status.HTTP_200_OK)
         response["Cache-Control"] = _NO_STORE
         return response
