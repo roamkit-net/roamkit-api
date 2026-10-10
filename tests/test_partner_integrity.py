@@ -15,7 +15,11 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.billing.models import Account
-from apps.billing.partner_channel import CustomerAttribution, PartnerChannel
+from apps.billing.partner_channel import (
+    CustomerAttribution,
+    PartnerChannel,
+    PartnerInviteLink,
+)
 from apps.billing.services.partner_invite import (
     create_individual_partner_channel,
     create_partner_channel,
@@ -46,6 +50,54 @@ def test_clean_individual_and_team_exit_zero():
     owner = _user("owner")
     create_individual_partner_channel(owner=owner)
     _team(_user("founder"))
+    stdout = StringIO()
+    call_command("partner_integrity_check", "--format=json", stdout=stdout)
+    payload = json.loads(stdout.getvalue())
+    assert payload["status"] == "clean"
+    assert payload["count"] == 0
+
+
+def _blank_link(channel: PartnerChannel, *, active: bool) -> None:
+    PartnerInviteLink.objects.bulk_create(
+        [
+            PartnerInviteLink(
+                partner_channel=channel,
+                token="",
+                is_active=active,
+            )
+        ]
+    )
+
+
+@pytest.mark.django_db
+def test_blank_invite_token_fails_integrity_when_active():
+    channel = _team(_user("founder"))
+    _blank_link(channel, active=True)
+    stdout = StringIO()
+    with pytest.raises(SystemExit) as exc:
+        call_command("partner_integrity_check", "--format=json", stdout=stdout)
+    assert exc.value.code == 1
+    payload = json.loads(stdout.getvalue())
+    assert payload["issues"][0]["code"] == "invite_token_missing"
+
+
+@pytest.mark.django_db
+def test_blank_invite_token_fails_integrity_when_inactive():
+    channel = _team(_user("founder"))
+    _blank_link(channel, active=False)
+    stdout = StringIO()
+    with pytest.raises(SystemExit) as exc:
+        call_command("partner_integrity_check", stdout=stdout)
+    assert exc.value.code == 1
+    assert "invite_token_missing" in stdout.getvalue()
+
+
+@pytest.mark.django_db
+def test_inactive_valid_invite_is_clean():
+    channel = _team(_user("founder"))
+    link = channel.invite_links.get()
+    link.is_active = False
+    link.save(update_fields=["is_active"])
     stdout = StringIO()
     call_command("partner_integrity_check", "--format=json", stdout=stdout)
     payload = json.loads(stdout.getvalue())

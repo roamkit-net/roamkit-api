@@ -193,6 +193,34 @@ def create_partner_channel(
     )
 
 
+_INVITE_TOKEN_ATTEMPTS = 5
+
+
+def new_partner_invite_token() -> str:
+    """One candidate token. The caller persists it and retries collisions."""
+    return secrets.token_urlsafe(24)
+
+
+def persist_with_unique_invite_token(link: PartnerInviteLink, persist) -> None:
+    """Assign a new token and persist it. Retry a unique collision five times.
+
+    ``persist`` must write ``link`` and nothing else. A failed attempt rolls
+    back only that write. The token is not logged.
+    """
+    last_error: IntegrityError | None = None
+    for _ in range(_INVITE_TOKEN_ATTEMPTS):
+        link.token = new_partner_invite_token()
+        try:
+            with transaction.atomic():
+                persist()
+        except IntegrityError as exc:
+            last_error = exc
+            continue
+        else:
+            return
+    raise PartnerInviteError("Could not mint a unique invite token") from last_error
+
+
 def _create_channel_and_link(
     *,
     kind: str,
@@ -210,9 +238,8 @@ def _create_channel_and_link(
                     revenue_share_percent=revenue_share_percent,
                     is_active=True,
                 )
-                PartnerInviteLink.objects.create(
+                link = PartnerInviteLink(
                     partner_channel=channel,
-                    token=secrets.token_urlsafe(24),
                     name="",
                     bonus_amount=Decimal("0.000000"),
                     source="",
@@ -220,6 +247,7 @@ def _create_channel_and_link(
                     content="",
                     is_active=True,
                 )
+                persist_with_unique_invite_token(link, link.save)
         except IntegrityError:
             continue
         else:
@@ -228,16 +256,10 @@ def _create_channel_and_link(
 
 
 def _assign_token(link: PartnerInviteLink) -> None:
-    for _ in range(5):
-        link.token = secrets.token_urlsafe(24)
-        try:
-            with transaction.atomic():
-                link.save(update_fields=["token", "regenerated_at"])
-        except IntegrityError:
-            continue
-        else:
-            return
-    raise PartnerInviteError("Could not mint a unique invite token")
+    persist_with_unique_invite_token(
+        link,
+        lambda: link.save(update_fields=["token", "regenerated_at"]),
+    )
 
 
 def _view(link: PartnerInviteLink) -> PartnerInviteLinkView:
@@ -267,8 +289,3 @@ def _audit(
         timezone.now().isoformat().replace("+00:00", "Z"),
         request_id,
     )
-
-
-def _unused_integrity() -> None:
-    """Keep IntegrityError imported for the token insert race retry below."""
-    raise IntegrityError()

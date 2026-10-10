@@ -11,7 +11,9 @@ from decimal import Decimal
 from typing import Any
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.expressions import BaseExpression
 
 from apps.billing.models import AppendOnlyViolation
 
@@ -27,10 +29,18 @@ class RefuseDeleteManager(models.Manager.from_queryset(RefuseDeleteQuerySet)):
     """Default manager for rows that cannot be deleted."""
 
 
+def partner_invite_token_is_usable(token: object) -> bool:
+    """A stored invite token must be a non-blank string.
+
+    Whitespace-only is blank. The value is not stripped or rewritten.
+    """
+    return isinstance(token, str) and bool(token.strip())
+
+
 class PartnerInviteLinkQuerySet(RefuseDeleteQuerySet):
     """Block classification edits once a visit exists.
 
-    Token regenerate stays allowed.
+    Token regenerate stays allowed. A blank token is never a write.
     """
 
     _FROZEN_FIELDS = frozenset(
@@ -38,6 +48,9 @@ class PartnerInviteLinkQuerySet(RefuseDeleteQuerySet):
     )
 
     def update(self, **kwargs: Any) -> int:
+        if "token" in kwargs and not isinstance(kwargs["token"], BaseExpression):
+            if not partner_invite_token_is_usable(kwargs["token"]):
+                raise ValidationError("PartnerInviteLink requires a token")
         frozen = self._FROZEN_FIELDS & kwargs.keys()
         has_visit = self.filter(visits__isnull=False).exists()
         if frozen and has_visit:
@@ -46,6 +59,15 @@ class PartnerInviteLinkQuerySet(RefuseDeleteQuerySet):
                 "are frozen after the first visit"
             )
         return super().update(**kwargs)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        # Django 5.1 bulk_update sends Case expressions through update().
+        # Reject a blank token here, before that atomic(savepoint=False) block.
+        if "token" in fields:
+            for obj in objs:
+                if not partner_invite_token_is_usable(obj.token):
+                    raise ValidationError("PartnerInviteLink requires a token")
+        return super().bulk_update(objs, fields, batch_size=batch_size)
 
 
 class PartnerInviteLinkManager(models.Manager.from_queryset(PartnerInviteLinkQuerySet)):
@@ -243,7 +265,8 @@ class PartnerInviteLink(models.Model):
     the smallest ``(created_at, id)``, resolved by
     ``canonical_invite_link`` — not by an unordered ``.first()``.
 
-    ``token`` is not a form field. Only regenerate writes it.
+    ``token`` is not a form field. Channel creation, admin add, and regenerate
+    write it. A blank token is not a stored state.
 
     After the first ``InviteVisit``, ``save`` and ``QuerySet.update`` reject
     changes to ``partner_channel``, ``source``, ``campaign``, and ``content``.
@@ -292,6 +315,8 @@ class PartnerInviteLink(models.Model):
         return f"PartnerInviteLink {self.partner_channel_id}"
 
     def save(self, *args: Any, **kwargs: Any) -> None:
+        if not partner_invite_token_is_usable(self.token):
+            raise ValidationError("PartnerInviteLink requires a token")
         update_fields = kwargs.get("update_fields")
         if self.pk and not self._state.adding and self._touches_frozen(update_fields):
             if self.visits.exists() and self._frozen_values_changed(update_fields):
