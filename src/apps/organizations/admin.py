@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from django import forms
 from django.contrib import admin
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
@@ -20,6 +22,32 @@ from apps.organizations.models import (
     OrganizationFleetCredential,
     OrganizationInvite,
 )
+from apps.organizations.services.account_binding import create_organization
+
+User = get_user_model()
+
+
+class OrganizationAdminForm(forms.ModelForm):
+    """Add asks for an owner. The team Account is created with the organization."""
+
+    owner = forms.ModelChoiceField(
+        queryset=User.objects.order_by("id"),
+        required=False,
+        help_text=(
+            "Required for a new organization. This person becomes the owner. "
+            "Their personal account is not converted."
+        ),
+    )
+
+    class Meta:
+        model = Organization
+        fields = ("name", "status")
+
+    def clean(self):
+        cleaned = super().clean()
+        if self.instance._state.adding and cleaned.get("owner") is None:
+            self.add_error("owner", "Choose the owner of the new organization.")
+        return cleaned
 
 
 class MembershipInline(admin.TabularInline):
@@ -33,18 +61,41 @@ class MembershipInline(admin.TabularInline):
 
 @admin.register(Organization)
 class OrganizationAdmin(admin.ModelAdmin):
+    """Add creates the organization, its team account, and the owner membership.
+
+    Change edits name and status. The team account stays bound and is not a
+    personal account.
+    """
+
+    form = OrganizationAdminForm
     list_display = ("name", "status", "account", "created_at", "updated_at")
     list_filter = ("status",)
     search_fields = ("name", "id", "account__id")
-    readonly_fields = ("id", "account", "created_at", "updated_at")
-    raw_id_fields = ("account",)
     inlines = (MembershipInline,)
 
-    def has_delete_permission(self, request, obj=None) -> bool:
-        return False
+    def get_fields(self, request, obj=None):
+        if obj is None:
+            return ("name", "status", "owner")
+        return ("name", "status", "id", "account", "created_at", "updated_at")
 
-    def has_add_permission(self, request) -> bool:
-        # Create via create_organization() so team Account is always bound.
+    def get_readonly_fields(self, request, obj=None):
+        if obj is None:
+            return ()
+        return ("id", "account", "created_at", "updated_at")
+
+    def save_model(self, request, obj, form, change) -> None:
+        if change:
+            obj.save(update_fields=["name", "status", "updated_at"])
+            return
+        org = create_organization(
+            name=form.cleaned_data["name"],
+            actor=form.cleaned_data["owner"],
+            status=form.cleaned_data["status"],
+        )
+        obj.pk = org.pk
+        obj.account_id = org.account_id
+
+    def has_delete_permission(self, request, obj=None) -> bool:
         return False
 
 
