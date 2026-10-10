@@ -138,7 +138,7 @@ def test_customers_return_full_email_and_snapshot_earnings(client: Client) -> No
 
 @ENABLED
 @pytest.mark.django_db
-def test_viewer_may_read_and_member_may_not(client: Client) -> None:
+def test_viewer_and_member_may_read_customers(client: Client) -> None:
     owner = _user("owner")
     viewer = _user("viewer")
     member = _user("member")
@@ -156,13 +156,14 @@ def test_viewer_may_read_and_member_may_not(client: Client) -> None:
         status=MembershipStatus.ACTIVE,
     )
 
-    allowed = _get(client, viewer)
-    denied = _get(client, member)
+    viewer_response = _get(client, viewer)
+    member_response = _get(client, member)
 
-    assert allowed.status_code == 200
-    assert allowed.json()["count"] == 0
-    assert denied.status_code == 403
-    assert denied.json() == {"code": "partner_access_denied"}
+    assert viewer_response.status_code == 200
+    assert viewer_response.json()["count"] == 0
+    assert member_response.status_code == 200
+    assert member_response["X-Partner-Role"] == "member"
+    assert member_response.json()["count"] == 0
 
 
 @ENABLED

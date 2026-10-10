@@ -34,6 +34,7 @@ from apps.billing.partner_channel import PartnerCreditGrant, PartnerInviteLink
 from apps.billing.serializers import (
     PartnerChannelCodeSerializer,
     PartnerContextListSerializer,
+    PartnerCustomerPlansSerializer,
     PartnerCustomersPageSerializer,
     PartnerCustomersQueryError,
     PartnerGrantBodyError,
@@ -46,13 +47,22 @@ from apps.billing.serializers import (
     parse_partner_customers_query,
     parse_partner_grant_body,
     parse_partner_grants_query,
+    prepare_customers_query,
+    visible_customer_fields,
 )
 from apps.billing.services.partner_context import (
     PartnerAccessDenied,
+    apply_partner_role_header,
     list_authorized_partner_contexts,
     partner_role_can_grant,
     partner_role_can_manage_invite,
+    partner_role_can_view_customer_plans,
+    resolve_authorized_customers_context,
     resolve_authorized_partner_context,
+    resolve_authorized_plans_context,
+)
+from apps.billing.services.partner_customer_plans import (
+    partner_customer_plans_service,
 )
 from apps.billing.services.partner_customers import partner_customers_service
 from apps.billing.services.partner_grant import (
@@ -169,6 +179,9 @@ class PartnerContextListView(_PartnerReadView):
                     "can_manage_invite": partner_role_can_manage_invite(
                         item.effective_role
                     ),
+                    "can_view_customer_plans": partner_role_can_view_customer_plans(
+                        item.effective_role
+                    ),
                 },
             }
             for item in list_authorized_partner_contexts(request.user)
@@ -282,11 +295,17 @@ _CUSTOMER_PARAMETERS = [
         operation_id="partner_channel_customers",
         summary="Customers for one partner channel",
         description=(
-            "Current attributions for the channel in the path, with earnings "
-            "from stored accruals on that same channel. The channel id is not "
-            "authority. A missing channel and an inaccessible channel are the "
-            "same partner_access_denied response. Channel is_active does not "
-            "hide customers. There is no fallback to another context."
+            "Current attributions for the channel in the path. An active member "
+            "may read this route and no other partner route. Owner and admin "
+            "results include credit_balance (personal Account.balance cache, "
+            "6dp string or null when that Account is missing), "
+            "total_partner_earned, and accrual_count. Member results include "
+            "credit_balance and accrual_count and omit total_partner_earned. "
+            "Viewer results are customer_id, email, display_name, and "
+            "attributed_at only. Forbidden fields are omitted. Omitted sort "
+            "defaults to total_partner_earned for owner and admin, and to "
+            "attributed_at for member and viewer. A sort the role cannot see "
+            "is invalid_sort. The channel id is not authority."
         ),
         parameters=_CUSTOMER_PARAMETERS,
         responses={
@@ -323,11 +342,14 @@ class PartnerChannelCustomersView(_PartnerReadView):
         if not settings.PARTNER_CHANNEL_ENABLED:
             return _coded(status.HTTP_404_NOT_FOUND, "partner_channel_disabled")
         try:
-            context = resolve_authorized_partner_context(request.user, channel_id)
+            context = resolve_authorized_customers_context(request.user, channel_id)
         except PartnerAccessDenied:
             return _coded(status.HTTP_403_FORBIDDEN, "partner_access_denied")
         try:
-            query = parse_partner_customers_query(request.query_params)
+            query = prepare_customers_query(
+                parse_partner_customers_query(request.query_params),
+                context.effective_role,
+            )
         except PartnerCustomersQueryError as exc:
             return _coded(status.HTTP_400_BAD_REQUEST, exc.code)
         page = partner_customers_service.list_customers(context.channel, query)
@@ -338,14 +360,7 @@ class PartnerChannelCustomersView(_PartnerReadView):
                     "page": page.page,
                     "page_size": page.page_size,
                     "results": [
-                        {
-                            "customer_id": row.customer_id,
-                            "email": row.email,
-                            "display_name": row.display_name,
-                            "attributed_at": row.attributed_at,
-                            "total_partner_earned": row.total_partner_earned,
-                            "accrual_count": row.accrual_count,
-                        }
+                        visible_customer_fields(row, context.effective_role)
                         for row in page.results
                     ],
                 }
@@ -353,7 +368,74 @@ class PartnerChannelCustomersView(_PartnerReadView):
             status=status.HTTP_200_OK,
         )
         response["Cache-Control"] = _NO_STORE
-        response["X-Partner-Role"] = context.effective_role
+        apply_partner_role_header(response, context.effective_role)
+        return response
+
+
+@extend_schema_view(
+    get=extend_schema(
+        tags=["Partner"],
+        operation_id="partner_channel_customer_plans",
+        summary="Cached eSIM plans for one attributed customer",
+        description=(
+            "Owner and admin only. The channel id is not authority. A missing "
+            "channel, a foreign channel, and member, viewer, suspended, or "
+            "revoked membership are the same partner_access_denied response. "
+            "A customer who is not currently attributed to the authorized "
+            "channel is customer_not_found. The body is only active and "
+            "expired. Archived eSIMs are omitted and the response does not "
+            "say that they exist. location_title, package_title, and "
+            "data_allowance are required strings; an empty snapshot stays an "
+            "empty string. validity_days and the usage cache fields are "
+            "nullable. usage_is_unlimited is true, false, or null as stored. "
+            "Usage is the local cache. This read does not refresh the "
+            "provider and does not create an Account. No count, pagination, "
+            "or internal ids."
+        ),
+        responses={
+            200: OpenApiResponse(
+                response=PartnerCustomerPlansSerializer,
+                description="Active and expired local eSIM snapshots",
+            ),
+            401: OpenApiResponse(
+                response=PartnerChannelCodeSerializer,
+                description="authentication_required",
+            ),
+            403: OpenApiResponse(
+                response=PartnerChannelCodeSerializer,
+                description="partner_access_denied",
+            ),
+            404: OpenApiResponse(
+                response=PartnerChannelCodeSerializer,
+                description="partner_channel_disabled or customer_not_found",
+            ),
+        },
+    ),
+)
+class PartnerChannelCustomerPlansView(_PartnerReadView):
+    """Local plans for one current customer. Owner and admin only."""
+
+    def get(self, request: Request, channel_id, customer_id: int) -> Response:
+        if not settings.PARTNER_CHANNEL_ENABLED:
+            return _coded(status.HTTP_404_NOT_FOUND, "partner_channel_disabled")
+        try:
+            context = resolve_authorized_plans_context(request.user, channel_id)
+        except PartnerAccessDenied:
+            return _coded(status.HTTP_403_FORBIDDEN, "partner_access_denied")
+        plans = partner_customer_plans_service.list_plans(
+            context.channel,
+            customer_id,
+        )
+        if plans is None:
+            return _coded(status.HTTP_404_NOT_FOUND, "customer_not_found")
+        response = Response(
+            PartnerCustomerPlansSerializer(
+                {"active": plans.active, "expired": plans.expired}
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+        response["Cache-Control"] = _NO_STORE
+        apply_partner_role_header(response, context.effective_role)
         return response
 
 

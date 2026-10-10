@@ -96,7 +96,7 @@ def test_persona_reads_follow_portal_roles():
         viewer: {team.pk},
         both: {both.individual_partner_channel.pk, second.pk},
     }
-    denied = (member, suspended, revoked, ordinary)
+    denied = (suspended, revoked, ordinary)
     channels = (individual, team, second)
 
     for user, allowed in readable.items():
@@ -125,6 +125,17 @@ def test_persona_reads_follow_portal_roles():
     )
     assert missing.status_code == foreign.status_code == 403
     assert missing.json() == foreign.json()
+
+    member_contexts = client.get("/api/v1/partner/contexts/", **_auth(member))
+    assert {item["channel_id"] for item in member_contexts.json()["contexts"]} == {
+        str(team.pk)
+    }
+    member_summary = client.get(
+        f"/api/v1/partner/channels/{team.pk}/summary/",
+        **_auth(member),
+    )
+    assert member_summary.status_code == 403
+    assert member_summary.json()["code"] == "partner_access_denied"
 
     for user in denied:
         assert client.get("/api/v1/partner/contexts/", **_auth(user)).json() == {

@@ -29,7 +29,22 @@ if TYPE_CHECKING:
     from apps.accounts.models import User
 
 _GRANT_ROLES = (MembershipRole.OWNER, MembershipRole.ADMIN)
+_PLANS_ROLES = (MembershipRole.OWNER, MembershipRole.ADMIN)
 _SUMMARY_ROLES = (MembershipRole.OWNER, MembershipRole.ADMIN, MembershipRole.VIEWER)
+_CUSTOMERS_ROLES = (
+    MembershipRole.OWNER,
+    MembershipRole.ADMIN,
+    MembershipRole.VIEWER,
+    MembershipRole.MEMBER,
+)
+_ROLE_HEADER = frozenset(
+    {
+        MembershipRole.OWNER,
+        MembershipRole.ADMIN,
+        MembershipRole.VIEWER,
+        MembershipRole.MEMBER,
+    }
+)
 
 
 class PartnerAccessDenied(Exception):
@@ -54,6 +69,24 @@ def resolve_partner_summary_channel(user: User) -> PartnerChannel:
     return _resolve_channel(user, _SUMMARY_ROLES)
 
 
+def resolve_partner_customers_channel(user: User) -> PartnerChannel:
+    """Return the one team channel this user may read customers for.
+
+    Includes an active member. Does not authorize summary, grants, or invite.
+    """
+    return _resolve_channel(user, _CUSTOMERS_ROLES)
+
+
+def partner_customers_role(user: User, channel: PartnerChannel) -> str:
+    """Role that authorized a customers read of ``channel``."""
+    if _individual_owner_matches(channel, user):
+        return MembershipRole.OWNER
+    role = _active_membership_role(user, channel, _CUSTOMERS_ROLES)
+    if role is None:
+        raise PartnerAccessDenied(_ACCESS_DENIED)
+    return role
+
+
 def partner_reader_role(user: User, partner_channel: PartnerChannel) -> str:
     """Active portal role on this channel's organization. Empty when none."""
     from apps.organizations.models import Membership
@@ -73,9 +106,14 @@ def partner_reader_role(user: User, partner_channel: PartnerChannel) -> str:
 
 def stamp_partner_role(response, user: User, partner_channel: PartnerChannel) -> None:
     """Presentation hint only. Tenant resolution never reads this header."""
-    role = partner_reader_role(user, partner_channel)
-    if role in {MembershipRole.OWNER, MembershipRole.ADMIN, MembershipRole.VIEWER}:
-        response["X-Partner-Role"] = role
+    apply_partner_role_header(response, partner_reader_role(user, partner_channel))
+
+
+def apply_partner_role_header(response, role: str) -> None:
+    """Set ``X-Partner-Role`` when ``role`` is a portal or customers role."""
+    if role in _ROLE_HEADER:
+        # wsgiref requires a plain str. TextChoices members are str subclasses.
+        response["X-Partner-Role"] = str(role)
 
 
 def _resolve_channel(user: User, roles: tuple[str, ...]) -> PartnerChannel:
@@ -139,17 +177,46 @@ def list_authorized_partner_contexts(user: User) -> tuple[PartnerContext, ...]:
     return tuple(contexts)
 
 
+def resolve_authorized_plans_context(
+    user: User,
+    channel_id: uuid.UUID,
+) -> PartnerContext:
+    """Return the channel for a customer plans read.
+
+    Owner and admin only. This does not authorize the customers list, summary,
+    grants, or invite, and it does not use grant permission.
+    """
+    return _resolve_authorized_context(user, channel_id, _PLANS_ROLES)
+
+
+def resolve_authorized_customers_context(
+    user: User,
+    channel_id: uuid.UUID,
+) -> PartnerContext:
+    """Return the channel for a customers read, including an active member."""
+    return _resolve_authorized_context(user, channel_id, _CUSTOMERS_ROLES)
+
+
 def resolve_authorized_partner_context(
     user: User,
     channel_id: uuid.UUID,
 ) -> PartnerContext:
-    """Return the requested channel when this user may access it now.
+    """Return the requested channel when this user may access the portal.
 
     ``channel_id`` only selects the row. Authorization is loaded again on
     every call. A missing id, another user's channel, and a membership that
     is no longer active all raise ``PartnerAccessDenied``. No other channel
-    is substituted.
+    is substituted. An active member is not a portal role; customers uses
+    ``resolve_authorized_customers_context``.
     """
+    return _resolve_authorized_context(user, channel_id, _SUMMARY_ROLES)
+
+
+def _resolve_authorized_context(
+    user: User,
+    channel_id: uuid.UUID,
+    roles: tuple[str, ...],
+) -> PartnerContext:
     channel = (
         PartnerChannel.objects.filter(pk=channel_id)
         .select_related("owner_user", "organization")
@@ -164,7 +231,7 @@ def resolve_authorized_partner_context(
             raise PartnerAccessDenied(_ACCESS_DENIED)
         return _partner_context(channel, role=MembershipRole.OWNER)
     if channel.kind == PartnerChannel.Kind.TEAM:
-        role = _team_role(user, channel)
+        role = _active_membership_role(user, channel, roles)
         if role is None:
             _log_access_denied(user, channel_id)
             raise PartnerAccessDenied(_ACCESS_DENIED)
@@ -180,6 +247,16 @@ def _log_access_denied(user: User, channel_id: uuid.UUID) -> None:
         user_id=user.pk,
         requested_channel_id=channel_id,
     )
+
+
+def partner_role_can_view_customer_plans(role: str) -> bool:
+    """Role capability only. This is not grant authorization.
+
+    ADR 024 allows owner and admin to read customer plans. This predicate
+    does not read the channel, the feature flag, attribution, or membership
+    status. Callers still apply those checks.
+    """
+    return role in {MembershipRole.OWNER, MembershipRole.ADMIN}
 
 
 def partner_role_can_grant(role: str) -> bool:
@@ -212,25 +289,37 @@ def _individual_owner_matches(channel: PartnerChannel, user: User) -> bool:
     )
 
 
-def _team_role(user: User, channel: PartnerChannel) -> str | None:
+def _active_membership_role(
+    user: User,
+    channel: PartnerChannel,
+    roles: tuple[str, ...],
+) -> str | None:
     if (
         channel.kind != PartnerChannel.Kind.TEAM
         or channel.organization_id is None
         or channel.owner_user_id is not None
     ):
         return None
-    role = partner_reader_role(user, channel)
-    if role in _SUMMARY_ROLES:
-        return role
-    return None
+    role = (
+        Membership.objects.filter(
+            organization_id=channel.organization_id,
+            user_id=user.pk,
+            status=MembershipStatus.ACTIVE,
+            role__in=roles,
+        )
+        .values_list("role", flat=True)
+        .first()
+    )
+    return role or None
 
 
 def _team_contexts(user: User) -> list[PartnerContext]:
+    """Channels this user may open. Member is listed for the customers read."""
     membership = Membership.objects.filter(
         organization_id=OuterRef("organization_id"),
         user_id=user.pk,
         status=MembershipStatus.ACTIVE,
-        role__in=_SUMMARY_ROLES,
+        role__in=_CUSTOMERS_ROLES,
     )
     channels = (
         PartnerChannel.objects.filter(kind=PartnerChannel.Kind.TEAM)
@@ -244,7 +333,7 @@ def _team_contexts(user: User) -> list[PartnerContext]:
     contexts: list[PartnerContext] = []
     for channel in channels:
         role = getattr(channel, "authorized_membership_role", None)
-        if role not in _SUMMARY_ROLES or channel.owner_user_id is not None:
+        if role not in _CUSTOMERS_ROLES or channel.owner_user_id is not None:
             continue
         contexts.append(_partner_context(channel, role=role))
     return contexts
@@ -260,5 +349,5 @@ def _partner_context(channel: PartnerChannel, *, role: str) -> PartnerContext:
         channel_id=channel.pk,
         kind=channel.kind,
         label=label,
-        effective_role=role,
+        effective_role=str(role),
     )

@@ -18,6 +18,7 @@ from apps.billing.services.partner_context import (
     list_authorized_partner_contexts,
     partner_role_can_grant,
     partner_role_can_manage_invite,
+    resolve_authorized_customers_context,
     resolve_authorized_partner_context,
     resolve_partner_summary_channel,
 )
@@ -133,7 +134,7 @@ def test_individual_owner_sees_own_channel_and_another_user_does_not() -> None:
         resolve_authorized_partner_context(stranger, channel.pk)
 
 
-def test_active_team_roles_are_preserved_and_member_is_excluded() -> None:
+def test_active_team_roles_include_member_for_customers_only() -> None:
     owner = _user("owner")
     admin = _user("admin")
     viewer = _user("viewer")
@@ -151,7 +152,14 @@ def test_active_team_roles_are_preserved_and_member_is_excluded() -> None:
     assert owner_context.label == "Fleet"
     assert admin_context.effective_role == MembershipRole.ADMIN
     assert viewer_context.effective_role == MembershipRole.VIEWER
-    assert list_authorized_partner_contexts(member) == ()
+    member_context = list_authorized_partner_contexts(member)[0]
+    assert member_context.effective_role == MembershipRole.MEMBER
+    assert partner_role_can_grant(member_context.effective_role) is False
+    with pytest.raises(PartnerAccessDenied):
+        resolve_authorized_partner_context(member, channel.pk)
+    customers = resolve_authorized_customers_context(member, channel.pk)
+    assert customers.effective_role == MembershipRole.MEMBER
+    assert customers.channel_id == channel.pk
     assert partner_role_can_grant(owner_context.effective_role) is True
     assert partner_role_can_manage_invite(owner_context.effective_role) is True
     assert partner_role_can_grant(admin_context.effective_role) is True
