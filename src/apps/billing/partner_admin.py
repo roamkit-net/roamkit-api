@@ -98,16 +98,23 @@ class PartnerChannelAdmin(admin.ModelAdmin):
         "earned_sum",
         "grant_count",
     )
-    fields = (
-        "kind",
-        "owner_user",
-        "organization",
-        "is_active",
-        "revenue_share_percent",
-        "settlement_account_id",
-        "created_at",
-        "updated_at",
-    )
+
+    def get_fields(self, request, obj=None):
+        fields = [
+            "kind",
+            "owner_user",
+            "organization",
+            "is_active",
+            "revenue_share_percent",
+        ]
+        if obj is None:
+            return fields
+        return [
+            *fields,
+            "settlement_account_id",
+            "created_at",
+            "updated_at",
+        ]
 
     def get_queryset(self, request):
         return (
