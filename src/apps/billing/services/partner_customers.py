@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import (
     Count,
     DecimalField,
@@ -43,11 +44,15 @@ _SORT_FIELDS = {
 
 @dataclass(frozen=True, slots=True)
 class PartnerCustomersQuery:
-    """Already validated list parameters. ``q`` is trimmed."""
+    """Already validated list parameters. ``q`` is trimmed.
+
+    ``sort`` is ``None`` when the request omitted it. The view picks the
+    role default before calling the list service.
+    """
 
     page: int
     page_size: int
-    sort: str
+    sort: str | None
     order: str
     q: str
 
@@ -58,6 +63,7 @@ class PartnerCustomerRow:
     email: str
     display_name: str
     attributed_at: datetime
+    credit_balance: Decimal | None
     total_partner_earned: Decimal
     accrual_count: int
 
@@ -93,9 +99,11 @@ class PartnerCustomersService:
             "user_id",
         )
         start = (query.page - 1) * query.page_size
+        if query.sort not in _SORT_FIELDS:
+            raise ValueError("customers sort must be resolved before listing")
         rows = (
             _with_snapshot_totals(base, partner_channel)
-            .select_related("user")
+            .select_related("user__billing_account")
             .order_by(*ordering)[start : start + query.page_size]
         )
         return PartnerCustomersPage(
@@ -148,9 +156,22 @@ def _row(attribution: CustomerAttribution) -> PartnerCustomerRow:
         email=attribution.user.email,
         display_name=(attribution.user.display_name or "").strip(),
         attributed_at=attribution.attributed_at,
+        credit_balance=_personal_credit_balance(attribution.user),
         total_partner_earned=attribution.total_partner_earned,
         accrual_count=attribution.accrual_count,
     )
+
+
+def _personal_credit_balance(user) -> Decimal | None:
+    """Cached personal Account balance. Missing Account stays None.
+
+    Does not create an Account and does not read the ledger.
+    """
+    try:
+        account = user.billing_account
+    except ObjectDoesNotExist:
+        return None
+    return account.balance
 
 
 partner_customers_service = PartnerCustomersService()

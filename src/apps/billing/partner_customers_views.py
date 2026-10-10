@@ -22,12 +22,15 @@ from apps.billing.serializers import (
     PartnerCustomersPageSerializer,
     PartnerCustomersQueryError,
     parse_partner_customers_query,
+    prepare_customers_query,
+    visible_customer_fields,
 )
 from apps.billing.services.partner_context import (
     PartnerAccessDenied,
     PartnerContextAmbiguous,
-    resolve_partner_summary_channel,
-    stamp_partner_role,
+    apply_partner_role_header,
+    partner_customers_role,
+    resolve_partner_customers_channel,
 )
 from apps.billing.services.partner_customers import partner_customers_service
 from apps.billing.services.partner_log import PartnerLegacyUsageMixin
@@ -47,8 +50,15 @@ def _coded(http_status: int, code: str) -> Response:
         operation_id="orgs_partner_customers",
         summary="Partner channel customers",
         description=(
-            "Current attributions for the caller's single partner channel, "
-            "with earnings from stored accruals."
+            "Current attributions for the caller's single team channel. "
+            "An active member may read this route only. Field visibility and "
+            "the default sort follow the resolved role: owner and admin "
+            "receive credit_balance, total_partner_earned, and accrual_count; "
+            "member omits total_partner_earned; viewer receives identity and "
+            "attributed_at only. credit_balance is the personal Account "
+            "balance cache, or null when that Account is missing. Forbidden "
+            "fields are omitted. An explicit sort the role cannot see is "
+            "invalid_sort."
         ),
         parameters=[
             OpenApiParameter("page", OpenApiTypes.INT, required=False),
@@ -113,13 +123,17 @@ class PartnerCustomersView(PartnerLegacyUsageMixin, APIView):
         if not settings.PARTNER_CHANNEL_ENABLED:
             return _coded(status.HTTP_404_NOT_FOUND, "partner_channel_disabled")
         try:
-            channel = resolve_partner_summary_channel(request.user)
+            channel = resolve_partner_customers_channel(request.user)
+            role = partner_customers_role(request.user, channel)
         except PartnerAccessDenied:
             return _coded(status.HTTP_403_FORBIDDEN, "partner_access_denied")
         except PartnerContextAmbiguous:
             return _coded(status.HTTP_409_CONFLICT, "partner_context_ambiguous")
         try:
-            query = parse_partner_customers_query(request.query_params)
+            query = prepare_customers_query(
+                parse_partner_customers_query(request.query_params),
+                role,
+            )
         except PartnerCustomersQueryError as exc:
             return _coded(status.HTTP_400_BAD_REQUEST, exc.code)
 
@@ -131,20 +145,12 @@ class PartnerCustomersView(PartnerLegacyUsageMixin, APIView):
                     "page": page.page,
                     "page_size": page.page_size,
                     "results": [
-                        {
-                            "customer_id": row.customer_id,
-                            "email": row.email,
-                            "display_name": row.display_name,
-                            "attributed_at": row.attributed_at,
-                            "total_partner_earned": row.total_partner_earned,
-                            "accrual_count": row.accrual_count,
-                        }
-                        for row in page.results
+                        visible_customer_fields(row, role) for row in page.results
                     ],
                 }
             ).data,
             status=status.HTTP_200_OK,
         )
         response["Cache-Control"] = _NO_STORE
-        stamp_partner_role(response, request.user, channel)
+        apply_partner_role_header(response, role)
         return response

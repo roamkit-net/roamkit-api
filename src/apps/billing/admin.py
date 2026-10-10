@@ -21,11 +21,13 @@ from apps.billing.exceptions import (
 )
 from apps.billing.models import (
     Account,
+    AccountKind,
     CreditLedgerEntry,
     DepositRequest,
     LedgerReferenceType,
     Subscription,
 )
+from apps.billing.partner_channel import CustomerAttribution
 from apps.billing.services import (
     collect_billing_metrics,
     credit_service,
@@ -84,10 +86,39 @@ class AccountAdmin(admin.ModelAdmin):
         "version",
         "created_at",
         "updated_at",
+        "partner_link",
     )
     raw_id_fields = ("user",)
     autocomplete_fields = ("pricing_profile",)
     actions = ("rebuild_selected_balances", "assign_pricing_profile_action")
+
+    def get_fields(self, request, obj=None):
+        fields = list(super().get_fields(request, obj))
+        if obj is not None and "partner_link" not in fields:
+            fields.append("partner_link")
+        return fields
+
+    @admin.display(description="Partner")
+    def partner_link(self, obj: Account) -> str:
+        if obj.kind != AccountKind.PERSONAL or obj.user_id is None:
+            return (
+                "This organization account settles a team channel. "
+                "It is not a customer attribution."
+            )
+        try:
+            attribution = obj.user.customer_attribution
+        except CustomerAttribution.DoesNotExist:
+            url = reverse("admin:billing_customerattribution_add")
+            return format_html(
+                '<a href="{}?user={}">Assign partner…</a>',
+                url,
+                obj.user_id,
+            )
+        url = reverse(
+            "admin:billing_customerattribution_change",
+            args=[attribution.pk],
+        )
+        return format_html('<a href="{}">{}</a>', url, attribution.partner_channel)
 
     @admin.display(description="Adjust")
     def adjust_link(self, obj: Account) -> str:

@@ -3,6 +3,7 @@
 from django.urls import path
 
 from apps.billing.partner_portal_views import (
+    PartnerChannelCustomerPlansView,
     PartnerChannelCustomersView,
     PartnerChannelGrantView,
     PartnerChannelInviteActivateView,
@@ -28,6 +29,11 @@ urlpatterns = [
         "channels/<uuid:channel_id>/customers/",
         PartnerChannelCustomersView.as_view(),
         name="partner-channel-customers",
+    ),
+    path(
+        "channels/<uuid:channel_id>/customers/<int:customer_id>/plans/",
+        PartnerChannelCustomerPlansView.as_view(),
+        name="partner-channel-customer-plans",
     ),
     path(
         "channels/<uuid:channel_id>/grants/",

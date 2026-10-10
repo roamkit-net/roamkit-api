@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 
 from rest_framework import serializers
@@ -204,6 +204,7 @@ class PartnerContextCapabilitiesSerializer(serializers.Serializer):
 
     can_grant = serializers.BooleanField()
     can_manage_invite = serializers.BooleanField()
+    can_view_customer_plans = serializers.BooleanField()
 
 
 class PartnerContextItemSerializer(serializers.Serializer):
@@ -212,7 +213,9 @@ class PartnerContextItemSerializer(serializers.Serializer):
     channel_id = serializers.UUIDField()
     kind = serializers.ChoiceField(choices=["individual", "team"])
     label = serializers.CharField()
-    effective_role = serializers.ChoiceField(choices=["owner", "admin", "viewer"])
+    effective_role = serializers.ChoiceField(
+        choices=["owner", "admin", "member", "viewer"]
+    )
     is_active = serializers.BooleanField()
     capabilities = PartnerContextCapabilitiesSerializer()
 
@@ -224,6 +227,52 @@ class PartnerContextListSerializer(serializers.Serializer):
 _QUERY_INT_RE = re.compile(r"^(?:0|[1-9]\d*)$")
 _CUSTOMER_SORTS = frozenset({"attributed_at", "total_partner_earned", "accrual_count"})
 _CUSTOMER_ORDERS = frozenset({"asc", "desc"})
+_CUSTOMER_SORTS_BY_ROLE = {
+    "owner": _CUSTOMER_SORTS,
+    "admin": _CUSTOMER_SORTS,
+    "member": frozenset({"attributed_at", "accrual_count"}),
+    "viewer": frozenset({"attributed_at"}),
+}
+_CUSTOMER_DEFAULT_SORT = {
+    "owner": "total_partner_earned",
+    "admin": "total_partner_earned",
+    "member": "attributed_at",
+    "viewer": "attributed_at",
+}
+_CUSTOMER_FIELDS_BY_ROLE = {
+    "owner": (
+        "customer_id",
+        "email",
+        "display_name",
+        "attributed_at",
+        "credit_balance",
+        "total_partner_earned",
+        "accrual_count",
+    ),
+    "admin": (
+        "customer_id",
+        "email",
+        "display_name",
+        "attributed_at",
+        "credit_balance",
+        "total_partner_earned",
+        "accrual_count",
+    ),
+    "member": (
+        "customer_id",
+        "email",
+        "display_name",
+        "attributed_at",
+        "credit_balance",
+        "accrual_count",
+    ),
+    "viewer": (
+        "customer_id",
+        "email",
+        "display_name",
+        "attributed_at",
+    ),
+}
 
 
 class PartnerCustomersQueryError(Exception):
@@ -246,16 +295,49 @@ def parse_partner_customers_query(params: object) -> PartnerCustomersQuery:
             minimum=1,
             maximum=100,
         ),
-        sort=_query_choice(
-            params.get("sort", "total_partner_earned"),
-            _CUSTOMER_SORTS,
-            "invalid_sort",
-        ),
+        sort=_optional_customer_sort(params.get("sort")),
         order=_query_choice(
             params.get("order", "desc"), _CUSTOMER_ORDERS, "invalid_order"
         ),
         q=_trimmed_query(params.get("q", "")),
     )
+
+
+def prepare_customers_query(
+    query: PartnerCustomersQuery, role: str
+) -> PartnerCustomersQuery:
+    """Apply the role default or reject a sort the role cannot see."""
+    return replace(query, sort=resolve_customers_sort(role, query.sort))
+
+
+def resolve_customers_sort(role: str, requested: str | None) -> str:
+    """Role default when ``sort`` was omitted. Hidden fields stay invalid."""
+    if requested is None:
+        return _CUSTOMER_DEFAULT_SORT[role]
+    if requested not in _CUSTOMER_SORTS_BY_ROLE[role]:
+        raise PartnerCustomersQueryError("invalid_sort")
+    return requested
+
+
+def visible_customer_fields(row, role: str) -> dict:
+    """Customer object for ``role``. Forbidden keys are absent, not null."""
+    full = {
+        "customer_id": row.customer_id,
+        "email": row.email,
+        "display_name": row.display_name,
+        "attributed_at": row.attributed_at,
+        "credit_balance": row.credit_balance,
+        "total_partner_earned": row.total_partner_earned,
+        "accrual_count": row.accrual_count,
+    }
+    return {key: full[key] for key in _CUSTOMER_FIELDS_BY_ROLE[role]}
+
+
+def _optional_customer_sort(raw: object) -> str | None:
+    """``None`` means the client omitted ``sort``. Empty is not omitted."""
+    if raw is None:
+        return None
+    return _query_choice(raw, _CUSTOMER_SORTS, "invalid_sort")
 
 
 def _query_int(
@@ -296,12 +378,60 @@ def _trimmed_query(raw: object) -> str:
 
 
 class PartnerCustomerSerializer(serializers.Serializer):
+    """Role-dependent customer object.
+
+    Owner and admin receive every field. Member omits ``total_partner_earned``.
+    Viewer receives only ``customer_id``, ``email``, ``display_name``, and
+    ``attributed_at``. ``credit_balance`` is the personal Account cache as a
+    6dp string, or JSON null when that Account does not exist. A missing
+    Account is not zero, and the customers read does not create one.
+    """
+
     customer_id = serializers.IntegerField(min_value=1, max_value=_BIGINT_MAX)
     email = serializers.CharField()
     display_name = serializers.CharField(allow_blank=True)
     attributed_at = serializers.DateTimeField()
-    total_partner_earned = serializers.DecimalField(max_digits=20, decimal_places=6)
-    accrual_count = serializers.IntegerField(min_value=0)
+    credit_balance = serializers.DecimalField(
+        max_digits=20,
+        decimal_places=6,
+        allow_null=True,
+        required=False,
+    )
+    total_partner_earned = serializers.DecimalField(
+        max_digits=20,
+        decimal_places=6,
+        required=False,
+    )
+    accrual_count = serializers.IntegerField(min_value=0, required=False)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if isinstance(instance, dict):
+            return {key: value for key, value in data.items() if key in instance}
+        return data
+
+
+class PartnerCustomerPlanSerializer(serializers.Serializer):
+    """One local eSIM snapshot. Empty snapshot strings stay empty strings."""
+
+    location_title = serializers.CharField(allow_blank=True)
+    package_title = serializers.CharField(allow_blank=True)
+    data_allowance = serializers.CharField(allow_blank=True)
+    validity_days = serializers.IntegerField(allow_null=True)
+    status = serializers.CharField()
+    usage_remaining_mb = serializers.IntegerField(allow_null=True)
+    usage_total_mb = serializers.IntegerField(allow_null=True)
+    usage_is_unlimited = serializers.BooleanField(allow_null=True)
+    usage_expired_at = serializers.DateTimeField(allow_null=True)
+    usage_synced_at = serializers.DateTimeField(allow_null=True)
+    created_at = serializers.DateTimeField()
+
+
+class PartnerCustomerPlansSerializer(serializers.Serializer):
+    """Active and expired plans only. No count, ids, or archived metadata."""
+
+    active = PartnerCustomerPlanSerializer(many=True)
+    expired = PartnerCustomerPlanSerializer(many=True)
 
 
 class PartnerCustomersPageSerializer(serializers.Serializer):
