@@ -816,6 +816,38 @@ def test_existing_blank_token_cannot_be_saved_until_replaced() -> None:
 
 
 @pytest.mark.django_db
+def test_admin_partner_channel_add_page_opens() -> None:
+    owner = _user("admin-channel-add@example.com")
+    org = create_organization(name="North fleet", actor=owner)
+    client = _staff_client("staff-channel-add@example.com")
+
+    opened = client.get("/admin/billing/partnerchannel/add/")
+    assert opened.status_code == 200
+    assert b"Settlement account" not in opened.content
+
+    created = client.post(
+        "/admin/billing/partnerchannel/add/",
+        {
+            "kind": "team",
+            "owner_user": "",
+            "organization": str(org.pk),
+            "is_active": "on",
+            "revenue_share_percent": "40.00",
+        },
+    )
+    assert created.status_code == 302
+    channel = PartnerChannel.objects.get(organization=org)
+    assert channel.kind == PartnerChannel.Kind.TEAM
+    assert channel.owner_user_id is None
+    assert channel.revenue_share_percent == Decimal("40.00")
+    assert channel.is_active is True
+
+    changed = client.get(f"/admin/billing/partnerchannel/{channel.pk}/change/")
+    assert changed.status_code == 200
+    assert b"Settlement account" in changed.content
+
+
+@pytest.mark.django_db
 def test_admin_add_mints_a_token_for_a_second_active_link() -> None:
     owner = _user("admin-invite@example.com")
     channel = _channel(owner)
