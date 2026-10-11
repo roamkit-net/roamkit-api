@@ -73,7 +73,7 @@ def test_forbidden_reverse_transition(esim):
         lifecycle_service.transition(esim, Esim.Status.PURCHASED)
 
 
-def test_unknown_provider_does_not_downgrade(esim):
+def test_unknown_provider_sets_unknown(esim):
     lifecycle_service.transition(esim, Esim.Status.INSTALLED)
     lifecycle_service.transition(esim, Esim.Status.ACTIVATED)
     usage = UsageDTO(
@@ -89,10 +89,10 @@ def test_unknown_provider_does_not_downgrade(esim):
     )
     lifecycle_service.apply_provider_usage(esim, usage)
     esim.refresh_from_db()
-    assert esim.status == Esim.Status.ACTIVATED
+    assert esim.status == Esim.Status.UNKNOWN
 
 
-def test_provider_active_advances_to_activated(esim):
+def test_provider_active_sets_in_use_without_consumption(esim):
     usage = UsageDTO(
         remaining_mb=1024,
         total_mb=1024,
@@ -106,7 +106,7 @@ def test_provider_active_advances_to_activated(esim):
     )
     lifecycle_service.apply_provider_usage(esim, usage)
     esim.refresh_from_db()
-    assert esim.status == Esim.Status.ACTIVATED
+    assert esim.status == Esim.Status.IN_USE
 
 
 def test_client_event_idempotent(esim):
@@ -191,13 +191,13 @@ def _advance_to(esim: Esim, target: str) -> None:
     raise AssertionError(f"unsupported fixture target {target}")
 
 
-def test_expired_active_zero_consumption_reactivates_to_activated(esim):
+def test_expired_active_zero_consumption_sets_in_use(esim):
     _advance_to(esim, Esim.Status.EXPIRED)
     lifecycle_service.apply_provider_usage(
         esim, _usage(status="ACTIVE", remaining_mb=2048, total_mb=2048)
     )
     esim.refresh_from_db()
-    assert esim.status == Esim.Status.ACTIVATED
+    assert esim.status == Esim.Status.IN_USE
 
 
 def test_expired_active_with_consumption_reactivates_to_in_use(esim):
@@ -209,13 +209,13 @@ def test_expired_active_with_consumption_reactivates_to_in_use(esim):
     assert esim.status == Esim.Status.IN_USE
 
 
-def test_exhausted_active_zero_consumption_reactivates_to_activated(esim):
+def test_exhausted_active_zero_consumption_sets_in_use(esim):
     _advance_to(esim, Esim.Status.EXHAUSTED)
     lifecycle_service.apply_provider_usage(
         esim, _usage(status="ACTIVE", remaining_mb=1024, total_mb=1024)
     )
     esim.refresh_from_db()
-    assert esim.status == Esim.Status.ACTIVATED
+    assert esim.status == Esim.Status.IN_USE
 
 
 def test_exhausted_active_with_consumption_reactivates_to_in_use(esim):
@@ -248,11 +248,11 @@ def test_provider_expired_does_not_reactivate(esim):
     assert esim.status == Esim.Status.EXPIRED
 
 
-def test_provider_finished_does_not_reactivate_expired(esim):
+def test_provider_finished_sets_exhausted_from_expired(esim):
     _advance_to(esim, Esim.Status.EXPIRED)
     lifecycle_service.apply_provider_usage(esim, _usage(status="FINISHED"))
     esim.refresh_from_db()
-    assert esim.status == Esim.Status.EXPIRED
+    assert esim.status == Esim.Status.EXHAUSTED
 
 
 def test_provider_finished_does_not_reactivate_exhausted(esim):
@@ -286,3 +286,24 @@ def test_repeated_active_sync_is_idempotent(esim):
         esim=esim, event_type="system.status.in_use"
     ).count()
     assert after == before
+
+
+def test_not_active_resets_in_use_to_purchased(esim):
+    lifecycle_service.apply_provider_usage(esim, _usage(status="ACTIVE"))
+    lifecycle_service.apply_provider_usage(esim, _usage(status="not_active"))
+    esim.refresh_from_db()
+    assert esim.status == Esim.Status.PURCHASED
+
+
+def test_blank_usage_status_resets_in_use_to_purchased(esim):
+    lifecycle_service.apply_provider_usage(esim, _usage(status="ACTIVE"))
+    lifecycle_service.apply_provider_usage(esim, _usage(status=""))
+    esim.refresh_from_db()
+    assert esim.status == Esim.Status.PURCHASED
+
+
+def test_unlisted_provider_status_does_not_change_esim_status(esim):
+    lifecycle_service.transition(esim, Esim.Status.INSTALLED)
+    lifecycle_service.apply_provider_usage(esim, _usage(status="WEIRD_NEW_STATUS"))
+    esim.refresh_from_db()
+    assert esim.status == Esim.Status.INSTALLED

@@ -584,6 +584,16 @@ def test_airalo_topup_provider_maps_submit_topup() -> None:
     assert result.customer_ref == "Topup (891000000000009125)"
 
 
+def test_airalo_usage_blank_status_stays_blank() -> None:
+    assert AiraloTopupProvider._map_usage({"status": None}).status == ""
+    assert AiraloTopupProvider._map_usage({"status": "  "}).status == ""
+    assert AiraloTopupProvider._map_usage({}).status == ""
+
+
+def test_airalo_usage_unknown_status_is_preserved() -> None:
+    assert AiraloTopupProvider._map_usage({"status": "UNKNOWN"}).status == "UNKNOWN"
+
+
 def test_airalo_topup_provider_maps_usage() -> None:
     client = _FakeTopupClient()
     provider = AiraloTopupProvider(client=client)

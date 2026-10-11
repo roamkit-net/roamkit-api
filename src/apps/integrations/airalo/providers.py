@@ -551,6 +551,13 @@ class AiraloOrderProvider:
         )
 
 
+def _usage_status(raw: Any) -> str:
+    """Keep a missing Airalo usage status blank. Do not coerce it to UNKNOWN."""
+    if raw is None:
+        return ""
+    return str(raw).strip()
+
+
 class AiraloTopupProvider:
     """Lists top-ups, submits top-up orders, and fetches usage via Airalo."""
 
@@ -630,7 +637,7 @@ class AiraloTopupProvider:
                 else None
             ),
             is_unlimited=bool(is_unlimited) if is_unlimited is not None else None,
-            status=str(payload.get("status") or "UNKNOWN"),
+            status=_usage_status(payload.get("status")),
             remaining_voice=int(payload.get("remaining_voice") or 0),
             remaining_text=int(payload.get("remaining_text") or 0),
             total_voice=int(payload.get("total_voice") or 0),
