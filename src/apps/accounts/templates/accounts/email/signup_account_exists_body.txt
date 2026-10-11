@@ -1,0 +1,11 @@
+{% autoescape off %}Hi,
+
+An account with this email address already exists. Sign in, or reset your password if you do not remember it.
+
+Sign in: {{ login_link }}
+Forgot password: {{ reset_link }}
+
+If you did not try to create an account, you can ignore this email.
+
+— RoamKit
+{% endautoescape %}
