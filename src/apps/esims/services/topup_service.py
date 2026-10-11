@@ -16,8 +16,8 @@ from apps.billing.services.partner_margin import (
     build_source_id,
     partner_margin_service,
 )
-from apps.esims.exceptions import TopupPackageNotFoundError
-from apps.esims.models import Topup
+from apps.esims.exceptions import EsimOwnershipChanged, TopupPackageNotFoundError
+from apps.esims.models import Esim, Topup
 from apps.orders.exceptions import (
     IdempotencyKeyRequiredError,
     ProviderFulfillmentError,
@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from decimal import Decimal
 
     from apps.billing.models import Account, CreditLedgerEntry
-    from apps.esims.models import Esim
     from shared.providers.esim import TopupPackage, TopupProvider, TopupResult
 
 logger = logging.getLogger(__name__)
@@ -68,14 +67,21 @@ class TopupService:
         ``account`` is the resolved spend Account (personal or team). When
         omitted, defaults to ``esim.account`` (inventory owner SoT). Never
         derives spend from ``esim.user``.
+
+        Ownership is checked again under ``Esim``'s row lock inside
+        ``_reserve_and_debit``, before a new Topup or debit. An existing
+        idempotency key still replays without that rejection.
         """
         if not idempotency_key:
             raise IdempotencyKeyRequiredError("idempotency_key is required")
 
         if account is None:
             account = esim.account
-        elif account.pk != esim.account_id:
-            raise ValueError("Resolved Account does not own this eSIM")
+        elif (
+            account.pk != esim.account_id
+            and not Topup.objects.filter(idempotency_key=idempotency_key).exists()
+        ):
+            raise EsimOwnershipChanged("Resolved Account does not own this eSIM")
 
         package = self._resolve_package(esim, package_id)
 
@@ -145,6 +151,10 @@ class TopupService:
                 if existing.status == Topup.Status.FULFILLING:
                     raise SpendInProgressError("Top-up request is still in progress")
                 return existing, None, True
+
+            locked_esim = Esim.objects.select_for_update().get(pk=esim.pk)
+            if locked_esim.account_id != account.pk:
+                raise EsimOwnershipChanged("Resolved Account does not own this eSIM")
 
             _charge, pricing_kwargs = resolve_topup_charge(
                 account=account, package=package

@@ -1,0 +1,26 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<h1>Transfer eSIM inventory</h1>
+<p>eSIM <strong>{{ esim.pk }}</strong>, ICCID <strong>{{ esim.iccid }}</strong>.</p>
+<p>
+  Current owner: <strong>{{ esim.user.email }}</strong>,
+  account <strong>{{ esim.account_id }}</strong>
+  ({{ esim.account.kind }}).
+</p>
+<p>
+  The destination is the selected user's personal account.
+  That account becomes <code>Esim.account</code>, which is what
+  <code>/me/esims</code> lists.
+</p>
+<ul>
+  <li>Existing orders, top-ups, and ledger entries stay on the current account. They are not moved.</li>
+  <li>New top-ups debit the destination personal account.</li>
+  <li>An auto top-up policy on this eSIM is disabled. It does not spend the new balance until that user turns it on again.</li>
+</ul>
+<form method="post">
+  {% csrf_token %}
+  {{ form.as_p }}
+  <input type="submit" value="Transfer inventory" class="default">
+  <a href="{% url 'admin:esims_esim_change' esim.pk %}">Cancel</a>
+</form>
+{% endblock %}
