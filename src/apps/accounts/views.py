@@ -498,7 +498,6 @@ class SignupView(APIView):
     throttle_classes = [AuthSignupRateThrottle]
 
     def post(self, request: Request) -> Response:
-        enforce_human_verification(request, endpoint="auth_signup")
         serializer = SignupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -536,7 +535,6 @@ class SignupConfirmView(APIView):
     throttle_classes = [AuthSignupConfirmRateThrottle]
 
     def post(self, request: Request) -> Response:
-        enforce_human_verification(request, endpoint="auth_signup_confirm")
         serializer = SignupConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
@@ -580,7 +578,6 @@ class SignupResendView(APIView):
     throttle_classes = [AuthSignupResendRateThrottle]
 
     def post(self, request: Request) -> Response:
-        enforce_human_verification(request, endpoint="auth_signup_resend")
         serializer = SignupResendSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()
