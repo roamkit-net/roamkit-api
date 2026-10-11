@@ -13,7 +13,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.billing.exceptions import InsufficientFundsError
-from apps.esims.exceptions import TopupPackageNotFoundError
+from apps.billing.models import Account
+from apps.esims.exceptions import EsimOwnershipChanged, TopupPackageNotFoundError
 from apps.esims.models import Esim, EsimAutoTopupPolicy, Topup
 from apps.esims.services.topup_service import TopupService
 from apps.esims.services.usage_service import UsageService
@@ -115,13 +116,16 @@ class AutoTopupService:
         if isinstance(prepared, str):
             return prepared
 
-        esim, package_id, idempotency_key, reason = prepared
+        esim, package_id, idempotency_key, reason, spend_account = prepared
         try:
             topup = self._topups.purchase(
                 esim,
                 package_id=package_id,
                 idempotency_key=idempotency_key,
+                account=spend_account,
             )
+        except EsimOwnershipChanged:
+            return "skipped"
         except InsufficientFundsError as exc:
             return self._pause_funds(policy_id, exc)
         except TopupPackageNotFoundError:
@@ -139,11 +143,12 @@ class AutoTopupService:
 
         return self._on_success(policy_id, topup, idempotency_key, fire_reason=reason)
 
-    def _prepare(self, policy_id) -> tuple[Esim, str, str, str] | str:
+    def _prepare(self, policy_id) -> tuple[Esim, str, str, str, Account] | str:
         """Lock policy, refresh usage, decide whether to buy.
 
-        Returns ``(esim, package_id, idempotency_key, fire_reason)`` or an outcome
-        string.
+        Returns ``(esim, package_id, idempotency_key, fire_reason, account)``
+        or an outcome string. ``account`` is the policy account captured under
+        the policy lock, and is the only account a following purchase may charge.
         """
         with transaction.atomic():
             try:
@@ -172,8 +177,8 @@ class AutoTopupService:
 
         with transaction.atomic():
             policy = (
-                EsimAutoTopupPolicy.objects.select_for_update()
-                .select_related("esim")
+                EsimAutoTopupPolicy.objects.select_for_update(of=("self",))
+                .select_related("account", "esim")
                 .get(pk=policy_id)
             )
             if not policy.enabled or policy.status != EsimAutoTopupPolicy.Status.ACTIVE:
@@ -207,6 +212,7 @@ class AutoTopupService:
                 policy.package_id,
                 self._idempotency_key(policy, esim, reason=reason),
                 reason,
+                policy.account,
             )
 
     def _ensure_fresh_usage(self, esim: Esim) -> bool:

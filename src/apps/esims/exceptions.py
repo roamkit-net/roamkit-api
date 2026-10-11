@@ -9,6 +9,22 @@ class TopupPackageNotFoundError(TopupError):
     """Raised when the requested top-up package is not listed for the eSIM."""
 
 
+class EsimOwnershipChanged(TopupError):
+    """Spend account does not own the eSIM under the inventory row lock."""
+
+
+class EsimTransferError(Exception):
+    """Base error for an explicit eSIM inventory transfer."""
+
+
+class EsimTransferDestinationError(EsimTransferError):
+    """Destination is missing or is not that user's personal account."""
+
+
+class EsimTransferInProgressError(EsimTransferError):
+    """A top-up is still fulfilling, so inventory must not move."""
+
+
 class LifecycleError(Exception):
     """Base error for eSIM lifecycle operations."""
 
