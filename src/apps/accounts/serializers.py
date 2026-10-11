@@ -13,6 +13,13 @@ from apps.accounts.services.registration import (
     activate_user,
     register_user,
 )
+from apps.accounts.services.signup import (
+    SignupCodeError,
+    confirm_signup,
+    password_rule_errors,
+    resend_signup_code,
+    start_signup,
+)
 
 User = get_user_model()
 
@@ -86,6 +93,64 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         except PasswordResetError as exc:
             field = exc.field or "non_field_errors"
             raise serializers.ValidationError({field: exc.message}) from exc
+
+
+class SignupSerializer(serializers.Serializer):
+    first_name = serializers.CharField(max_length=100, trim_whitespace=True)
+    last_name = serializers.CharField(
+        max_length=100,
+        trim_whitespace=True,
+        allow_blank=True,
+        required=False,
+        default="",
+    )
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, max_length=128)
+
+    def validate_first_name(self, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise serializers.ValidationError("This field may not be blank.")
+        return cleaned
+
+    def validate_password(self, value: str) -> str:
+        errors = password_rule_errors(value)
+        if errors:
+            raise serializers.ValidationError(errors)
+        return value
+
+    def create(self, validated_data: dict) -> dict:
+        start_signup(
+            email=validated_data["email"],
+            password=validated_data["password"],
+            first_name=validated_data["first_name"],
+            last_name=validated_data.get("last_name") or "",
+        )
+        return validated_data
+
+
+class SignupConfirmSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    code = serializers.RegexField(r"^\d{4}$")
+
+    def create(self, validated_data: dict) -> User:
+        try:
+            return confirm_signup(
+                email=validated_data["email"],
+                code=validated_data["code"],
+            )
+        except SignupCodeError as exc:
+            raise serializers.ValidationError(
+                {"non_field_errors": exc.message}
+            ) from exc
+
+
+class SignupResendSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def create(self, validated_data: dict) -> dict:
+        resend_signup_code(email=validated_data["email"])
+        return validated_data
 
 
 class UserSerializer(serializers.ModelSerializer):

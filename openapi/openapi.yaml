@@ -617,6 +617,85 @@ paths:
       summary: Start registration
       tags:
       - Authentication
+  /api/v1/auth/signup/:
+    post:
+      description: Collect a name, email, and password, then mail a 4-digit code. The response stays generic
+        when the email is already active.
+      operationId: auth_signup
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailMessage'
+          description: Generic signup acknowledgment
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Validation error
+      summary: Start mobile signup
+      tags:
+      - Authentication
+  /api/v1/auth/signup/confirm/:
+    post:
+      description: Activate the account when the 4-digit code matches.
+      operationId: auth_signup_confirm
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupConfirmRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenResponse'
+          description: JWT token pair
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Invalid code or validation error
+      summary: Confirm mobile signup
+      tags:
+      - Authentication
+  /api/v1/auth/signup/resend/:
+    post:
+      description: Mail a new 4-digit code when a mobile signup is still pending. The response stays generic.
+      operationId: auth_signup_resend
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupResendRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailMessage'
+          description: Generic resend acknowledgment
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+          description: Validation error
+      summary: Resend mobile signup code
+      tags:
+      - Authentication
   /api/v1/auth/token/:
     post:
       description: Exchange email and password for access and refresh JWT tokens.
@@ -7038,6 +7117,53 @@ components:
       - warning
       - error
       type: string
+    SignupConfirmRequest:
+      properties:
+        code:
+          minLength: 1
+          pattern: ^\d{4}$
+          type: string
+        email:
+          format: email
+          minLength: 1
+          type: string
+      required:
+      - code
+      - email
+      type: object
+    SignupRequest:
+      properties:
+        email:
+          format: email
+          minLength: 1
+          type: string
+        first_name:
+          maxLength: 100
+          minLength: 1
+          type: string
+        last_name:
+          default: ''
+          maxLength: 100
+          type: string
+        password:
+          maxLength: 128
+          minLength: 1
+          type: string
+          writeOnly: true
+      required:
+      - email
+      - first_name
+      - password
+      type: object
+    SignupResendRequest:
+      properties:
+        email:
+          format: email
+          minLength: 1
+          type: string
+      required:
+      - email
+      type: object
     SourceEnum:
       description: '* `client` - Client
 

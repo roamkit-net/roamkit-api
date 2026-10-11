@@ -20,6 +20,9 @@ AUTO_SUFFIX_RE = re.compile(r"_\d+$")
 PUBLIC_OPERATION_IDS = frozenset(
     {
         "auth_register",
+        "auth_signup",
+        "auth_signup_confirm",
+        "auth_signup_resend",
         "auth_activate",
         "auth_password_reset_request",
         "auth_password_reset_confirm",
