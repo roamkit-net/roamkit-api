@@ -11,10 +11,16 @@ from apps.accounts.views import (
     PasswordResetConfirmView,
     PasswordResetRequestView,
     RegisterView,
+    SignupConfirmView,
+    SignupResendView,
+    SignupView,
 )
 
 urlpatterns = [
     path("register/", RegisterView.as_view(), name="auth-register"),
+    path("signup/", SignupView.as_view(), name="auth-signup"),
+    path("signup/confirm/", SignupConfirmView.as_view(), name="auth-signup-confirm"),
+    path("signup/resend/", SignupResendView.as_view(), name="auth-signup-resend"),
     path("activate/", ActivateView.as_view(), name="auth-activate"),
     path(
         "password-reset/",
