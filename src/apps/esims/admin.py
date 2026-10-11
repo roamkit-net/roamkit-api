@@ -1,5 +1,7 @@
 """Admin registration for esims."""
 
+import logging
+
 from django import forms
 from django.contrib import admin, messages
 from django.core.exceptions import PermissionDenied
@@ -7,15 +9,20 @@ from django.db.models import F
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, render
 from django.urls import path, reverse
+from django.utils.decorators import method_decorator
 from django.utils.html import format_html
+from django.views.decorators.http import require_POST
 
 from apps.accounts.models import User
 from apps.billing.models import AccountKind
 from apps.esims.exceptions import EsimTransferError
 from apps.esims.models import Esim, EsimAutoTopupPolicy, EsimLifecycleEvent, Topup
 from apps.esims.services.inventory_transfer import transfer_esim_inventory
+from apps.esims.services.usage_service import UsageService
+from shared.providers.factory import get_topup_provider
 
 _OWNERSHIP_FIELDS = ("account", "user", "assigned_user", "order")
+logger = logging.getLogger(__name__)
 
 
 def personal_destination_users():
@@ -93,6 +100,11 @@ class EsimAdmin(admin.ModelAdmin):
         urls = super().get_urls()
         custom = [
             path(
+                "<path:object_id>/refresh-usage/",
+                self.admin_site.admin_view(self.refresh_usage_view),
+                name="esims_esim_refresh_usage",
+            ),
+            path(
                 "<path:object_id>/transfer/",
                 self.admin_site.admin_view(self.transfer_view),
                 name="esims_esim_transfer",
@@ -106,6 +118,10 @@ class EsimAdmin(admin.ModelAdmin):
             "admin:esims_esim_transfer",
             args=[object_id],
         )
+        extra_context["refresh_usage_url"] = reverse(
+            "admin:esims_esim_refresh_usage",
+            args=[object_id],
+        )
         return super().change_view(
             request,
             object_id,
@@ -117,6 +133,32 @@ class EsimAdmin(admin.ModelAdmin):
     def transfer_link(self, obj: Esim) -> str:
         url = reverse("admin:esims_esim_transfer", args=[obj.pk])
         return format_html('<a href="{}">Transfer…</a>', url)
+
+    @method_decorator(require_POST)
+    def refresh_usage_view(self, request: HttpRequest, object_id) -> HttpResponse:
+        """Fetch one live Airalo usage snapshot from an explicit admin POST."""
+        if not request.user.has_perm("esims.change_esim"):
+            raise PermissionDenied
+        esim = get_object_or_404(Esim, pk=object_id)
+        try:
+            usage = UsageService(get_topup_provider()).get_usage(esim)
+        except Exception:
+            logger.exception(
+                "Admin Airalo usage refresh failed for esim_id=%s", esim.pk
+            )
+            messages.error(
+                request,
+                "Airalo usage refresh failed. Existing usage data was kept.",
+            )
+        else:
+            message = (
+                f"Refreshed Airalo usage: provider status "
+                f"{usage.status or '(empty)'}, local status {esim.status}, "
+                f"remaining {usage.remaining_mb}/{usage.total_mb} MB."
+            )
+            self.log_change(request, esim, message)
+            messages.success(request, message)
+        return HttpResponseRedirect(reverse("admin:esims_esim_change", args=[esim.pk]))
 
     def transfer_view(self, request: HttpRequest, object_id) -> HttpResponse:
         if not request.user.has_perm("esims.change_esim"):
