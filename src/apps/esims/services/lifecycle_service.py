@@ -96,17 +96,15 @@ _ALLOWED: dict[str, frozenset[str]] = {
     ),
 }
 
-# Ordered paths used when provider jumps ahead of client-attested install.
-_PATHS: dict[str, tuple[str, ...]] = {
-    Esim.Status.INSTALLED: (Esim.Status.INSTALLED,),
-    Esim.Status.ACTIVATED: (Esim.Status.INSTALLED, Esim.Status.ACTIVATED),
-    Esim.Status.IN_USE: (
-        Esim.Status.INSTALLED,
-        Esim.Status.ACTIVATED,
-        Esim.Status.IN_USE,
-    ),
-    Esim.Status.EXHAUSTED: (Esim.Status.EXHAUSTED,),
-    Esim.Status.EXPIRED: (Esim.Status.EXPIRED,),
+# Current Airalo usage payload → Esim.status. Blank/null is "" after normalize.
+# Unlisted strings do not change Esim.status. This is an overwrite, not _ALLOWED.
+_PROVIDER_USAGE_STATUS: dict[str, str] = {
+    "ACTIVE": Esim.Status.IN_USE,
+    "FINISHED": Esim.Status.EXHAUSTED,
+    "EXPIRED": Esim.Status.EXPIRED,
+    "NOT_ACTIVE": Esim.Status.PURCHASED,
+    "UNKNOWN": Esim.Status.UNKNOWN,
+    "": Esim.Status.PURCHASED,
 }
 
 
@@ -189,46 +187,31 @@ class LifecycleService:
         return esim
 
     def apply_provider_usage(self, esim: Esim, usage: UsageDTO) -> Esim:
-        """Advance lifecycle from provider usage without downgrading on UNKNOWN."""
+        """Overwrite lifecycle from the current provider usage payload.
+
+        Mapped statuses replace ``Esim.status`` even when that moves backwards.
+        Unlisted provider strings leave the local status unchanged.
+        """
         provider_status = (usage.status or "").strip().upper()
+        if provider_status not in _PROVIDER_USAGE_STATUS:
+            return esim
+
+        target = _PROVIDER_USAGE_STATUS[provider_status]
+        previous = esim.status
+        if previous == target:
+            return esim
+
+        reason = f"provider:{provider_status or 'EMPTY'}"
+        self._overwrite_provider_status(esim, target, reason=reason)
         if provider_status == "UNKNOWN":
             self._record_provider_event(
                 esim,
                 event_type="provider.usage_unknown",
                 idempotency_key=(
-                    f"provider.usage_unknown:{esim.pk}:"
-                    f"{esim.usage_synced_at or 'none'}"
+                    f"provider.usage_unknown:{esim.pk}:{esim.updated_at.isoformat()}"
                 ),
                 payload={"provider_status": provider_status},
             )
-            return esim
-
-        target: str | None = None
-        if provider_status == "EXPIRED":
-            target = Esim.Status.EXPIRED
-        elif provider_status == "FINISHED":
-            target = Esim.Status.EXHAUSTED
-        elif provider_status == "ACTIVE":
-            target = (
-                Esim.Status.IN_USE
-                if self._has_consumption(usage)
-                else Esim.Status.ACTIVATED
-            )
-
-        if target is None:
-            return esim
-
-        previous = esim.status
-        try:
-            self._advance_toward(esim, target, reason=f"provider:{provider_status}")
-        except InvalidLifecycleTransitionError:
-            logger.info(
-                "esim_lifecycle skip_transition esim_id=%s current=%s target=%s",
-                esim.pk,
-                esim.status,
-                target,
-            )
-            return esim
 
         esim.refresh_from_db(fields=["status", "updated_at", "created_at"])
         if (
@@ -365,33 +348,21 @@ class LifecycleService:
             update_fields.append("updated_at")
             esim.save(update_fields=update_fields)
 
-    def _advance_toward(self, esim: Esim, target: str, *, reason: str) -> None:
-        if esim.status == target:
-            return
-
-        if target in _ALLOWED.get(esim.status, frozenset()):
-            self.transition(esim, target, reason=reason)
-            return
-
-        for step in _PATHS.get(target, (target,)):
-            if esim.status == step:
-                continue
-            if step in _ALLOWED.get(esim.status, frozenset()):
-                self.transition(esim, step, reason=reason)
-
-        if esim.status != target:
-            if target in _ALLOWED.get(esim.status, frozenset()):
-                self.transition(esim, target, reason=reason)
-            else:
-                raise InvalidLifecycleTransitionError(esim.status, target)
-
-    @staticmethod
-    def _has_consumption(usage: UsageDTO) -> bool:
-        if usage.is_unlimited:
-            return False
-        if usage.total_mb <= 0:
-            return False
-        return usage.remaining_mb < usage.total_mb
+    def _overwrite_provider_status(
+        self, esim: Esim, target: str, *, reason: str
+    ) -> None:
+        """Set provider-driven status without the install-funnel allow-list."""
+        current = esim.status
+        esim.status = target
+        esim.save(update_fields=["status", "updated_at"])
+        self._record_system_event(
+            esim,
+            event_type=f"system.status.{target}",
+            idempotency_key=(
+                f"system.status.{target}:{esim.pk}:{esim.updated_at.isoformat()}"
+            ),
+            payload={"from": current, "to": target, "reason": reason},
+        )
 
     def _record_system_event(
         self,
