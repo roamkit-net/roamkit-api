@@ -32,6 +32,9 @@ from apps.accounts.serializers import (
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     RegisterSerializer,
+    SignupConfirmSerializer,
+    SignupResendSerializer,
+    SignupSerializer,
     UserSerializer,
 )
 from apps.accounts.services.human_verification.enforce import enforce_human_verification
@@ -40,12 +43,16 @@ from apps.accounts.services.registration import (
     GENERIC_REGISTER_MESSAGE,
     RegistrationResult,
 )
+from apps.accounts.services.signup import GENERIC_SIGNUP_MESSAGE
 from apps.accounts.throttles import (
     AuthActivateRateThrottle,
     AuthGoogleRateThrottle,
     AuthPasswordResetConfirmRateThrottle,
     AuthPasswordResetRateThrottle,
     AuthRegisterRateThrottle,
+    AuthSignupConfirmRateThrottle,
+    AuthSignupRateThrottle,
+    AuthSignupResendRateThrottle,
     AuthTokenRateThrottle,
 )
 from core.openapi_serializers import DetailMessageSerializer, ErrorDetailSerializer
@@ -457,5 +464,124 @@ class GoogleAuthView(APIView):
         )
         return Response(
             {"access": result.access, "refresh": result.refresh},
+            status=status.HTTP_200_OK,
+        )
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Authentication"],
+        operation_id="auth_signup",
+        summary="Start mobile signup",
+        description=(
+            "Collect a name, email, and password, then mail a 4-digit code. "
+            "The response stays generic when the email is already active."
+        ),
+        auth=[],
+        request=SignupSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=DetailMessageSerializer,
+                description="Generic signup acknowledgment",
+            ),
+            400: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Validation error"
+            ),
+        },
+    ),
+)
+class SignupView(APIView):
+    """POST /api/v1/auth/signup/ — pending user plus a mailed code."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [AuthSignupRateThrottle]
+
+    def post(self, request: Request) -> Response:
+        serializer = SignupSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(
+            {"detail": GENERIC_SIGNUP_MESSAGE},
+            status=status.HTTP_200_OK,
+        )
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Authentication"],
+        operation_id="auth_signup_confirm",
+        summary="Confirm mobile signup",
+        description="Activate the account when the 4-digit code matches.",
+        auth=[],
+        request=SignupConfirmSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=AuthTokenResponseSerializer,
+                description="JWT token pair",
+            ),
+            400: OpenApiResponse(
+                response=ErrorDetailSerializer,
+                description="Invalid code or validation error",
+            ),
+        },
+    ),
+)
+class SignupConfirmView(APIView):
+    """POST /api/v1/auth/signup/confirm/ — code check, then JWT."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [AuthSignupConfirmRateThrottle]
+
+    def post(self, request: Request) -> Response:
+        serializer = SignupConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        User.objects.filter(pk=user.pk).update(
+            last_login_provider=User.LastLoginProvider.PASSWORD
+        )
+        refresh = RefreshToken.for_user(user)
+        return Response(
+            {"access": str(refresh.access_token), "refresh": str(refresh)},
+            status=status.HTTP_200_OK,
+        )
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=["Authentication"],
+        operation_id="auth_signup_resend",
+        summary="Resend mobile signup code",
+        description=(
+            "Mail a new 4-digit code when a mobile signup is still pending. "
+            "The response stays generic."
+        ),
+        auth=[],
+        request=SignupResendSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=DetailMessageSerializer,
+                description="Generic resend acknowledgment",
+            ),
+            400: OpenApiResponse(
+                response=ErrorDetailSerializer, description="Validation error"
+            ),
+        },
+    ),
+)
+class SignupResendView(APIView):
+    """POST /api/v1/auth/signup/resend/ — replace the pending code."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [AuthSignupResendRateThrottle]
+
+    def post(self, request: Request) -> Response:
+        serializer = SignupResendSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(
+            {"detail": GENERIC_SIGNUP_MESSAGE},
             status=status.HTTP_200_OK,
         )

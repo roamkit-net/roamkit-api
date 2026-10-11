@@ -51,6 +51,56 @@ def send_activation_email(user: User, link: str | None = None) -> None:
     )
 
 
+def send_signup_account_exists_email(user: User) -> None:
+    """Tell the mailbox owner the address is already registered.
+
+    No reset token. Login and forgot-password stay on the web.
+    """
+    base = settings.FRONTEND_BASE_URL.rstrip("/")
+    context = {
+        "user": user,
+        "login_link": f"{base}/login",
+        "reset_link": f"{base}/forgot-password",
+        "frontend_base_url": settings.FRONTEND_BASE_URL,
+    }
+    subject = render_to_string(
+        "accounts/email/signup_account_exists_subject.txt",
+        context,
+    ).strip()
+    body = render_to_string(
+        "accounts/email/signup_account_exists_body.txt",
+        context,
+    )
+    send_mail(
+        subject,
+        body,
+        settings.DEFAULT_FROM_EMAIL,
+        [user.email],
+        fail_silently=False,
+    )
+
+
+def send_signup_code_email(user: User, code: str) -> None:
+    """Send the 4-digit mobile signup code. The database stores only a hash."""
+    context = {
+        "user": user,
+        "code": code,
+        "frontend_base_url": settings.FRONTEND_BASE_URL,
+    }
+    subject = render_to_string(
+        "accounts/email/signup_code_subject.txt",
+        context,
+    ).strip()
+    body = render_to_string("accounts/email/signup_code_body.txt", context)
+    send_mail(
+        subject,
+        body,
+        settings.DEFAULT_FROM_EMAIL,
+        [user.email],
+        fail_silently=False,
+    )
+
+
 def send_password_reset_email(user: User, link: str | None = None) -> None:
     """Send the forgot-password reset email."""
     uid = uid_for_user(user)
