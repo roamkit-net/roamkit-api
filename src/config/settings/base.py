@@ -171,6 +171,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "esims.evaluate_auto_topups",
         "schedule": 300.0,
     },
+    "esims-refresh-airalo-usage": {
+        "task": "esims.refresh_airalo_usage",
+        "schedule": 300.0,
+    },
 }
 
 AUTH_TOKEN_RATE = os.environ.get("AUTH_TOKEN_RATE", "10/min")
