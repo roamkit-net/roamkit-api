@@ -169,13 +169,6 @@ class Migration(migrations.Migration):
             copy_operator_and_number_topups,
             remove_initial_credits,
         ),
-        migrations.AddConstraint(
-            model_name="topup",
-            constraint=models.UniqueConstraint(
-                fields=("esim", "sequence"),
-                name="esims_topup_esim_sequence_uniq",
-            ),
-        ),
         migrations.AddField(
             model_name="esimappliedpackage",
             name="esim",
