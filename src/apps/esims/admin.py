@@ -1,6 +1,7 @@
 """Admin registration for esims."""
 
 import logging
+from decimal import Decimal
 
 from django import forms
 from django.contrib import admin, messages
@@ -27,6 +28,31 @@ from apps.esims.services.applied_package_sync import sync_applied_packages
 from apps.esims.services.inventory_transfer import transfer_esim_inventory
 from apps.esims.services.usage_service import UsageService
 from shared.providers.factory import get_topup_provider
+
+
+def _usd(value: Decimal | None) -> str:
+    if value is None:
+        return ""
+    return f"${Decimal(value).quantize(Decimal('0.01'))} USD"
+
+
+def paid_price_usd(topup: Topup | None) -> str:
+    """Customer charge, including a pricing-profile discount."""
+    if topup is None:
+        return ""
+    return _usd(topup.amount)
+
+
+def wholesale_price_usd(topup: Topup | None) -> str:
+    """Wholesale cost. Sequence 0 falls back to the order when the row is blank."""
+    if topup is None:
+        return ""
+    net = topup.net_price_usd
+    if net is None and topup.sequence == 0:
+        order = topup.esim.order
+        net = order.net_price_usd if order is not None else None
+    return _usd(net)
+
 
 _OWNERSHIP_FIELDS = ("account", "user", "assigned_user", "order")
 logger = logging.getLogger(__name__)
@@ -72,12 +98,25 @@ class EsimAppliedPackageInline(admin.TabularInline):
         "activated_at",
         "expired_at",
         "provider_price_usd",
+        "paid_price",
+        "wholesale_price",
     )
     readonly_fields = fields
     ordering = ("sequence",)
 
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("topup", "esim__order")
+
     def has_add_permission(self, request, obj=None) -> bool:
         return False
+
+    @admin.display(description="Paid")
+    def paid_price(self, obj: EsimAppliedPackage) -> str:
+        return paid_price_usd(obj.topup)
+
+    @admin.display(description="Wholesale")
+    def wholesale_price(self, obj: EsimAppliedPackage) -> str:
+        return wholesale_price_usd(obj.topup)
 
 
 @admin.register(Esim)
@@ -367,13 +406,19 @@ class TopupAdmin(admin.ModelAdmin):
         "airalo_activated_at",
         "airalo_expires_at",
         "airalo_amount",
+        "paid_price",
+        "wholesale_price",
         "created_at",
         "updated_at",
     )
     raw_id_fields = ("account", "esim")
 
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related("applied_package")
+        return (
+            super()
+            .get_queryset(request)
+            .select_related("applied_package", "esim__order")
+        )
 
     def get_fields(self, request, obj=None):
         fields = list(super().get_fields(request, obj))
@@ -382,6 +427,8 @@ class TopupAdmin(admin.ModelAdmin):
             "airalo_activated_at",
             "airalo_expires_at",
             "airalo_amount",
+            "paid_price",
+            "wholesale_price",
         ):
             if name not in fields:
                 fields.append(name)
@@ -415,7 +462,15 @@ class TopupAdmin(admin.ModelAdmin):
         snap = self._snapshot(obj)
         if snap is None or snap.provider_price_usd is None:
             return ""
-        return f"${snap.provider_price_usd} USD"
+        return _usd(snap.provider_price_usd)
+
+    @admin.display(description="Paid")
+    def paid_price(self, obj: Topup) -> str:
+        return paid_price_usd(obj)
+
+    @admin.display(description="Wholesale")
+    def wholesale_price(self, obj: Topup) -> str:
+        return wholesale_price_usd(obj)
 
 
 @admin.register(EsimAutoTopupPolicy)

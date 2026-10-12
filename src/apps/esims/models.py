@@ -388,6 +388,7 @@ class EsimAppliedPackage(models.Model):
         decimal_places=2,
         null=True,
         blank=True,
+        verbose_name="Retail price",
         help_text="Airalo package.price. Not the customer charge and not net_price.",
     )
     synced_at = models.DateTimeField()

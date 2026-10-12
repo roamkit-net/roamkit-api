@@ -33,7 +33,14 @@ def _package(*, external_id: str, operator: str, price: str) -> Package:
     )
 
 
-def _order(user: User, package: Package, *, operator: str, retail: str) -> Order:
+def _order(
+    user: User,
+    package: Package,
+    *,
+    operator: str,
+    retail: str,
+    net: str | None = None,
+) -> Order:
     return Order.objects.create(
         account=user.billing_account,
         package=package,
@@ -41,6 +48,7 @@ def _order(user: User, package: Package, *, operator: str, retail: str) -> Order
         operator_title=operator,
         package_title=package.title,
         retail_price_usd=Decimal(retail),
+        net_price_usd=Decimal(net) if net is not None else None,
         package_external_id="",
     )
 
@@ -53,7 +61,7 @@ def test_create_purchased_copies_operator_and_initial_credit_without_debit() -> 
         operator="Discover",
         price="1.00",
     )
-    order = _order(user, package, operator="Discover", retail="1.00")
+    order = _order(user, package, operator="Discover", retail="1.00", net="0.70")
 
     esim = lifecycle_service.create_purchased(
         user=user,
@@ -68,6 +76,7 @@ def test_create_purchased_copies_operator_and_initial_credit_without_debit() -> 
     assert initial.amount == Decimal("1.000000")
     assert initial.status == Topup.Status.FULFILLED
     assert initial.idempotency_key == f"initial-credit:{esim.pk}"
+    assert initial.net_price_usd == Decimal("0.700000")
     assert not CreditLedgerEntry.objects.filter(
         reference_type=LedgerReferenceType.TOPUP
     ).exists()
@@ -81,7 +90,7 @@ def test_migration_backfill_numbers_initial_credit_as_zero() -> None:
         operator="Discover",
         price="1.00",
     )
-    order = _order(user, package, operator="Discover", retail="1.00")
+    order = _order(user, package, operator="Discover", retail="1.00", net="0.70")
     esim = Esim.objects.create(
         account=user.billing_account,
         user=user,
@@ -110,6 +119,7 @@ def test_migration_backfill_numbers_initial_credit_as_zero() -> None:
     assert esim.operator_title == "Discover"
     assert initial.package_external_id == "discover-in-3days-300mb"
     assert initial.idempotency_key == f"initial-credit:{esim.pk}"
+    assert initial.net_price_usd == Decimal("0.700000")
     assert later.sequence == 1
     assert later.amount == Decimal("2.340000")
 
@@ -299,3 +309,94 @@ def test_admin_shows_operator_and_topup_package_without_calling_airalo() -> None
     assert b"Not active" in topup_page.content
     assert b"$1.35 USD" in topup_page.content
     assert "200 MB · 30 days" in topup_page.content.decode()
+
+
+@pytest.mark.django_db
+def test_admin_shows_paid_and_wholesale_without_calling_airalo() -> None:
+    staff = User.objects.create_superuser(
+        email="price-admin@example.com",
+        password="SecurePass1!",
+    )
+    owner = User.objects.create_user(email="price-owner@example.com", password="x")
+    package = _package(
+        external_id="discover-in-3days-300mb",
+        operator="Discover",
+        price="1.00",
+    )
+    order = _order(owner, package, operator="Discover", retail="1.00", net="0.70")
+    esim = Esim.objects.create(
+        account=owner.billing_account,
+        user=owner,
+        order=order,
+        iccid="89852350326100300998",
+        operator_title="Discover",
+    )
+    initial = Topup.objects.create(
+        account=owner.billing_account,
+        esim=esim,
+        package_external_id="discover-in-3days-300mb",
+        amount=Decimal("1.00"),
+        status=Topup.Status.FULFILLED,
+        sequence=0,
+        idempotency_key=f"initial-credit:{esim.pk}",
+    )
+    later = Topup.objects.create(
+        account=owner.billing_account,
+        esim=esim,
+        package_external_id="discover-in-30days-200mb-topup",
+        amount=Decimal("2.34"),
+        net_price_usd=Decimal("0.90"),
+        status=Topup.Status.FULFILLED,
+        provider_package_status=Topup.ProviderPackageStatus.NOT_ACTIVE,
+        idempotency_key="discounted-later",
+    )
+    EsimAppliedPackage.objects.create(
+        esim=esim,
+        topup=initial,
+        instance_id="1",
+        sequence=0,
+        package_external_id=initial.package_external_id,
+        kind="esim",
+        status="active",
+        data_allowance="300 MB",
+        validity_days=3,
+        amount_mb=300,
+        remaining_mb=293,
+        provider_price_usd=Decimal("1.00"),
+        synced_at=timezone.now(),
+    )
+    EsimAppliedPackage.objects.create(
+        esim=esim,
+        topup=later,
+        instance_id="2",
+        sequence=later.sequence,
+        package_external_id=later.package_external_id,
+        kind="topup",
+        status="not_active",
+        data_allowance="200 MB",
+        validity_days=30,
+        amount_mb=200,
+        remaining_mb=200,
+        provider_price_usd=Decimal("1.35"),
+        synced_at=timezone.now(),
+    )
+
+    client = Client()
+    client.force_login(staff)
+    change = client.get(f"/admin/esims/esim/{esim.pk}/change/")
+    assert change.status_code == 200
+    page = change.content.decode()
+    assert "Retail price" in page
+    assert "$1.00 USD" in page
+    assert "$0.70 USD" in page
+    assert "$2.34 USD" in page
+    assert "$0.90 USD" in page
+    assert "1.35" in page
+
+    topup_page = client.get(f"/admin/esims/topup/{later.pk}/change/")
+    assert topup_page.status_code == 200
+    later_page = topup_page.content.decode()
+    assert "$1.35 USD" in later_page
+    assert "$2.34 USD" in later_page
+    assert "$0.90 USD" in later_page
+    assert "$0.70 USD" not in later_page
