@@ -38,6 +38,9 @@ class FakeUsageProvider:
             total_text=0,
         )
 
+    def list_sim_packages(self, iccid: str) -> list:
+        return []
+
 
 @pytest.fixture
 def esim_factory(db):
@@ -105,7 +108,7 @@ def test_periodic_refresh_only_processes_stale_selected_statuses(
     ):
         stats = refresh_airalo_usage()
 
-    assert stats == {"eligible": 3, "refreshed": 3, "failed": 0}
+    assert stats == {"eligible": 3, "refreshed": 3, "failed": 0, "packages_failed": 0}
     assert provider.calls == [purchased.iccid, in_use.iccid, unknown.iccid]
     for refreshed in (purchased, in_use, unknown):
         refreshed.refresh_from_db()
@@ -128,7 +131,12 @@ def test_periodic_refresh_isolates_provider_failures(esim_factory) -> None:
     ):
         stats = refresh_airalo_usage()
 
-    assert stats == {"eligible": 2, "refreshed": 1, "failed": 1}
+    assert stats == {
+        "eligible": 2,
+        "refreshed": 1,
+        "failed": 1,
+        "packages_failed": 0,
+    }
     assert provider.calls == [failing.iccid, succeeding.iccid]
     failing.refresh_from_db()
     succeeding.refresh_from_db()
@@ -146,7 +154,12 @@ def test_periodic_refresh_does_nothing_when_airalo_is_disabled(
     with patch("shared.providers.factory.get_topup_provider") as get_provider:
         stats = refresh_airalo_usage()
 
-    assert stats == {"eligible": 0, "refreshed": 0, "failed": 0}
+    assert stats == {
+        "eligible": 0,
+        "refreshed": 0,
+        "failed": 0,
+        "packages_failed": 0,
+    }
     get_provider.assert_not_called()
 
 

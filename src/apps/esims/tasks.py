@@ -19,10 +19,11 @@ def refresh_airalo_usage() -> dict[str, int]:
     from django.utils import timezone
 
     from apps.esims.models import Esim
+    from apps.esims.services.applied_package_sync import sync_applied_packages
     from apps.esims.services.usage_service import UsageService
     from shared.providers.factory import get_topup_provider
 
-    stats = {"eligible": 0, "refreshed": 0, "failed": 0}
+    stats = {"eligible": 0, "refreshed": 0, "failed": 0, "packages_failed": 0}
     if not settings.AIRALO_ENABLED:
         logger.info("Skipping Airalo usage refresh (AIRALO_ENABLED=false)")
         return stats
@@ -40,7 +41,8 @@ def refresh_airalo_usage() -> dict[str, int]:
         .order_by("pk")
     )
     stats["eligible"] = eligible.count()
-    usage_service = UsageService(get_topup_provider())
+    provider = get_topup_provider()
+    usage_service = UsageService(provider)
     for esim in eligible.iterator():
         try:
             usage_service.get_usage(esim)
@@ -50,8 +52,16 @@ def refresh_airalo_usage() -> dict[str, int]:
                 "Periodic Airalo usage refresh failed for esim_id=%s",
                 esim.pk,
             )
-        else:
-            stats["refreshed"] += 1
+            continue
+        stats["refreshed"] += 1
+        try:
+            sync_applied_packages(esim, provider)
+        except Exception:
+            stats["packages_failed"] += 1
+            logger.exception(
+                "Periodic Airalo package snapshot failed for esim_id=%s",
+                esim.pk,
+            )
 
     logger.info("Periodic Airalo usage refresh finished: %s", stats)
     return stats

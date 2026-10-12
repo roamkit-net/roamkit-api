@@ -16,7 +16,14 @@ from django.views.decorators.http import require_POST
 from apps.accounts.models import User
 from apps.billing.models import AccountKind
 from apps.esims.exceptions import EsimTransferError
-from apps.esims.models import Esim, EsimAutoTopupPolicy, EsimLifecycleEvent, Topup
+from apps.esims.models import (
+    Esim,
+    EsimAppliedPackage,
+    EsimAutoTopupPolicy,
+    EsimLifecycleEvent,
+    Topup,
+)
+from apps.esims.services.applied_package_sync import sync_applied_packages
 from apps.esims.services.inventory_transfer import transfer_esim_inventory
 from apps.esims.services.usage_service import UsageService
 from shared.providers.factory import get_topup_provider
@@ -47,9 +54,36 @@ class EsimInventoryTransferForm(forms.Form):
         self.fields["destination_user"].queryset = personal_destination_users()
 
 
+class EsimAppliedPackageInline(admin.TabularInline):
+    """Read-only Airalo package snapshot. Does not call the provider."""
+
+    model = EsimAppliedPackage
+    extra = 0
+    can_delete = False
+    fields = (
+        "sequence",
+        "kind",
+        "package_external_id",
+        "data_allowance",
+        "validity_days",
+        "status",
+        "remaining_mb",
+        "amount_mb",
+        "activated_at",
+        "expired_at",
+        "provider_price_usd",
+    )
+    readonly_fields = fields
+    ordering = ("sequence",)
+
+    def has_add_permission(self, request, obj=None) -> bool:
+        return False
+
+
 @admin.register(Esim)
 class EsimAdmin(admin.ModelAdmin):
     change_form_template = "admin/esims/esim/change_form.html"
+    inlines = (EsimAppliedPackageInline,)
     list_display = (
         "id",
         "iccid",
@@ -57,13 +91,14 @@ class EsimAdmin(admin.ModelAdmin):
         "user",
         "assigned_user",
         "order",
+        "operator_title",
         "status",
         "activation_policy",
         "note_preview",
         "archived_at",
         "created_at",
     )
-    list_filter = ("status", "activation_policy", "archived_at")
+    list_filter = ("status", "activation_policy", "operator_title", "archived_at")
     search_fields = (
         "iccid",
         "user__email",
@@ -73,6 +108,8 @@ class EsimAdmin(admin.ModelAdmin):
         "note",
     )
     readonly_fields = (
+        "operator_title",
+        "package_balance",
         "created_at",
         "updated_at",
         "usage_synced_at",
@@ -90,11 +127,42 @@ class EsimAdmin(admin.ModelAdmin):
                     readonly.append(name)
         return readonly
 
+    def get_queryset(self, request):
+        return (
+            super()
+            .get_queryset(request)
+            .select_related("order")
+            .prefetch_related("applied_packages")
+        )
+
     def get_fields(self, request, obj=None):
         fields = list(super().get_fields(request, obj))
+        if obj is not None and "package_balance" not in fields:
+            fields.insert(fields.index("operator_title") + 1, "package_balance")
         if obj is not None and "transfer_link" not in fields:
             fields.append("transfer_link")
         return fields
+
+    @admin.display(description="Data balance")
+    def package_balance(self, obj: Esim) -> str:
+        total = 0
+        left = 0
+        finite = False
+        for row in obj.applied_packages.all():
+            if row.is_unlimited or row.amount_mb is None:
+                continue
+            finite = True
+            total += row.amount_mb
+            left += row.remaining_mb or 0
+        if not finite or total <= 0:
+            return "No synced package snapshot."
+        used = max(total - left, 0)
+        left_pct = round(100 * left / total)
+        used_pct = round(100 * used / total)
+        return (
+            f"Data left: {left} MB ({left_pct}%). "
+            f"Data used: {used} MB ({used_pct}%)."
+        )
 
     def get_urls(self):
         urls = super().get_urls()
@@ -140,8 +208,9 @@ class EsimAdmin(admin.ModelAdmin):
         if not request.user.has_perm("esims.change_esim"):
             raise PermissionDenied
         esim = get_object_or_404(Esim, pk=object_id)
+        provider = get_topup_provider()
         try:
-            usage = UsageService(get_topup_provider()).get_usage(esim)
+            usage = UsageService(provider).get_usage(esim)
         except Exception:
             logger.exception(
                 "Admin Airalo usage refresh failed for esim_id=%s", esim.pk
@@ -150,11 +219,25 @@ class EsimAdmin(admin.ModelAdmin):
                 request,
                 "Airalo usage refresh failed. Existing usage data was kept.",
             )
+            return HttpResponseRedirect(
+                reverse("admin:esims_esim_change", args=[esim.pk])
+            )
+        try:
+            package_count = sync_applied_packages(esim, provider)
+        except Exception:
+            logger.exception(
+                "Admin Airalo package snapshot failed for esim_id=%s", esim.pk
+            )
+            messages.warning(
+                request,
+                "Airalo usage was refreshed. Package snapshot was kept.",
+            )
         else:
             message = (
                 f"Refreshed Airalo usage: provider status "
                 f"{usage.status or '(empty)'}, local status {esim.status}, "
-                f"remaining {usage.remaining_mb}/{usage.total_mb} MB."
+                f"remaining {usage.remaining_mb}/{usage.total_mb} MB. "
+                f"Stored {package_count} package row(s)."
             )
             self.log_change(request, esim, message)
             messages.success(request, message)
@@ -258,15 +341,17 @@ class EsimLifecycleEventAdmin(admin.ModelAdmin):
 class TopupAdmin(admin.ModelAdmin):
     list_display = (
         "id",
+        "sequence",
         "account",
         "esim",
         "package_external_id",
         "amount",
         "status",
+        "provider_package_status",
         "external_order_id",
         "created_at",
     )
-    list_filter = ("status",)
+    list_filter = ("status", "provider_package_status", "sequence")
     search_fields = (
         "id",
         "package_external_id",
@@ -274,8 +359,63 @@ class TopupAdmin(admin.ModelAdmin):
         "esim__iccid",
         "account__user__email",
     )
-    readonly_fields = ("id", "created_at", "updated_at")
+    readonly_fields = (
+        "id",
+        "sequence",
+        "provider_package_status",
+        "airalo_plan",
+        "airalo_activated_at",
+        "airalo_expires_at",
+        "airalo_amount",
+        "created_at",
+        "updated_at",
+    )
     raw_id_fields = ("account", "esim")
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("applied_package")
+
+    def get_fields(self, request, obj=None):
+        fields = list(super().get_fields(request, obj))
+        for name in (
+            "airalo_plan",
+            "airalo_activated_at",
+            "airalo_expires_at",
+            "airalo_amount",
+        ):
+            if name not in fields:
+                fields.append(name)
+        return fields
+
+    @staticmethod
+    def _snapshot(obj: Topup) -> EsimAppliedPackage | None:
+        return getattr(obj, "applied_package", None)
+
+    @admin.display(description="Plan")
+    def airalo_plan(self, obj: Topup) -> str:
+        snap = self._snapshot(obj)
+        if snap is None:
+            return ""
+        allowance = snap.data_allowance or ""
+        days = f"{snap.validity_days} days" if snap.validity_days else ""
+        return " · ".join(part for part in (allowance, days) if part)
+
+    @admin.display(description="Activated on")
+    def airalo_activated_at(self, obj: Topup):
+        snap = self._snapshot(obj)
+        return snap.activated_at if snap is not None else None
+
+    @admin.display(description="Expires on")
+    def airalo_expires_at(self, obj: Topup):
+        snap = self._snapshot(obj)
+        return snap.expired_at if snap is not None else None
+
+    @admin.display(description="Airalo amount")
+    def airalo_amount(self, obj: Topup) -> str:
+        snap = self._snapshot(obj)
+        if snap is None or snap.provider_price_usd is None:
+            return ""
+        return f"${snap.provider_price_usd} USD"
 
 
 @admin.register(EsimAutoTopupPolicy)

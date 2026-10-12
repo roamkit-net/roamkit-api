@@ -122,7 +122,9 @@ class PackageHistoryService:
         created: dict[str, datetime],
     ) -> None:
         unused = list(
-            esim.topups.filter(status=Topup.Status.FULFILLED).order_by("created_at")
+            esim.topups.filter(status=Topup.Status.FULFILLED)
+            .exclude(sequence=0)
+            .order_by("created_at")
         )
         used_ids: set[object] = set()
 

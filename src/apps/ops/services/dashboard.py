@@ -143,7 +143,8 @@ def build_dashboard() -> dict[str, Any]:
         pending=Count("id", filter=Q(status=Topup.Status.FULFILLING)),
         today=Count(
             "id",
-            filter=Q(status=Topup.Status.FULFILLED, created_at__gte=today),
+            filter=Q(status=Topup.Status.FULFILLED, created_at__gte=today)
+            & ~Q(sequence=0),
         ),
         stale_fulfilling=Count(
             "id",

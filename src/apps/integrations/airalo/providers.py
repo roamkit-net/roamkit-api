@@ -665,6 +665,14 @@ class AiraloTopupProvider:
         else:
             remaining_mb = int(item["remaining"])
 
+        price = package.get("price")
+        amount = package.get("amount")
+        amount_mb: int | None
+        try:
+            amount_mb = int(amount) if amount is not None else None
+        except (TypeError, ValueError):
+            amount_mb = None
+
         return SimPackageDTO(
             instance_id=instance_id,
             status=AiraloTopupProvider._normalize_package_status(item.get("status")),
@@ -678,6 +686,8 @@ class AiraloTopupProvider:
             validity_days=int(package.get("day") or 0),
             is_unlimited=is_unlimited,
             provider_order_id=AiraloTopupProvider._extract_provider_order_id(item),
+            amount_mb=amount_mb,
+            provider_price_usd=Decimal(str(price)) if price is not None else None,
         )
 
     @staticmethod
