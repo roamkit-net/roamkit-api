@@ -138,31 +138,38 @@ class LifecycleService:
             policy = ActivationPolicy.UNKNOWN
 
         from apps.billing.services import ensure_billing_account
+        from apps.esims.services.initial_credit import ensure_initial_credit_topup
 
         if account is None:
             account = ensure_billing_account(user)
-        esim = Esim.objects.create(
-            account=account,
-            user=user,
-            order=order,
-            iccid=iccid,
-            lpa=lpa,
-            matching_id=(matching_id or "").strip(),
-            qrcode=qrcode,
-            qrcode_url=qrcode_url,
-            direct_apple_installation_url=direct_apple_installation_url,
-            manual_installation=manual_installation,
-            qrcode_installation=qrcode_installation,
-            installation_guide_url=installation_guide_url,
-            status=Esim.Status.PURCHASED,
-            activation_policy=policy,
-        )
-        self._record_system_event(
-            esim,
-            event_type="system.purchased",
-            idempotency_key=f"system.purchased:{esim.pk}",
-            payload={"activation_policy": policy},
-        )
+        operator_title = (getattr(order, "operator_title", None) or "").strip()
+        if not operator_title:
+            operator_title = (order.package.operator_title or "").strip()
+        with transaction.atomic():
+            esim = Esim.objects.create(
+                account=account,
+                user=user,
+                order=order,
+                iccid=iccid,
+                lpa=lpa,
+                matching_id=(matching_id or "").strip(),
+                qrcode=qrcode,
+                qrcode_url=qrcode_url,
+                direct_apple_installation_url=direct_apple_installation_url,
+                manual_installation=manual_installation,
+                qrcode_installation=qrcode_installation,
+                installation_guide_url=installation_guide_url,
+                status=Esim.Status.PURCHASED,
+                activation_policy=policy,
+                operator_title=operator_title,
+            )
+            ensure_initial_credit_topup(esim)
+            self._record_system_event(
+                esim,
+                event_type="system.purchased",
+                idempotency_key=f"system.purchased:{esim.pk}",
+                payload={"activation_policy": policy},
+            )
         return esim
 
     def transition(self, esim: Esim, target: str, *, reason: str = "") -> Esim:

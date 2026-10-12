@@ -85,6 +85,14 @@ class Esim(models.Model):
         choices=ActivationPolicy.choices,
         default=ActivationPolicy.UNKNOWN,
     )
+    operator_title = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        db_index=True,
+        verbose_name="Operator",
+        help_text="Purchase-time operator name copied from the order snapshot.",
+    )
     setup_version = models.CharField(max_length=32, blank=True, default="")
     setup_resume_step = models.PositiveSmallIntegerField(null=True, blank=True)
     setup_completed_at = models.DateTimeField(null=True, blank=True)
@@ -204,12 +212,23 @@ class TopupManager(models.Manager.from_queryset(TopupQuerySet)):
 
 
 class Topup(models.Model):
-    """A prepaid credit spend that applies a top-up package to an eSIM."""
+    """A prepaid credit spend that applies a top-up package to an eSIM.
+
+    ``sequence`` 0 is the initial credit copied from the purchase. It is not a
+    second charge. Later top-ups of the same eSIM are 1, 2, 3, …
+    """
 
     class Status(models.TextChoices):
         FULFILLING = "fulfilling", "Fulfilling"
         FULFILLED = "fulfilled", "Fulfilled"
         FAILED = "failed", "Failed"
+
+    class ProviderPackageStatus(models.TextChoices):
+        ACTIVE = "active", "Active"
+        NOT_ACTIVE = "not_active", "Not active"
+        FINISHED = "finished", "Finished"
+        EXPIRED = "expired", "Expired"
+        UNKNOWN = "unknown", "Unknown"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     account = models.ForeignKey(
@@ -261,6 +280,18 @@ class Topup(models.Model):
         default=Status.FULFILLING,
         db_index=True,
     )
+    sequence = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="0 is the initial credit. Later top-ups of this eSIM are 1, 2, 3, …",
+    )
+    provider_package_status = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        choices=ProviderPackageStatus.choices,
+        help_text="Airalo package status. Blank until a usage refresh stores it.",
+    )
     external_order_id = models.CharField(max_length=64, blank=True, db_index=True)
     idempotency_key = models.CharField(
         max_length=128,
@@ -287,9 +318,20 @@ class Topup(models.Model):
                 condition=models.Q(amount__gt=0),
                 name="esims_topup_amount_gt_0",
             ),
+            models.UniqueConstraint(
+                fields=["esim", "sequence"],
+                name="esims_topup_esim_sequence_uniq",
+            ),
         ]
 
     def save(self, *args: object, **kwargs: object) -> None:
+        if self.sequence is None and self.esim_id and self._state.adding:
+            current = (
+                type(self)
+                .objects.filter(esim_id=self.esim_id)
+                .aggregate(highest=models.Max("sequence"))["highest"]
+            )
+            self.sequence = 1 if current is None else int(current) + 1
         update_fields = kwargs.get("update_fields")
         touches_net = update_fields is None or "net_price_usd" in update_fields
         if self.pk and not self._state.adding and touches_net:
@@ -307,6 +349,64 @@ class Topup(models.Model):
 
     def __str__(self) -> str:
         return f"Topup {self.pk} ({self.status})"
+
+
+class EsimAppliedPackage(models.Model):
+    """Latest Airalo package row stored for one eSIM.
+
+    Refreshed only by the admin usage POST and the periodic usage beat.
+    Opening an admin page does not call the provider.
+    """
+
+    esim = models.ForeignKey(
+        Esim,
+        on_delete=models.CASCADE,
+        related_name="applied_packages",
+    )
+    topup = models.OneToOneField(
+        Topup,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="applied_package",
+    )
+    instance_id = models.CharField(max_length=64)
+    sequence = models.PositiveIntegerField()
+    package_external_id = models.CharField(max_length=64, blank=True, default="")
+    kind = models.CharField(max_length=16, blank=True, default="")
+    status = models.CharField(max_length=32, blank=True, default="")
+    data_allowance = models.CharField(max_length=64, blank=True, default="")
+    validity_days = models.PositiveIntegerField(default=0)
+    is_unlimited = models.BooleanField(default=False)
+    amount_mb = models.PositiveIntegerField(null=True, blank=True)
+    remaining_mb = models.IntegerField(null=True, blank=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
+    expired_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    provider_price_usd = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Airalo package.price. Not the customer charge and not net_price.",
+    )
+    synced_at = models.DateTimeField()
+
+    class Meta:
+        ordering = ["sequence", "instance_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["esim", "instance_id"],
+                name="esims_applied_pkg_esim_instance_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["esim", "sequence"],
+                name="esims_applied_pkg_esim_sequence_uniq",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.package_external_id} #{self.sequence}"
 
 
 class EsimAutoTopupPolicy(models.Model):
