@@ -36,6 +36,9 @@ class FakeUsageProvider:
             total_text=0,
         )
 
+    def list_sim_packages(self, iccid: str) -> list:
+        return []
+
 
 @pytest.fixture
 def staff(db) -> User:

@@ -113,9 +113,10 @@ class TopupResult:
 class SimPackageDTO:
     """One applied package instance from provider package history.
 
-    Never carries wholesale ``price`` / ``net_price``. ``provider_order_id``
-    is set only when the provider payload has an explicit order/request id
-    — not the history instance id.
+    Never carries wholesale ``net_price``. ``provider_price_usd`` is Airalo
+    ``package.price`` for staff display. ``provider_order_id`` is set only
+    when the provider payload has an explicit order/request id — not the
+    history instance id.
     """
 
     instance_id: str
@@ -130,6 +131,8 @@ class SimPackageDTO:
     validity_days: int
     is_unlimited: bool
     provider_order_id: str | None = None
+    amount_mb: int | None = None
+    provider_price_usd: Decimal | None = None
 
 
 class PackageProvider(Protocol):
