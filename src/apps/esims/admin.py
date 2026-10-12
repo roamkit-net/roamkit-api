@@ -27,13 +27,14 @@ from apps.esims.models import (
 from apps.esims.services.applied_package_sync import sync_applied_packages
 from apps.esims.services.inventory_transfer import transfer_esim_inventory
 from apps.esims.services.usage_service import UsageService
+from apps.pricing.money import money_round
 from shared.providers.factory import get_topup_provider
 
 
 def _usd(value: Decimal | None) -> str:
     if value is None:
         return ""
-    return f"${Decimal(value).quantize(Decimal('0.01'))} USD"
+    return f"${money_round(value)} USD"
 
 
 def paid_price_usd(topup: Topup | None) -> str:
