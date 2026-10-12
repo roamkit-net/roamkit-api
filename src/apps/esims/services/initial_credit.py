@@ -45,6 +45,7 @@ def ensure_initial_credit_topup(esim: Esim) -> Topup:
         idempotency_key=key,
         sequence=0,
         list_price_usd=order.list_price_usd,
+        net_price_usd=order.net_price_usd,
     )
     Topup.objects.filter(pk=topup.pk).update(created_at=order.created_at)
     topup.created_at = order.created_at

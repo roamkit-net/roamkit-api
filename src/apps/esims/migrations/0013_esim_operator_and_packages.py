@@ -42,6 +42,7 @@ def copy_operator_and_number_topups(apps, schema_editor):
                 idempotency_key=key,
                 sequence=0,
                 list_price_usd=order.list_price_usd,
+                net_price_usd=order.net_price_usd,
             )
             Topup.objects.filter(pk=created.pk).update(created_at=order.created_at)
 
